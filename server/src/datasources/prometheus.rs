@@ -454,6 +454,32 @@ pub(crate) fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceErro
     Ok(out)
 }
 
+/// `expand` with just variables and the checked ones, for tests elsewhere (how a dashboard's
+/// resolved values reach PromQL).
+#[cfg(test)]
+pub(crate) fn expand_for_test(
+    expr: &str,
+    variables: &BTreeMap<String, Value>,
+    checked: &BTreeSet<String>,
+) -> Result<String, SourceError> {
+    let req = SourceQuery {
+        ref_id: "A".into(),
+        query: json!({}),
+        range: crate::shapes::TimeRange { from: 0, to: 60_000 },
+        interval_ms: 15_000,
+        max_data_points: None,
+        variables: variables.clone(),
+        identifier_variables: Some(checked.clone()),
+        limits: super::Limits {
+            timeout: Duration::from_secs(5),
+            max_rows: 1000,
+            budget: super::frame::ResponseBudget::new(1 << 20),
+        },
+        cursor: None,
+    };
+    expand(expr, &req)
+}
+
 /// A sample value as a JSON number; NaN and infinities have no JSON form.
 fn sample(v: &Value) -> Value {
     v.as_str()

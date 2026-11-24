@@ -730,8 +730,10 @@
    * width that shows a short value whole ("Nord") where the row is tight.
    */
   .dash-filters .variables__item > .select {
-    min-width: var(--size-label);
+    min-width: var(--size-variable-chip);
+    max-width: var(--size-column);
     padding-inline-end: var(--space-8);
+    text-overflow: ellipsis;
   }
 
   .dash-filters .variables__item > .variables__input {
@@ -765,8 +767,10 @@
   .variables__picker {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-1);
-    min-width: 0;
+    /* A choice keeps its width when the value gets shorter; the bar does not jump. */
+    min-width: var(--size-variable-chip);
     max-width: var(--size-column);
     padding-inline: 0 var(--space-2);
     border: 0;

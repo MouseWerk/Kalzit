@@ -1,4 +1,5 @@
 import {
+  ALL_VALUE,
   optionValues,
   type VariableModel,
   type VariableValue,
@@ -101,7 +102,12 @@ export function fitAddressValues(
     if (variable.type !== "textbox" && variable.type !== "query" && variable.type !== "custom") {
       continue;
     }
-    const allowed = variable.type === "custom" ? new Set(optionValues(variable)) : null;
+    // A custom variable takes its own values (and "All" when it offers it), unless typed values
+    // are allowed.
+    const allowed =
+      variable.type === "custom" && variable.allowCustom !== true
+        ? new Set([...optionValues(variable), ...(variable.includeAll === true ? [ALL_VALUE] : [])])
+        : null;
     const list = valueList(values[variable.name]).filter((v) => allowed?.has(v) ?? true);
     const multi = variable.multi === true && variable.type !== "textbox";
     if (list.length === 0) continue;

@@ -104,15 +104,6 @@ pub fn ordered(model: &DashboardModel) -> Vec<&Panel> {
     out
 }
 
-/// The value a variable was saved with on the dashboard, if any.
-fn saved_value(current: Option<&Value>) -> Option<Value> {
-    let value = match current? {
-        Value::Object(m) => m.get("value")?.clone(),
-        other => other.clone(),
-    };
-    (!value.is_null()).then_some(value)
-}
-
 /// The report's values, and for the variables it leaves open the dashboard's saved ones. Saved
 /// values the dashboard would no longer accept are left out, the report's own never.
 pub fn variables(model: &DashboardModel, fixed: &BTreeMap<String, Value>) -> ApiResult<BTreeMap<String, Value>> {
@@ -123,7 +114,7 @@ pub fn variables(model: &DashboardModel, fixed: &BTreeMap<String, Value>) -> Api
         if v.kind == VariableType::Constant || merged.contains_key(&v.name) {
             continue;
         }
-        if let Some(value) = saved_value(v.current.as_ref()) {
+        if let Some(value) = crate::dashboards::variables::saved_value(v) {
             let mut tried = merged.clone();
             tried.insert(v.name.clone(), value);
             if resolve_variables(model, &tried).is_ok() {

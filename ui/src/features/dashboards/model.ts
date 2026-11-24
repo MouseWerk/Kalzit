@@ -111,6 +111,34 @@ export type VariableType = (typeof ALL_VARIABLE_TYPES)[number];
 export const VARIABLE_TYPES = ["custom", "textbox", "query", "interval", "constant"] as const;
 
 /**
+ * What a selection of "All" is kept and stored as. It never reaches a query: `sentValues` turns
+ * it into the list of every value, or the variable's `allValue` (as on the server,
+ * `dashboards/variables.rs`).
+ */
+export const ALL_VALUE = "$__all";
+
+/** The orders of a query variable's options (`sort`); absent keeps the query's order. */
+export const VARIABLE_SORTS = [
+  "alphabetical",
+  "alphabeticalDesc",
+  "numerical",
+  "numericalDesc",
+  "caseInsensitive",
+  "caseInsensitiveDesc",
+] as const;
+export type VariableSort = (typeof VARIABLE_SORTS)[number];
+
+/** When the bar reads a query variable's options again; absent: on every new time range. */
+export const VARIABLE_REFRESH = ["load", "timeRange"] as const;
+export type VariableRefresh = (typeof VARIABLE_REFRESH)[number];
+
+/** A fixed option listed after a query variable's own. */
+export interface StaticOption {
+  value: string;
+  label?: string;
+}
+
+/**
  * A dashboard variable. `custom` and `interval` offer fixed values, `textbox` takes free text,
  * `query` asks the server for its options, `constant` is fixed and not shown. The value always
  * reaches queries as a bind parameter.
@@ -137,7 +165,50 @@ export interface VariableModel {
    * column). The explicit projection the server applies too (`routes/query.rs`, `options_from`).
    */
   valuesFrom?: ValuesFrom | undefined;
+  /** Custom and query: "All" is offered first; it sends every value, or `allValue`. */
+  includeAll?: boolean;
+  /** What "All" sends instead of the list: this one value, as one parameter. */
+  allValue?: string;
+  /** Query: only matching values stay; named groups `text` and `value` split name and value. */
+  regex?: string;
+  sort?: VariableSort | undefined;
+  refresh?: VariableRefresh | undefined;
+  staticOptions?: StaticOption[];
+  /** Custom and query: values outside the list may be typed in. */
+  allowCustom?: boolean;
 }
+
+/** Whether a value is the selection of "All". */
+export function isAll(value: VariableValue | undefined): boolean {
+  return Array.isArray(value) ? value.includes(ALL_VALUE) : value === ALL_VALUE;
+}
+
+/**
+ * The values queries run with: a variable at "All" sends its `allValue` when it has one, else the
+ * list of every value it offers (a custom variable's own; a query variable's as last loaded, in
+ * `loaded`, by name). Everything else is sent as picked.
+ */
+export function sentValues(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+  loaded: Readonly<Record<string, readonly string[]>>,
+): VariableValues {
+  let out: VariableValues | null = null;
+  for (const variable of variables) {
+    if (variable.includeAll !== true || !isAll(values[variable.name])) continue;
+    out ??= { ...values };
+    out[variable.name] =
+      variable.allValue !== undefined && variable.allValue !== ""
+        ? variable.allValue
+        : variable.type === "custom"
+          ? optionValues(variable)
+          : [...(loaded[variable.name] ?? [])];
+  }
+  return out ?? values;
+}
+
+/** The most values "All" sends as a list (the server's `MAX_LIST_VALUES`). */
+export const MAX_ALL_VALUES = 1000;
 
 export const VALUES_SOURCES = ["nodes", "edges", "documents"] as const;
 export type ValuesSource = (typeof VALUES_SOURCES)[number];
@@ -493,6 +564,26 @@ function parseVariable(value: unknown): VariableModel | null {
   if (valuesFrom !== null) {
     variable.valuesFrom = valuesFrom;
   }
+  if (value.includeAll === true) variable.includeAll = true;
+  if (typeof value.allValue === "string") variable.allValue = value.allValue;
+  if (typeof value.regex === "string") variable.regex = value.regex;
+  const sort = VARIABLE_SORTS.find((s) => s === value.sort);
+  if (sort !== undefined) variable.sort = sort;
+  const refresh = VARIABLE_REFRESH.find((r) => r === value.refresh);
+  if (refresh !== undefined) variable.refresh = refresh;
+  if (Array.isArray(value.staticOptions)) {
+    const options: StaticOption[] = [];
+    for (const o of value.staticOptions) {
+      if (!isRecord(o) || typeof o.value !== "string") continue;
+      options.push(
+        typeof o.label === "string" && o.label !== ""
+          ? { value: o.value, label: o.label }
+          : { value: o.value },
+      );
+    }
+    if (options.length > 0) variable.staticOptions = options;
+  }
+  if (value.allowCustom === true) variable.allowCustom = true;
   return variable;
 }
 
@@ -512,6 +603,26 @@ export function cleanVariable(variable: VariableModel): VariableModel {
     delete clean.multi;
   }
   if (clean.type !== "query" || clean.valuesFrom === undefined) delete clean.valuesFrom;
+  const choice = clean.type === "custom" || clean.type === "query";
+  if (!choice || clean.includeAll !== true) {
+    delete clean.includeAll;
+    delete clean.allValue;
+    if (isAll(clean.current as VariableValue | undefined)) delete clean.current;
+  }
+  if (clean.allValue === "") delete clean.allValue;
+  if (!choice || clean.allowCustom !== true) delete clean.allowCustom;
+  if (clean.type !== "query") {
+    delete clean.regex;
+    delete clean.sort;
+    delete clean.refresh;
+    delete clean.staticOptions;
+  }
+  if (clean.regex === "") delete clean.regex;
+  if (clean.staticOptions !== undefined) {
+    const options = clean.staticOptions.filter((o) => o.value !== "");
+    if (options.length === 0) delete clean.staticOptions;
+    else clean.staticOptions = options;
+  }
   return clean;
 }
 

@@ -28,7 +28,7 @@ use crate::extract::JsonBody;
 use crate::shapes::{
     CacheStatus, DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest,
     PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption,
-    VariableOptionsRequest, VariableOptionsResponse,
+    VariableOptionsRequest, VariableOptionsResponse, VariablePreviewRequest,
 };
 
 /// What the query cache did for a whole answer (docs/api/datasources.md, "Query cache").
@@ -96,6 +96,9 @@ pub fn routes() -> Vec<RouteDef> {
             variable_options,
         )
         .long_running(),
+        // A variable being edited: `datasources:query` on its source, as a free query.
+        route(Method::POST, "/orgs/{orgId}/query/variable-options", Access::OrgMember, variable_preview)
+            .long_running(),
         // Field distributions: the same rights as running the query they describe.
         route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution).long_running(),
         route(
@@ -179,6 +182,9 @@ pub(crate) async fn stored_distribution(
 
 /// Variables in one request, and the size of all their values together.
 const MAX_VARIABLES: usize = 100;
+/// Values in one variable's list, such as "All" sends: a longer list is better one custom value
+/// for "All" (docs/api/datasources.md, "Variables").
+pub const MAX_LIST_VALUES: usize = 1000;
 const MAX_VARIABLES_BYTES: usize = 64 * 1024;
 /// Options one query variable offers.
 pub const MAX_OPTIONS: usize = 10_000;
@@ -204,6 +210,18 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
             ApiError::validation(format!("{bad:?} is not a variable name"))
                 .because("variables.name_invalid")
                 .param("name", bad),
+        );
+    }
+    if let Some((name, _)) =
+        variables.iter().find(|(_, v)| v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
+    {
+        return refuse(
+            ApiError::validation(format!(
+                "variable {name} has more than {MAX_LIST_VALUES} values; give \"All\" a custom value instead"
+            ))
+            .because("variables.list_too_long")
+            .param("name", name)
+            .param("max", MAX_LIST_VALUES),
         );
     }
     if serde_json::to_string(variables).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
@@ -340,10 +358,13 @@ fn custom_options(options: Option<&Value>) -> BTreeSet<String> {
 ///
 /// - Only variables the dashboard defines may be sent.
 /// - A constant's value is the dashboard's (`current`, or its `value`); sending one is refused.
-/// - A custom variable's value (each value, for a list) must be one of its `options`.
+/// - A custom variable's value (each value, for a list) must be one of its `options`, or its
+///   custom value for "All". With `allowCustom` other values pass too, as free values.
 /// - Query, textbox and interval variables are free values. They are bound as parameters in SQL
 ///   and escaped into quoted strings in PromQL; they may not be identifiers, since nothing limits
 ///   them to the dashboard's own list.
+/// - A variable's custom value for "All" (`allValue`), sent alone, is the dashboard's own value:
+///   it counts as checked (a pattern such as `.*` stays one in PromQL), whatever the type.
 pub(crate) fn resolve_variables(
     model: &DashboardModel,
     requested: &BTreeMap<String, Value>,
@@ -377,26 +398,49 @@ pub(crate) fn resolve_variables(
             VariableType::Custom => {
                 if let Some(given) = given {
                     let allowed = custom_options(v.options.as_ref());
-                    if let Some(outside) = value_texts(&v.name, given)?.into_iter().find(|t| !allowed.contains(t)) {
-                        return Err(variables_error(
-                            "variables.not_an_option",
-                            &v.name,
-                            format!("{outside:?} is not an option of {}", v.name),
-                        )
-                        .param("value", &outside));
+                    let outside = value_texts(&v.name, given)?.into_iter().find(|t| !allowed.contains(t));
+                    match outside {
+                        None => {
+                            identifiers.insert(v.name.clone());
+                        }
+                        Some(_) if is_all_value(v, given) => {
+                            identifiers.insert(v.name.clone());
+                        }
+                        Some(_) if v.allow_custom => {}
+                        Some(outside) => {
+                            return Err(variables_error(
+                                "variables.not_an_option",
+                                &v.name,
+                                format!("{outside:?} is not an option of {}", v.name),
+                            )
+                            .param("value", &outside));
+                        }
                     }
                     values.insert(v.name.clone(), given.clone());
-                    identifiers.insert(v.name.clone());
                 }
             }
             VariableType::Query | VariableType::Textbox | VariableType::Interval => {
                 if let Some(given) = given {
+                    if is_all_value(v, given) {
+                        identifiers.insert(v.name.clone());
+                    }
                     values.insert(v.name.clone(), given.clone());
                 }
             }
         }
     }
     Ok((values, identifiers))
+}
+
+/// Whether `given` is the variable's custom value for "All", sent alone (as itself, or a list of
+/// just it).
+fn is_all_value(v: &model::Variable, given: &Value) -> bool {
+    let Some(all) = v.all_value.as_deref().filter(|_| v.include_all) else { return false };
+    match given {
+        Value::String(s) => s == all,
+        Value::Array(items) => matches!(items.as_slice(), [Value::String(s)] if s == all),
+        _ => false,
+    }
 }
 
 /// The reference ids that the enabled steps among `transformations` read. A step that does not
@@ -589,7 +633,57 @@ async fn variable_options(
     )
     .await;
     match response.results.remove(OPTIONS_REF_ID) {
-        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(options_from(result, variable.values_from.as_ref())?)),
+        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(refined(result, variable)?)),
+        Some(QueryOutcome::Err { error }) => Err(api_error(error)),
+        None => Err(ApiError::internal("variable options", "no outcome for the query")),
+    }
+}
+
+/// The options of a variable's query result: read from its shape (`options_from`), then its
+/// regex, order and fixed options (`dashboards::variables::refine`).
+fn refined(result: QueryResult, variable: &model::Variable) -> ApiResult<VariableOptionsResponse> {
+    let options = options_from(result, variable.values_from.as_ref())?;
+    crate::dashboards::variables::refine(options, variable)
+        .map_err(|e| ApiError::validation(e.clone()).with_field("regex").because("variables.regex_invalid").param("detail", e))
+}
+
+/// The options a variable being edited would offer: the variable as the dashboard model holds it
+/// (checked by the model's rules), its query run as a free query, which needs `datasources:query`
+/// on the source (role or grant), with the caller's variable values.
+async fn variable_preview(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    headers: HeaderMap,
+    JsonBody(req): JsonBody<VariablePreviewRequest>,
+) -> ApiResult<Json<VariableOptionsResponse>> {
+    let variable: model::Variable = serde_json::from_value(req.variable).map_err(|e| {
+        ApiError::validation(format!("variable: {e}")).with_field("variable").because("variables.invalid").param("detail", e)
+    })?;
+    model::validate_variable("variable", &variable)
+        .map_err(|e| ApiError::validation(e.clone()).with_field("variable").because("variables.invalid").param("detail", e))?;
+    check_range(req.time_range)?;
+    check_variables(&req.variables)?;
+    let (VariableType::Query, Some(datasource_id), Some(query)) =
+        (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
+    else {
+        return Err(ApiError::validation(format!("{} is not a query variable", variable.name))
+            .because("variables.not_a_query")
+            .param("name", &variable.name));
+    };
+    check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(datasource_id)).await?;
+    let item = QueryItem {
+        ref_id: OPTIONS_REF_ID.into(),
+        datasource_id: datasource_id.clone(),
+        query: query.clone(),
+        cursor: None,
+        limit: Some(MAX_OPTIONS as u32),
+        steps: Vec::new(),
+    };
+    let cache = CacheUse::read(wants_refresh(&headers, None));
+    let mut response =
+        run_queries_cached(&state, &ctx, vec![item], req.time_range, None, None, &req.variables, None, &cache).await;
+    match response.results.remove(OPTIONS_REF_ID) {
+        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(refined(result, &variable)?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),
         None => Err(ApiError::internal("variable options", "no outcome for the query")),
     }
@@ -643,7 +737,7 @@ impl Collected {
     }
 
     fn done(self) -> VariableOptionsResponse {
-        VariableOptionsResponse { options: self.options, truncated: self.truncated }
+        VariableOptionsResponse { options: self.options, truncated: self.truncated, unmatched: None }
     }
 }
 
@@ -924,5 +1018,85 @@ mod tests {
         assert!(check_variables(&big).is_err());
         let many: BTreeMap<String, Value> = (0..=MAX_VARIABLES).map(|i| (format!("v{i}"), json!(i))).collect();
         assert!(check_variables(&many).is_err());
+        // "All" as a list: up to MAX_LIST_VALUES values, then the answer names the custom value.
+        let list = |n: usize| BTreeMap::from([("job".into(), json!((0..n).map(|i| format!("j{i}")).collect::<Vec<_>>()))]);
+        assert!(check_variables(&list(MAX_LIST_VALUES)).is_ok());
+        let e = check_variables(&list(MAX_LIST_VALUES + 1)).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "variables.list_too_long");
+    }
+
+    fn all_model() -> DashboardModel {
+        model::parse(json!({
+            "schemaVersion": 2,
+            "title": "Alle",
+            "timeRange": { "from": "now-6h", "to": "now" },
+            "variables": [
+                { "name": "job", "type": "query", "datasourceId": "ds", "query": { "expr": "up" },
+                  "multi": true, "includeAll": true, "allValue": ".*" },
+                { "name": "region", "type": "custom", "options": ["nord", "sued"], "multi": true,
+                  "includeAll": true, "current": "$__all" },
+                { "name": "env", "type": "custom", "options": ["prod"], "includeAll": true, "allValue": "%" },
+                { "name": "host", "type": "custom", "options": ["a"], "allowCustom": true }
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn resolve(values: Value) -> ApiResult<(BTreeMap<String, Value>, BTreeSet<String>)> {
+        resolve_variables(&all_model(), &serde_json::from_value(values).unwrap())
+    }
+
+    #[test]
+    fn all_is_a_list_of_values_or_the_custom_value_as_one_value() {
+        // "All" of a custom variable is the list of its options, each one checked.
+        let (values, checked) = resolve(json!({ "region": ["nord", "sued"] })).unwrap();
+        assert_eq!(values["region"], json!(["nord", "sued"]));
+        assert!(checked.contains("region"));
+        // The custom value for "All" passes as the one value it is, and counts as checked; any
+        // other value outside the options does not.
+        let (values, checked) = resolve(json!({ "env": "%", "job": ".*" })).unwrap();
+        assert_eq!(values["env"], json!("%"));
+        assert!(checked.contains("env") && checked.contains("job"));
+        assert!(resolve(json!({ "env": "_" })).is_err());
+        assert!(resolve(json!({ "env": ["%", "prod"] })).is_err());
+        // A query variable's other values stay free: bound, not checked.
+        let (_, checked) = resolve(json!({ "job": ["api", ".*"] })).unwrap();
+        assert!(!checked.contains("job"));
+        // The marker itself is no option: the browser resolves "All" before it sends.
+        assert!(resolve(json!({ "region": "$__all" })).is_err());
+    }
+
+    #[test]
+    fn typed_values_pass_only_with_allow_custom_and_stay_unchecked() {
+        let (values, checked) = resolve(json!({ "host": "b'; --" })).unwrap();
+        assert_eq!(values["host"], json!("b'; --"));
+        assert!(!checked.contains("host"));
+        let (_, checked) = resolve(json!({ "host": "a" })).unwrap();
+        assert!(checked.contains("host"));
+    }
+
+    /// How the values reach the database: a list is one bound parameter per value in SQL and a
+    /// pattern of escaped values in PromQL; the custom value for "All" is one parameter.
+    #[test]
+    fn all_lists_and_the_custom_value_render_as_parameters() {
+        use crate::datasources::sql::{Bind, Context, Engine, prepare};
+        let (values, checked) = resolve(json!({ "region": ["nord", "sued"], "env": "%" })).unwrap();
+        let ctx = Context {
+            range: crate::shapes::TimeRange { from: 0, to: 1 },
+            interval_ms: 1,
+            variables: &values,
+            identifiers: None,
+            identifier_variables: Some(&checked),
+        };
+        let p = prepare("SELECT * FROM t WHERE region IN ($region) AND env LIKE $env", Engine::Postgres, &ctx).unwrap();
+        assert_eq!(p.sql, "SELECT * FROM t WHERE region IN ($1, $2) AND env LIKE $3");
+        assert_eq!(p.binds, [Bind::Text("nord".into()), Bind::Text("sued".into()), Bind::Text("%".into())]);
+
+        let (values, checked) = resolve(json!({ "job": ["a.b", "c|d"] })).unwrap();
+        let expr = crate::datasources::prometheus::expand_for_test("up{job=~\"$job\"}", &values, &checked);
+        assert_eq!(expr.unwrap(), r#"up{job=~"a\\.b|c\\|d"}"#);
+        let (values, checked) = resolve(json!({ "job": ".*" })).unwrap();
+        let expr = crate::datasources::prometheus::expand_for_test("up{job=~\"$job\"}", &values, &checked);
+        assert_eq!(expr.unwrap(), r#"up{job=~".*"}"#);
     }
 }

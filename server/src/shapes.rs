@@ -778,6 +778,26 @@ pub struct VariableOptionsResponse {
     pub options: Vec<VariableOption>,
     /// True when the list was cut at the option limit or the query's row limit.
     pub truncated: bool,
+    /// How many values the variable's regex left out; absent when none (or no regex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub unmatched: Option<u32>,
+}
+
+/// `POST /api/orgs/{orgId}/query/variable-options`: the options a variable being edited would
+/// offer, run as a free query (`datasources:query` on its source). `variable` is a variable of
+/// the dashboard model, of type `query`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VariablePreviewRequest {
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub variable: Value,
+    pub time_range: TimeRange,
+    /// The other variables' values, as for a free query.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
 }
 
 /// `POST /api/orgs/{orgId}/query/distribution`: how the values of one field path are spread
@@ -1304,6 +1324,7 @@ mod tests {
             VariableOptionsRequest::decl(&cfg),
             VariableOption::decl(&cfg),
             VariableOptionsResponse::decl(&cfg),
+            VariablePreviewRequest::decl(&cfg),
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),

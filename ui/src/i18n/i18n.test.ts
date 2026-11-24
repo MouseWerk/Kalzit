@@ -269,6 +269,8 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // The variable editor of the parity wave: "Regex" is the German word too (board ParityEditors).
+      "Regex (optional)",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

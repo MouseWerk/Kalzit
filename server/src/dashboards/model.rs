@@ -334,7 +334,71 @@ pub struct Variable {
     /// and this is the explicit, visible projection to a list of values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values_from: Option<ValuesFrom>,
+    /// "All" is offered first (custom and query variables). Picked, it sends the list of every
+    /// value, or `allValue` when set (`variables::ALL`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_all: bool,
+    /// What "All" sends instead of the list: this one value, as one parameter (needs
+    /// `includeAll`). Being the dashboard's own, it counts as a checked value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_value: Option<String>,
+    /// Query variables: only options whose value matches stay; the named groups `text` and
+    /// `value` (or a single unnamed group) take the shown name and the value apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regex: Option<String>,
+    /// Query variables: the order of the options; absent keeps the query's order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<VariableSort>,
+    /// Query variables: when the options are read again; absent reads them on every new range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<VariableRefresh>,
+    /// Query variables: fixed options listed after the query's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub static_options: Vec<StaticOption>,
+    /// Values outside the options may be typed in (custom and query variables). A custom
+    /// variable's typed value is then a free value: bound, never an identifier or a pattern.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_custom: bool,
 }
+
+/// The order of a query variable's options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableSort {
+    /// By shown name, A to Z (code points).
+    Alphabetical,
+    AlphabeticalDesc,
+    /// By value as a number, smallest first; values that are no numbers follow in their order.
+    Numerical,
+    NumericalDesc,
+    /// By shown name, ignoring upper and lower case.
+    CaseInsensitive,
+    CaseInsensitiveDesc,
+}
+
+/// When the bar reads a query variable's options again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableRefresh {
+    /// When the dashboard opens (and on "Refresh").
+    Load,
+    /// Also whenever the time range changes.
+    TimeRange,
+}
+
+/// A fixed option of a query variable, shown as `label` (or the value).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StaticOption {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Longest custom value for "All", regex and fixed option.
+pub const MAX_VARIABLE_TEXT_CHARS: usize = 1000;
+/// Fixed options of one query variable.
+pub const MAX_STATIC_OPTIONS: usize = 100;
 
 /// Where a query variable's options come from in a result that is not a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -606,6 +670,86 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The rules of one variable, at `at` (`model.variables[0]`); the name's uniqueness is the
+/// model's to check.
+pub fn validate_variable(at: &str, v: &Variable) -> Result<(), String> {
+    if v.name.chars().count() > MAX_ID_CHARS || !is_identifier(&v.name) {
+        return Err(format!("{at}.name must be a name of letters, digits and _ (up to {MAX_ID_CHARS})"));
+    }
+    if let Some(label) = &v.label {
+        check_text(&format!("{at}.label"), label, 0, MAX_TITLE_CHARS)?;
+    }
+    match (v.kind, &v.datasource_id) {
+        (VariableType::Query, Some(id)) => check_id(&format!("{at}.datasourceId"), id)?,
+        (VariableType::Query, None) => return Err(format!("{at}.datasourceId is required for a query variable")),
+        (_, Some(_)) => return Err(format!("{at}.datasourceId belongs only to query variables")),
+        (_, None) => {}
+    }
+    if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
+        return Err(format!("{at}.multi is only for custom and query variables"));
+    }
+    if let Some(from) = &v.values_from {
+        if v.kind != VariableType::Query {
+            return Err(format!("{at}.valuesFrom is only for query variables"));
+        }
+        for (name, text) in [("label", &from.label), ("value", &from.value), ("text", &from.text)] {
+            if let Some(text) = text {
+                check_text(&format!("{at}.valuesFrom.{name}"), text, 0, MAX_VALUES_FROM_CHARS)?;
+            }
+        }
+        if from.from == ValuesSource::Documents {
+            if from.label.as_deref().is_some_and(|l| !l.is_empty()) {
+                return Err(format!("{at}.valuesFrom.label is only for nodes and edges"));
+            }
+            if from.value.as_deref().is_none_or(str::is_empty) {
+                return Err(format!("{at}.valuesFrom.value is required for documents (a field path)"));
+            }
+        }
+    }
+    let choice = matches!(v.kind, VariableType::Custom | VariableType::Query);
+    if v.include_all && !choice {
+        return Err(format!("{at}.includeAll is only for custom and query variables"));
+    }
+    if v.allow_custom && !choice {
+        return Err(format!("{at}.allowCustom is only for custom and query variables"));
+    }
+    if let Some(all) = &v.all_value {
+        if !v.include_all {
+            return Err(format!("{at}.allValue needs includeAll"));
+        }
+        check_text(&format!("{at}.allValue"), all, 1, MAX_VARIABLE_TEXT_CHARS)?;
+    }
+    let query_only = [
+        ("regex", v.regex.is_some()),
+        ("sort", v.sort.is_some()),
+        ("refresh", v.refresh.is_some()),
+        ("staticOptions", !v.static_options.is_empty()),
+    ];
+    if v.kind != VariableType::Query
+        && let Some((name, _)) = query_only.iter().find(|(_, set)| *set)
+    {
+        return Err(format!("{at}.{name} is only for query variables"));
+    }
+    if let Some(regex) = &v.regex {
+        check_text(&format!("{at}.regex"), regex, 1, MAX_VARIABLE_TEXT_CHARS)?;
+        super::variables::OptionRegex::parse(regex).map_err(|e| format!("{at}.regex: {e}"))?;
+    }
+    if v.static_options.len() > MAX_STATIC_OPTIONS {
+        return Err(format!("{at}.staticOptions takes at most {MAX_STATIC_OPTIONS} entries"));
+    }
+    let mut seen = BTreeSet::new();
+    for (j, o) in v.static_options.iter().enumerate() {
+        check_text(&format!("{at}.staticOptions[{j}].value"), &o.value, 0, MAX_VARIABLE_TEXT_CHARS)?;
+        if let Some(label) = &o.label {
+            check_text(&format!("{at}.staticOptions[{j}].label"), label, 0, MAX_TITLE_CHARS)?;
+        }
+        if !seen.insert(o.value.as_str()) {
+            return Err(format!("{at}.staticOptions[{j}].value {:?} is listed twice", o.value));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate(model: &DashboardModel) -> Result<(), String> {
     if model.schema_version != SCHEMA_VERSION {
         return Err(format!("model.schemaVersion must be {SCHEMA_VERSION}"));
@@ -628,42 +772,10 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
     let mut names = BTreeSet::new();
     for (i, v) in model.variables.iter().enumerate() {
         let at = format!("model.variables[{i}]");
-        if v.name.chars().count() > MAX_ID_CHARS || !is_identifier(&v.name) {
-            return Err(format!("{at}.name must be a name of letters, digits and _ (up to {MAX_ID_CHARS})"));
-        }
         if !names.insert(v.name.as_str()) {
             return Err(format!("{at}.name {} is used twice", v.name));
         }
-        if let Some(label) = &v.label {
-            check_text(&format!("{at}.label"), label, 0, MAX_TITLE_CHARS)?;
-        }
-        match (v.kind, &v.datasource_id) {
-            (VariableType::Query, Some(id)) => check_id(&format!("{at}.datasourceId"), id)?,
-            (VariableType::Query, None) => return Err(format!("{at}.datasourceId is required for a query variable")),
-            (_, Some(_)) => return Err(format!("{at}.datasourceId belongs only to query variables")),
-            (_, None) => {}
-        }
-        if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
-            return Err(format!("{at}.multi is only for custom and query variables"));
-        }
-        if let Some(from) = &v.values_from {
-            if v.kind != VariableType::Query {
-                return Err(format!("{at}.valuesFrom is only for query variables"));
-            }
-            for (name, text) in [("label", &from.label), ("value", &from.value), ("text", &from.text)] {
-                if let Some(text) = text {
-                    check_text(&format!("{at}.valuesFrom.{name}"), text, 0, MAX_VALUES_FROM_CHARS)?;
-                }
-            }
-            if from.from == ValuesSource::Documents {
-                if from.label.as_deref().is_some_and(|l| !l.is_empty()) {
-                    return Err(format!("{at}.valuesFrom.label is only for nodes and edges"));
-                }
-                if from.value.as_deref().is_none_or(str::is_empty) {
-                    return Err(format!("{at}.valuesFrom.value is required for documents (a field path)"));
-                }
-            }
-        }
+        validate_variable(&at, v)?;
     }
     // What a repeat may name: a variable offering several values at once.
     let repeatable = |at: &str, name: &str| -> Result<(), String> {
@@ -1198,6 +1310,54 @@ b" }),
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");
         }
+    }
+
+    #[test]
+    fn variable_options_belong_to_their_kinds() {
+        let mut m = sample();
+        m["variables"][0]["includeAll"] = json!(true);
+        m["variables"][0]["allValue"] = json!(".*");
+        m["variables"][0]["regex"] = json!("/(?<text>.+)-prod/i");
+        m["variables"][0]["sort"] = json!("numericalDesc");
+        m["variables"][0]["refresh"] = json!("load");
+        m["variables"][0]["staticOptions"] = json!([{ "value": "_int", "label": "intern" }]);
+        m["variables"][1]["includeAll"] = json!(true);
+        m["variables"][1]["allowCustom"] = json!(true);
+        let model = parse(m).unwrap();
+        let back = serde_json::to_value(&model).unwrap();
+        assert_eq!(back["variables"][0]["sort"], "numericalDesc");
+        assert_eq!(back["variables"][0]["staticOptions"][0]["label"], "intern");
+        assert_eq!(parse(back).unwrap(), model);
+        // Unset options stay out of the stored model.
+        let plain = serde_json::to_value(parse(sample()).unwrap()).unwrap();
+        assert!(plain["variables"][1].get("includeAll").is_none());
+        assert!(plain["variables"][1].get("staticOptions").is_none());
+
+        for (path, value, expect) in [
+            (vec!["variables", "1", "allValue"], json!("x"), "allValue needs includeAll"),
+            (vec!["variables", "1", "regex"], json!("a"), "regex is only for query variables"),
+            (vec!["variables", "1", "sort"], json!("alphabetical"), "sort is only for query variables"),
+            (vec!["variables", "1", "refresh"], json!("load"), "refresh is only for query variables"),
+            (vec!["variables", "1", "staticOptions"], json!([{ "value": "a" }]), "staticOptions is only"),
+            (vec!["variables", "0", "regex"], json!("(a"), "variables[0].regex"),
+            (vec!["variables", "0", "regex"], json!(""), "variables[0].regex"),
+            (vec!["variables", "0", "sort"], json!("natural"), "unknown variant"),
+            (vec!["variables", "0", "refresh"], json!("never"), "unknown variant"),
+            (vec!["variables", "0", "staticOptions"], json!([{ "value": "a" }, { "value": "a" }]), "listed twice"),
+            (vec!["variables", "0", "staticOptions"], json!([{ "value": "a", "extra": 1 }]), "unknown field"),
+        ] {
+            let err = parse(with(sample(), &path, value)).unwrap_err();
+            assert!(err.contains(expect), "{path:?}: {err}");
+        }
+        let textbox = json!({ "name": "t", "type": "textbox", "includeAll": true });
+        let err = parse(with(sample(), &["variables"], json!([textbox]))).unwrap_err();
+        assert!(err.contains("includeAll is only"), "{err}");
+        let constant = json!({ "name": "t", "type": "constant", "allowCustom": true });
+        let err = parse(with(sample(), &["variables"], json!([constant]))).unwrap_err();
+        assert!(err.contains("allowCustom is only"), "{err}");
+        let many: Vec<Value> = (0..=MAX_STATIC_OPTIONS).map(|i| json!({ "value": format!("v{i}") })).collect();
+        let err = parse(with(sample(), &["variables", "0", "staticOptions"], json!(many))).unwrap_err();
+        assert!(err.contains("at most"), "{err}");
     }
 
     #[test]

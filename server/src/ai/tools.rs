@@ -796,13 +796,7 @@ fn current_values(model: &crate::dashboards::model::DashboardModel) -> BTreeMap<
         .variables
         .iter()
         .filter(|v| !matches!(v.kind, VariableType::Constant))
-        .filter_map(|v| {
-            let value = match &v.current {
-                Some(Value::Object(m)) => m.get("value").cloned(),
-                other => other.clone(),
-            }?;
-            (!value.is_null()).then(|| (v.name.clone(), value))
-        })
+        .filter_map(|v| crate::dashboards::variables::saved_value(v).map(|value| (v.name.clone(), value)))
         .collect()
 }
 

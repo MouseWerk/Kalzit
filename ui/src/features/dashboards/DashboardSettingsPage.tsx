@@ -20,18 +20,23 @@ import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
 import { foldersQuery } from "./api";
 import {
+  ALL_VALUE,
   type AnnotationQueryModel,
   cleanVariable,
   currentValue,
   currentValues,
   type DashboardLinkModel,
   type DashboardModel,
+  isAll,
   optionValues,
+  sentValues,
   VALUES_SOURCES,
   VARIABLE_TYPES,
   type ValuesFrom,
   type VariableModel,
   type VariableType,
+  type VariableValue,
+  type VariableValues,
 } from "./model";
 import { intervalLabel, refreshIntervals } from "./refresh";
 import { AnnotationQueriesEditor, LinksEditor, linkProblem, parseTags } from "./SettingsParts";
@@ -43,6 +48,9 @@ import {
   timeOptionsProblems,
 } from "./TimeOptionsEditor";
 import { FolderPicker } from "./ToolDialogs";
+import type { TextRange } from "./timeRange";
+import { AllOptionEditor, QueryVariableOptions, VariablePreview } from "./VariableOptionsEditor";
+import { initialVariables } from "./Variables";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { Select } from "../../components/Select";
@@ -403,6 +411,8 @@ export function DashboardSettingsPage({
               editorKey={keys[index] ?? ""}
               orgId={orgId}
               variable={variable}
+              timeRange={model.timeRange}
+              values={sentValues(initialVariables(variables), variables, {})}
               error={errors[index]}
               onChange={(patch) => update(index, patch)}
               onMoveUp={index === 0 ? undefined : () => moveVariable(index, -1)}
@@ -731,6 +741,8 @@ function ValuesFromEditor({
 function VariableEditor({
   orgId,
   variable,
+  timeRange,
+  values,
   error,
   onChange,
   editorKey,
@@ -743,6 +755,10 @@ function VariableEditor({
   editorKey: string;
   orgId: string;
   variable: VariableModel;
+  /** The dashboard's range, for the preview of a query variable's values. */
+  timeRange: TextRange;
+  /** Every variable's start value, as sent; the preview fills the query's variables with them. */
+  values: VariableValues;
   error: string | undefined;
   onChange: (patch: Partial<VariableModel>) => void;
   /** Left out for the first variable. */
@@ -758,6 +774,9 @@ function VariableEditor({
   const datasource = datasources.data?.find((d) => d.id === variable.datasourceId);
   const [valuesText, setValuesText] = useState(optionValues(variable).join(", "));
   const [defaultText, setDefaultText] = useState(currentValues(variable).join(", "));
+  const [regexError, setRegexError] = useState<string | undefined>(undefined);
+  const opensAll =
+    variable.includeAll === true && isAll(variable.current as VariableValue | undefined);
   return (
     <section className="variable-editor" aria-label={variable.name} data-variable={editorKey}>
       <div className="variable-editor__row">
@@ -865,6 +884,22 @@ function VariableEditor({
           {variable.valuesFrom === undefined ? (
             <p className="field__hint">{t("dashboards.variables.queryHint")}</p>
           ) : null}
+          {datasource === undefined ? null : (
+            <>
+              <QueryVariableOptions
+                variable={variable}
+                regexError={regexError}
+                onChange={onChange}
+              />
+              <VariablePreview
+                orgId={orgId}
+                variable={variable}
+                timeRange={timeRange}
+                values={values}
+                onRegexError={setRegexError}
+              />
+            </>
+          )}
         </>
       ) : null}
       {variable.type === "custom" || variable.type === "query" ? (
@@ -876,12 +911,31 @@ function VariableEditor({
               const multi = event.currentTarget.checked;
               onChange({
                 multi,
-                current: multi ? currentValues(variable) : (currentValue(variable) ?? ""),
+                current: opensAll
+                  ? multi
+                    ? [ALL_VALUE]
+                    : ALL_VALUE
+                  : multi
+                    ? currentValues(variable)
+                    : (currentValue(variable) ?? ""),
               });
             }}
           />
           {t("dashboardTools.variables.multi")}
         </label>
+      ) : null}
+      {variable.type === "custom" || variable.type === "query" ? (
+        <>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={variable.allowCustom === true}
+              onChange={(event) => onChange({ allowCustom: event.currentTarget.checked })}
+            />
+            {t("dashboards.variables.allowCustom")}
+          </label>
+          <AllOptionEditor variable={variable} onChange={onChange} />
+        </>
       ) : null}
       {variable.type === "constant" ? (
         <TextField
@@ -891,7 +945,7 @@ function VariableEditor({
           onValueChange={(current) => onChange({ current })}
           autoComplete="off"
         />
-      ) : variable.multi === true ? (
+      ) : opensAll ? null : variable.multi === true ? (
         <TextField
           label={t("dashboards.variables.default")}
           hint={t("dashboardTools.variables.multiDefaultHint")}

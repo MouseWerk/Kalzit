@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::dashboards::model;
+use crate::dashboards::model::{self, MAX_VARIABLE_TEXT_CHARS};
+use crate::dashboards::variables::{ALL, OptionRegex};
 
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
@@ -915,9 +916,7 @@ impl Converter<'_> {
                 out["type"] = json!("query");
                 out["datasourceId"] = json!(target.id);
                 out["query"] = query;
-                if text(v, "regex").is_some() {
-                    notes.push(note("variable_regex", "the regex filter of the values is not carried"));
-                }
+                query_options(v, &mut out, &mut notes);
             }
             "custom" => {
                 let mut options: Vec<Value> = Vec::new();
@@ -975,16 +974,29 @@ impl Converter<'_> {
         if multi && multi_ok {
             out["multi"] = json!(true);
         }
-        if v.get("includeAll").and_then(Value::as_bool) == Some(true) {
-            notes.push(note("all_option", "the \"All\" option is not carried"));
+        let include_all = multi_ok && v.get("includeAll").and_then(Value::as_bool) == Some(true);
+        if include_all {
+            out["includeAll"] = json!(true);
+            match text(v, "allValue") {
+                Some(all) if all.chars().count() <= MAX_VARIABLE_TEXT_CHARS && !all.chars().any(char::is_control) => {
+                    out["allValue"] = json!(all);
+                }
+                Some(_) => notes.push(note("all_value_dropped", "the custom value for \"All\" is too long")),
+                None => {}
+            }
+        }
+        if multi_ok && v.get("allowCustomValue").and_then(Value::as_bool) == Some(true) {
+            out["allowCustom"] = json!(true);
         }
         if matches!(kind.as_str(), "query" | "custom" | "interval")
             && let Some(c) = current
         {
-            let all = c.as_str() == Some("$__all")
-                || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some("$__all")));
+            let all = c.as_str() == Some(ALL)
+                || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(ALL)));
             if !all {
                 out["current"] = c;
+            } else if include_all {
+                out["current"] = json!(ALL);
             }
         }
         self.variables.insert(name, multi && multi_ok);
@@ -1102,6 +1114,41 @@ impl Converter<'_> {
 
 /// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
 /// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
+/// Grafana's regex, sort and refresh of a query variable, as Kalzit's (`dashboards::model`).
+fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
+    if let Some(regex) = text(v, "regex") {
+        let fits = regex.chars().count() <= MAX_VARIABLE_TEXT_CHARS && !regex.chars().any(char::is_control);
+        match OptionRegex::parse(&regex) {
+            Ok(_) if fits => out["regex"] = json!(regex),
+            Ok(_) => notes.push(note("variable_regex_invalid", "the regex filter is too long and is left out")),
+            Err(e) => notes.push(
+                note("variable_regex_invalid", format!("the regex filter is left out: {e}")).with("detail", e),
+            ),
+        }
+    }
+    let sort = match v.get("sort").and_then(Value::as_i64) {
+        Some(1) => Some("alphabetical"),
+        Some(2) => Some("alphabeticalDesc"),
+        Some(3) => Some("numerical"),
+        Some(4) => Some("numericalDesc"),
+        Some(5) => Some("caseInsensitive"),
+        Some(6) => Some("caseInsensitiveDesc"),
+        Some(n @ (7 | 8)) => {
+            notes.push(note("variable_sort_natural", "natural sort became sort by name"));
+            Some(if n == 7 { "alphabetical" } else { "alphabeticalDesc" })
+        }
+        _ => None,
+    };
+    if let Some(sort) = sort {
+        out["sort"] = json!(sort);
+    }
+    match v.get("refresh").and_then(Value::as_i64) {
+        Some(1) => out["refresh"] = json!("load"),
+        Some(2) => out["refresh"] = json!("timeRange"),
+        _ => {}
+    }
+}
+
 fn options_default(detail: &str) -> ImportNote {
     let field: String = detail
         .split_whitespace()
@@ -1466,6 +1513,30 @@ mod tests {
         assert_eq!(notes[0].code, "sql_macro");
         assert_eq!(notes[0].params["macro"], "$__timeGroup");
         assert!(notes[0].text.contains("$__timeGroup"), "{notes:?}");
+    }
+
+    #[test]
+    fn variable_options_come_along_or_say_why_not() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Vars", "panels": [],
+            "templating": { "list": [
+                { "name": "job", "type": "query", "datasource": { "type": "prometheus", "uid": "prom-uid" },
+                  "query": { "query": "up" }, "regex": "/(?<text>.+/", "sort": 7, "includeAll": true,
+                  "current": { "value": "$__all" }, "allowCustomValue": true },
+                { "name": "level", "type": "textbox", "query": "x", "includeAll": true }
+            ] }
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let job = &c.model["variables"][0];
+        assert!(job.get("regex").is_none());
+        assert_eq!((job["sort"].clone(), job["includeAll"].clone()), (json!("alphabetical"), json!(true)));
+        assert_eq!((job["current"].clone(), job["allowCustom"].clone()), (json!("$__all"), json!(true)));
+        assert!(job.get("allValue").is_none());
+        let codes: Vec<&str> = item(&c.report, "variable job").notes.iter().map(|n| n.code.as_str()).collect();
+        assert_eq!(codes, ["variable_regex_invalid", "variable_sort_natural"]);
+        // "All" belongs only to variables with a list of values.
+        assert!(c.model["variables"][1].get("includeAll").is_none());
+        model::parse(c.model.clone()).unwrap();
     }
 
     #[test]

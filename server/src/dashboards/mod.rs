@@ -5,6 +5,7 @@ pub mod library;
 pub mod model;
 pub mod panel_options;
 pub mod pattern_syntax;
+pub mod variables;
 
 use std::collections::BTreeSet;
 
@@ -26,13 +27,22 @@ use model::DashboardModel;
 /// to those queries. Each newly used id must name a data source of this organization (one in the
 /// trash counts, it can come back): `422 validation` otherwise. A source the caller may not query
 /// (or not see) is `403 forbidden`, naming it.
-/// What of a variable affects the stored queries.
-type QueryRelevant<'a> =
-    (&'a str, model::VariableType, Option<&'a serde_json::Value>, Option<&'a serde_json::Value>, Option<&'a str>);
+/// What of a variable affects the stored queries: name, type, fixed value or options, query,
+/// source, the custom value for "All" and whether typed values are allowed.
+type QueryRelevant<'a> = (
+    &'a str,
+    model::VariableType,
+    Option<&'a serde_json::Value>,
+    Option<&'a serde_json::Value>,
+    Option<&'a str>,
+    Option<&'a str>,
+    bool,
+);
 
 /// What of the variables affects the stored queries: names, types, a constant's value, a custom
-/// variable's options and a query variable's source and query. Labels and the current selection
-/// of other variables do not.
+/// variable's options, a query variable's source and query, the custom value for "All" (a value
+/// the server lets through as checked) and `allowCustom` (which lets free values through).
+/// Labels and the current selection of other variables do not.
 fn variables_for_queries(model: &DashboardModel) -> Vec<QueryRelevant<'_>> {
     use model::VariableType::{Constant, Custom};
     model
@@ -44,7 +54,8 @@ fn variables_for_queries(model: &DashboardModel) -> Vec<QueryRelevant<'_>> {
                 Custom => v.options.as_ref(),
                 _ => None,
             };
-            (v.name.as_str(), v.kind, fixed, v.query.as_ref(), v.datasource_id.as_deref())
+            let all = v.all_value.as_deref().filter(|_| v.include_all);
+            (v.name.as_str(), v.kind, fixed, v.query.as_ref(), v.datasource_id.as_deref(), all, v.allow_custom)
         })
         .collect()
 }

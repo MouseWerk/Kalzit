@@ -26,8 +26,11 @@ data sources and other Grafana content are not imported.
   are skipped. `[[name]]` becomes `$name`; formats such as `${name:csv}` are dropped, since Kalzit
   binds variable values as parameters.
 - **Variables**: custom, query (with the query in the mapped source's language), constant,
-  textbox and interval. Data source and ad hoc variables and Grafana's helper functions
-  (`label_values(...)`) are skipped.
+  textbox and interval, with "All" (`includeAll`, its custom value and a saved selection of
+  "All"), typed values (`allowCustomValue`), and for query variables the regex, the sort order
+  (natural sorting becomes sorting by name) and when the values are read again. A regex Kalzit
+  cannot run (lookaround, backreferences) is left out and reported. Data source and ad hoc
+  variables and Grafana's helper functions (`label_values(...)`) are skipped.
 - **Rows** with their title, collapsed state and repeat, **repeats** of panels, **annotation
   queries** (not Grafana's built-in ones), **links**, **tags** and the **time settings**: range,
   refresh, time zone, week start, fiscal year, now delay, refresh intervals and the shared

@@ -144,7 +144,21 @@ variable** in the dashboard settings or the Add menu. Kinds:
   repeated values count among them, so let the query return each value once (`RETURN DISTINCT`
   in Cypher, a `$group` stage in MongoDB) when there are more records.
 
-Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. The
+  Below the query: a **Regex** keeps only matching values (named groups `text` and `value` take
+  the shown name and the value apart, as in `/(?<text>.+)-prod/`), **Sort** orders them (A to Z,
+  Z to A, by number, or ignoring case), **Refresh** reads them **On load** or **On new time
+  range**, and **Fixed extra values** (`name = value`, separated by commas) follow the query's.
+  The **Preview of the values** shows the list as the bar will, with the shown name left and the
+  value right, and says how many values the regex left out.
+
+Options: a **Label**, **Allow several values**, **Allow typed values** (the bar then takes a value
+outside the list), and a **Value when the dashboard opens**. Fixed values and values from a query
+can **Offer “All”**: it stands first in the list and the dashboard opens with it unless you untick
+**Open with “All”**. “All” sends every value as a list, so write `IN ($region)` in SQL and
+`=~"$region"` in PromQL; with a **Custom value for “All”** (such as `.*` or `%`) exactly that one
+value goes to the source instead, also as a parameter. Above 1,000 values only the custom value
+works. Choices in the filter bar keep a minimum width, so a shorter value does not move the
+variables after it. The
 arrow buttons under a variable move it up or down (the filter bar shows them in this order), and
 **Duplicate** adds a copy right below it under a free name. Names
 use letters, digits and underscores. Queries use a variable as `$name` (MongoDB pipelines write

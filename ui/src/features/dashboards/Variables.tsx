@@ -6,12 +6,15 @@ import { BUSY_RETRY } from "../../api/retry";
 import { valueAt } from "../../documents/paths";
 import { useI18n } from "../../i18n/i18n";
 import { variableText } from "../../panels/variableClick";
-import { runQuery } from "../datasources/api";
-import { fetchVariableOptions, type VariableOption } from "./api";
+import { fetchVariableOptions, previewVariableOptions, type VariableOption } from "./api";
 import {
+  ALL_VALUE,
+  cleanVariable,
   currentValue,
   currentValues,
   type DashboardModel,
+  isAll,
+  MAX_ALL_VALUES,
   optionChoices,
   storedQueryVariables,
   type ValuesFrom,
@@ -28,11 +31,17 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { Select } from "../../components/Select";
 
-/** The value each variable starts with: its stored current value, else the first fixed value. */
+/**
+ * The value each variable starts with: its stored current value, else "All" where it offers it,
+ * else the first fixed value.
+ */
 export function initialVariables(variables: readonly VariableModel[]): VariableValues {
   return Object.fromEntries(
     variables.map((v) => {
       const first = optionChoices(v)[0]?.value;
+      if (v.includeAll === true && currentValues(v).length === 0) {
+        return [v.name, v.multi === true ? [ALL_VALUE] : ALL_VALUE];
+      }
       if (v.multi === true) {
         const stored = currentValues(v);
         return [v.name, stored.length > 0 ? stored : first === undefined ? [] : [first]];
@@ -112,6 +121,8 @@ interface VariablesBarProps {
   stored?: readonly VariableModel[] | undefined;
   /** `auto`: the bar chose the value itself (a query variable's first option), nobody picked it. */
   onChange: (name: string, value: VariableValue, auto?: boolean) => void;
+  /** A query variable's options loaded: the values "All" stands for (`sentValues`). */
+  onOptions?: ((name: string, values: string[]) => void) | undefined;
 }
 
 /** Names a query mentions as $name, ${name} or ${name:format}. */
@@ -218,6 +229,7 @@ export function VariablesBar({
   run,
   stored,
   onChange,
+  onOptions,
 }: VariablesBarProps) {
   const { t } = useI18n();
   if (variables.length === 0) {
@@ -246,6 +258,7 @@ export function VariablesBar({
                 JSON.stringify(variable)
             }
             onChange={(value, auto) => onChange(variable.name, value, auto)}
+            onOptions={onOptions}
           />
         ))}
     </section>
@@ -264,6 +277,7 @@ function VariableControl({
   draft,
   saved,
   onChange,
+  onOptions,
 }: {
   orgId: string;
   dashboardId: string;
@@ -276,6 +290,7 @@ function VariableControl({
   draft: boolean;
   saved: readonly VariableModel[];
   onChange: (value: VariableValue, auto?: boolean) => void;
+  onOptions?: ((name: string, values: string[]) => void) | undefined;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -293,6 +308,8 @@ function VariableControl({
   );
   // The options route takes only saved, non-constant variables; a free query takes them all.
   const inputs = draft ? mentionedValues : storedQueryVariables(mentionedValues, saved);
+  // "On load" reads the options once (and on "Refresh"); otherwise a new range reads them again.
+  const rangeKey = variable.refresh === "load" ? null : [textRange.from, textRange.to];
   const options = useQuery({
     queryKey: [
       "variable-options",
@@ -300,8 +317,7 @@ function VariableControl({
       dashboardId,
       variable.name,
       draft ? variable : null,
-      textRange.from,
-      textRange.to,
+      rangeKey,
       run,
       inputs,
     ],
@@ -316,18 +332,12 @@ function VariableControl({
         );
         return answer;
       }
-      const response = await runQuery(
+      // The server reads the result as the saved variable would: shape, regex, order, extras.
+      return previewVariableOptions(
         orgId,
-        {
-          queries: [
-            { refId: "A", datasourceId: variable.datasourceId ?? "", query: variable.query },
-          ],
-          timeRange: range,
-          variables: inputs,
-        },
+        { variable: cleanVariable(variable), timeRange: range, variables: inputs },
         signal,
       );
-      return optionsFromResponse(response, variable.valuesFrom);
     },
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.
@@ -343,7 +353,9 @@ function VariableControl({
   // A query variable without a stored value opens with its first option once they load, as a
   // custom one opens with its first fixed value.
   const first = options.data?.options[0]?.value;
-  const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
+  const includeAll = variable.includeAll === true;
+  const opensEmpty =
+    variable.type === "query" && currentValue(variable) === undefined && !includeAll;
   const multi = variable.multi === true;
   const empty = valueList(value).length === 0;
   useEffect(() => {
@@ -351,31 +363,64 @@ function VariableControl({
       onChange(multi ? [first] : first, true);
     }
   }, [opensEmpty, empty, first, onChange, multi]);
+  // The values "All" stands for, as the page sends them (`sentValues`).
+  const loaded = options.data?.options;
+  useEffect(() => {
+    if (loaded !== undefined && onOptions !== undefined) {
+      onOptions(
+        variable.name,
+        loaded.map((o) => o.value),
+      );
+    }
+  }, [loaded, onOptions, variable.name]);
 
+  const list =
+    variable.type === "custom" || variable.type === "interval"
+      ? optionChoices(variable)
+      : (options.data?.options ?? []);
+  // "All" as a list has a limit; above it, the custom value for "All" is the way (board 9).
+  const allTooLong =
+    includeAll && isAll(value) && !variable.allValue && list.length > MAX_ALL_VALUES;
   let control: ReactNode;
-  if (variable.type === "textbox") {
+  // Typed text as a value: the word for "All" picks "All".
+  const typed = (typedText: string) =>
+    includeAll && typedText === t("dashboards.variables.all") ? ALL_VALUE : typedText;
+  if (variable.type === "textbox" || (variable.allowCustom === true && !multi)) {
+    const listId = variable.type === "textbox" ? undefined : `${id}-list`;
     control = (
-      <input
-        id={id}
-        className="input variables__input"
-        value={text}
-        onChange={(event) => setText(event.currentTarget.value)}
-        onBlur={() => text !== valueText(value) && onChange(text)}
-        onKeyDown={(event) => {
-          // An Enter that confirms an input method composition is not a submit.
-          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-            onChange(text);
-          }
-        }}
-      />
+      <>
+        <input
+          id={id}
+          className="input variables__input"
+          list={listId}
+          value={includeAll && text === ALL_VALUE ? t("dashboards.variables.all") : text}
+          onChange={(event) => setText(event.currentTarget.value)}
+          onBlur={() => text !== valueText(value) && onChange(typed(text))}
+          onKeyDown={(event) => {
+            // An Enter that confirms an input method composition is not a submit.
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              onChange(typed(text));
+            }
+          }}
+          aria-describedby={optionsError === null ? undefined : `${id}-error`}
+        />
+        {listId === undefined ? null : (
+          <datalist id={listId}>
+            {includeAll ? <option value={t("dashboards.variables.all")} /> : null}
+            {list.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label === option.value ? null : option.label}
+              </option>
+            ))}
+          </datalist>
+        )}
+      </>
     );
   } else {
-    const list =
-      variable.type === "custom" || variable.type === "interval"
-        ? optionChoices(variable)
-        : (options.data?.options ?? []);
     const picked = valueList(value).map((v) => optionValue(list, v));
-    const unknown = picked.filter((v) => !list.some((option) => option.value === v));
+    const unknown = picked.filter(
+      (v) => !list.some((option) => option.value === v) && !(includeAll && v === ALL_VALUE),
+    );
     control = multi ? (
       <VariableMultiSelect
         id={id}
@@ -383,6 +428,8 @@ function VariableControl({
         picked={picked}
         options={list}
         truncated={options.data?.truncated === true}
+        includeAll={includeAll}
+        allowCustom={variable.allowCustom === true}
         describedBy={optionsError === null ? undefined : `${id}-error`}
         onChange={onChange}
       />
@@ -398,6 +445,7 @@ function VariableControl({
             {picked.length === 0 ? t("dashboards.variables.none") : valueText(picked)}
           </option>
         )}
+        {includeAll ? <option value={ALL_VALUE}>{t("dashboards.variables.all")}</option> : null}
         {list.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -412,6 +460,11 @@ function VariableControl({
         {label}
       </label>
       {control}
+      {allTooLong ? (
+        <span className="field__hint" title={t("dashboards.variables.allTooLong")}>
+          {t("dashboards.variables.allTooLong")}
+        </span>
+      ) : null}
       {options.data?.truncated === true ? (
         <span className="field__hint" title={t("dashboards.variables.truncated")}>
           {t("dashboards.variables.truncated")}

@@ -555,6 +555,65 @@
     gap: var(--space-3);
   }
 
+  .variable-editor__group {
+    display: grid;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* The values a query variable offers while it is edited: name left, value right. */
+  .variable-preview {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .variable-preview__head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .variable-preview__meta {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .variable-preview__list {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .variable-preview__list.is-stale {
+    color: var(--text-muted);
+  }
+
+  .variable-preview__row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .variable-preview__row > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .variable-preview__value {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
   .variable-editor__actions {
     display: flex;
     flex-wrap: wrap;

@@ -163,6 +163,97 @@ describe("rows", () => {
   });
 });
 
+describe("“All” of a variable", () => {
+  const regions = (extra: Partial<DashboardModel["variables"][number]> = {}): DashboardModel => ({
+    ...emptyModel("Main"),
+    variables: [
+      {
+        name: "region",
+        label: "Region",
+        type: "custom",
+        options: ["Nord", "Ost", "Sued"],
+        multi: true,
+        includeAll: true,
+        ...extra,
+      },
+    ],
+    panels: [panel("p1", "Orders")],
+  });
+
+  const sentRegion = (server: ReturnType<typeof setup>["server"]) =>
+    server.areas.dashboards.panelQueries.at(-1)?.body.variables?.region;
+
+  it("opens with “All” and sends every value as a list", async () => {
+    const { server } = setup("viewer", regions());
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("button", { name: "Region: All" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Nord", "Ost", "Sued"]));
+  });
+
+  it("sends the custom value for “All” as one value, and a pick leaves “All”", async () => {
+    const { server } = setup("viewer", regions({ allValue: "%" }));
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Region: All" }));
+    await waitFor(() => expect(sentRegion(server)).toBe("%"));
+    const all = screen.getByRole("menuitemcheckbox", { name: "All" });
+    expect(all.getAttribute("aria-checked")).toBe("true");
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ost" }));
+    expect(screen.getByRole("button", { name: "Region: Ost" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Ost"]));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "All" }));
+    expect(screen.getByRole("button", { name: "Region: All" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toBe("%"));
+  });
+
+  it("offers “All” first in a single-value list", async () => {
+    const { server } = setup("viewer", regions({ multi: false }));
+    const { user } = renderApp("/dashboards/d-main");
+    const select = await screen.findByRole("combobox", { name: "Region" });
+    expect(select).toHaveProperty("value", "$__all");
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Nord", "Ost", "Sued"]));
+    await pickOption(user, select, "Sued");
+    await waitFor(() => expect(sentRegion(server)).toBe("Sued"));
+  });
+
+  it("repeats a panel per value of “All”", async () => {
+    setup("viewer", {
+      ...regions(),
+      panels: [panel("p1", "Orders", { repeat: { variable: "region", direction: "horizontal" } })],
+    });
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("article", { name: "Orders: Sued" })).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Orders: Nord" })).toBeTruthy();
+  });
+
+  it("takes a typed value where the variable allows it", async () => {
+    const many = Array.from({ length: 3 }, (_, i) => `site-${i + 1}`);
+    const { server } = setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        {
+          name: "site",
+          type: "custom",
+          options: many,
+          current: ["site-1"],
+          multi: true,
+          allowCustom: true,
+        },
+      ],
+      panels: [panel("p1", "Orders")],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "site: site-1" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search values" }), "werk-9");
+    await user.click(screen.getByRole("menuitem", { name: "Use “werk-9”" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables?.site).toEqual([
+        "werk-9",
+        "site-1",
+      ]),
+    );
+  });
+});
+
 describe("multi-value variable picker", () => {
   const regions = (current: string[]): DashboardModel => ({
     ...emptyModel("Main"),

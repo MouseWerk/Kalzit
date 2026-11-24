@@ -263,6 +263,14 @@ const VARIABLE_FIELDS = [
   "options",
   "current",
   "multi",
+  "valuesFrom",
+  "includeAll",
+  "allValue",
+  "regex",
+  "sort",
+  "refresh",
+  "staticOptions",
+  "allowCustom",
 ];
 const VARIABLE_TYPES = ["query", "custom", "constant", "textbox", "interval"];
 
@@ -353,7 +361,11 @@ function variablesProblem(model: DashboardModel, sent: unknown): boolean {
         typeof o === "object" && o !== null ? String((o as { value?: unknown }).value) : String(o),
       );
       const values = Array.isArray(value) ? value : [value];
-      if (!values.every((v) => options.includes(String(v)))) {
+      // As on the server: the custom value for "All" alone, or any value where typed ones are
+      // allowed, passes too.
+      const allValue = variable.includeAll === true ? variable.allValue : undefined;
+      const isAllValue = allValue !== undefined && values.length === 1 && values[0] === allValue;
+      if (!values.every((v) => options.includes(String(v))) && !isAllValue && !variable.allowCustom) {
         return true;
       }
     }

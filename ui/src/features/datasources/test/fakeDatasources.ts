@@ -10,6 +10,7 @@ import {
 import { FAKE_GRAPH, FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID, TIGERGRAPH_ID } from "./fakeGraph";
 import { FAKE_MONGO_COLLECTIONS, mongoDistribution, mongoOutcome, parseMongo } from "./fakeMongo";
 import { FAKE_SOURCE_SCHEMAS, sourceKindSources, sourceOutcome } from "./fakeSources";
+import { refineFakeOptions } from "./fakeVariables";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -390,6 +391,8 @@ export interface FakeDatasourcesState {
   mongo: Record<string, Record<string, unknown>[]>;
   /** Every request body of the free distribution route, in order. */
   distributions: Record<string, unknown>[];
+  /** Every body of the variable preview route (`POST /query/variable-options`), in order. */
+  variablePreviews: Record<string, unknown>[];
   /** Awaited before a distribution answers, so a test can hold it (loading, cancelling). */
   distributionGate?: (body: Record<string, unknown>) => Promise<void>;
 }
@@ -808,6 +811,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     bulk: [],
     mongo: FAKE_MONGO_COLLECTIONS(),
     distributions: [],
+    variablePreviews: [],
   };
 
   const live = () => state.datasources.filter((ds) => ds.deletedAt === undefined);
@@ -901,6 +905,28 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         }
       }
       return json(200, { results });
+    }
+    if (parts[0] === "query" && parts[1] === "variable-options" && parts.length === 2) {
+      if (method !== "POST") return undefined;
+      // The contract: {variable, timeRange, variables}; the variable is one of the model, of
+      // type query; `datasources:query` on its source; regex, order and extras applied.
+      const extra = unknownKey(body, ["variable", "timeRange", "variables"]);
+      if (extra !== undefined) return validation(extra);
+      const variable = (body.variable ?? {}) as Record<string, unknown>;
+      const id = String(variable.datasourceId ?? "");
+      if (variable.type !== "query") return validation("variable");
+      if (!sees(id)) return error(404, "not_found");
+      if (!may(id, "query")) return error(403, "forbidden");
+      state.variablePreviews.push(body);
+      const outcome = await answerQuery(
+        state,
+        { refId: "options", datasourceId: id, query: variable.query },
+        body.timeRange as TimeRange,
+        (body.variables ?? {}) as Record<string, unknown>,
+      );
+      if ("error" in outcome) return json(502, { error: outcome.error });
+      const refined = refineFakeOptions(outcome, variable);
+      return "error" in refined ? json(422, { error: refined.error }) : json(200, refined);
     }
     if (parts[0] === "query" && parts[1] === "distribution" && parts.length === 2) {
       if (method !== "POST") {

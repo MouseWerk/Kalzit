@@ -42,6 +42,14 @@ interface Target {                               // in addition to version 1
 }
 interface Variable {                             // in addition to version 1
   multi?: boolean;                               // custom and query variables only
+  includeAll?: boolean;                          // custom and query: "All" is offered first; true or absent
+  allValue?: string;                             // needs includeAll; 1 to 1000 characters: what "All" sends instead of the list
+  allowCustom?: boolean;                         // custom and query: values outside the list may be typed in
+  regex?: string;                                // query only; 1 to 1000 characters, "/pattern/flags" or the bare pattern
+  sort?: "alphabetical" | "alphabeticalDesc" | "numerical" | "numericalDesc"
+       | "caseInsensitive" | "caseInsensitiveDesc";   // query only; absent keeps the query's order
+  refresh?: "load" | "timeRange";                // query only; absent reads the options on every new range
+  staticOptions?: { value: string; label?: string }[];  // query only; up to 100, distinct values, listed after the query's
 }
 interface AnnotationQuery {
   id: string;                                    // unique among annotation queries
@@ -65,9 +73,31 @@ fields refused, so a server from before them refuses a dashboard that uses them:
 a version needs the database backup taken with the update, or those panels saved without them
 first.
 
+**"All".** A variable with `includeAll` offers "All" first and, without another stored value,
+opens with it; a selection of "All" is stored as `current: "$__all"` (or `["$__all"]` for several
+values). The marker never reaches a query: the browser sends the list of every value the variable
+offers (a custom variable's own options, a query variable's options as last loaded), or exactly
+`allValue` when it is set, as one value. Values go to the database as parameters, never as text in
+the query: SQL binds one parameter per value (`region IN ($region)` becomes `region IN ($1, $2)`),
+PromQL matches a pattern of escaped values (`a\.b|c`). The server accepts `allValue` sent alone
+as the dashboard's own value: it counts as checked like a custom variable's option, so a pattern
+such as `.*` stays a pattern in PromQL. A list has at most 1,000 values (`variables.list_too_long`);
+longer ones need `allValue`. Where the server itself fills in a saved "All" (share links created
+without values, reports, AI tools), it uses `allValue`, else a custom variable's options; a query
+variable at "All" without `allValue` is left out there.
+
+**Typed values.** `allowCustom` lets the bar take a value outside the list. A custom variable's
+typed value is then a free value: bound as a parameter, never an identifier and never a pattern
+in PromQL; values from its options stay checked.
+
+`includeAll`, `allValue`, `allowCustom`, `regex`, `sort`, `refresh` and `staticOptions` came after
+version 0.7.5 under `schemaVersion` 2 (optional, left out while unset); a server from before them
+refuses a model that sets one.
+
 Rules:
 
-- A repeat must name a variable with `multi: true`. A panel inside a repeated row cannot repeat
+- A repeat must name a variable with `multi: true`. With "All" picked, it repeats per value "All"
+  stands for. A panel inside a repeated row cannot repeat
   on its own.
 - **Link addresses** (`links[].url` of the dashboard and of panels) must start with `http://`,
   `https://`, `mailto:` or `/` (a path on this server, not `//host`), written out: no spaces

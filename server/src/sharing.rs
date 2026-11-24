@@ -1120,13 +1120,7 @@ pub fn default_variables(model: &DashboardModel) -> BTreeMap<String, Value> {
         .variables
         .iter()
         .filter(|v| v.kind != VariableType::Constant)
-        .filter_map(|v| {
-            let value = match &v.current {
-                Some(Value::Object(m)) => m.get("value").cloned(),
-                other => other.clone(),
-            }?;
-            (!value.is_null()).then(|| (v.name.clone(), value))
-        })
+        .filter_map(|v| crate::dashboards::variables::saved_value(v).map(|value| (v.name.clone(), value)))
         .collect()
 }
 

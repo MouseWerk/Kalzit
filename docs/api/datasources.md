@@ -22,6 +22,7 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | POST | `/orgs/{orgId}/query` | member; `datasources:query` on each query's source |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query` | member; `dashboards:read` on the dashboard |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` | member; `dashboards:read` on the dashboard |
+| POST | `/orgs/{orgId}/query/variable-options` | member; `datasources:query` on the variable's source |
 
 "On the source" means the org-wide permission of the member's roles, or a grant on that data
 source (`query` gives read and query, `edit` adds write, `admin` adds permissions; see the grants
@@ -1965,6 +1966,29 @@ that is not of type `query` is `422 validation`.
   (`RETURN DISTINCT`, a `$group` stage) when a source has more records than that.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
+- After the options are read from the result, the variable's own options apply, in this order
+  (docs/api/dashboard-features.md):
+  - `regex` keeps the options whose value matches (`/pattern/flags` with the flags `i`, `m`, `s`,
+    or the bare pattern). The named groups `text` and `value` take the shown name and the value
+    apart; with neither, a single unnamed group is both; without groups the option stays as it
+    is. Extracted values stay distinct. `unmatched` counts the values left out (absent when
+    none). The engine runs in time linear in the text and has no lookaround or backreferences;
+    a pattern may compile to at most 1 MiB.
+  - `sort` orders by shown name (`alphabetical`, `caseInsensitive`, and their `Desc` forms, by
+    code points or ignoring case) or by value as a number (`numerical`, `numericalDesc`; values
+    that are no numbers follow in their order). Equal entries keep the query's order.
+  - `staticOptions` follow, each unless the query gave its value already.
+
+### Variable preview: `POST /orgs/{orgId}/query/variable-options`
+
+The options a variable being edited would offer, for the settings page and an unsaved dashboard.
+Body `VariablePreviewRequest`: `{ "variable": {...}, "timeRange": {...}, "variables": {...} }`.
+`variable` is a variable as the dashboard model holds it, checked by the model's rules (`422
+validation`, `field: variable`, reason `variables.invalid`), of type `query` (`variables.not_a_query`).
+Its query runs as a free query: `datasources:query` on its source (role or grant), `404 not_found`
+for a source the caller cannot see, `403 forbidden` without the right; `variables` are the other
+variables' values, unchecked, as for a free query. The answer and its errors are those of the
+options route above.
 
 ## Query cache
 
@@ -2504,7 +2528,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.constant` | `name` | a value was sent for a constant |
 | `variables.not_an_option` | `name`, `value` | a custom variable's value outside its options |
 | `variables.value_type` | `name` | not a value or a list of values |
+| `variables.list_too_long` | `name`, `max` | a list of more than `max` values (1,000); give "All" a custom value |
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
+| `variables.invalid` | `detail` | the preview's `variable` breaks the model's rules (`field: variable`) |
+| `variables.regex_invalid` | `detail` | the variable's regex does not compile (`field: regex`) |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table and has no `valuesFrom` for its shape, or answers a table and has one (no `field`) |
 

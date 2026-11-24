@@ -613,8 +613,8 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!(status_of(r, "panel 7 \"Hinweis\""), ItemStatus::Approximated);
     assert_eq!(status_of(r, "panel 8 \"Weitere\""), ItemStatus::Skipped);
     assert_eq!(status_of(r, "panel 9 \"Library\""), ItemStatus::Skipped);
-    assert_eq!(status_of(r, "variable host"), ItemStatus::Approximated);
-    assert_eq!(status_of(r, "variable hosts_from_db"), ItemStatus::Approximated);
+    assert_eq!(status_of(r, "variable host"), ItemStatus::Converted);
+    assert_eq!(status_of(r, "variable hosts_from_db"), ItemStatus::Converted);
     assert_eq!(status_of(r, "variable filter"), ItemStatus::Skipped);
     assert_eq!(status_of(r, "variable step"), ItemStatus::Approximated);
     assert_eq!(status_of(r, "variable site"), ItemStatus::Converted);
@@ -645,6 +645,15 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!((m["sharedCursor"].clone(), m["weekStart"].clone()), (json!("crosshair"), json!("monday")));
     assert_eq!(m["tags"], json!(["lager", "betrieb"]));
     assert_eq!(m["variables"][0]["options"][2], json!({ "value": "gamma", "label": "Gamma" }));
+    // "All", its custom value and a stored selection of "All" come along.
+    assert_eq!(
+        (m["variables"][0]["includeAll"].clone(), m["variables"][0]["allValue"].clone()),
+        (json!(true), json!("%"))
+    );
+    assert_eq!(m["variables"][0]["current"], "$__all");
+    // So do the regex, the order and when the options are read again.
+    assert_eq!(m["variables"][1]["regex"], "/a.*/");
+    assert_eq!((m["variables"][1]["sort"].clone(), m["variables"][1]["refresh"].clone()), (json!("caseInsensitive"), json!("timeRange")));
     assert_eq!(m["annotations"][0]["enabled"], false);
 
     let sources =

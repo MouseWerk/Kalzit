@@ -101,6 +101,7 @@ import {
   newPanelId,
   type PanelModel,
   type RowModel,
+  sentValues,
   type VariableValue,
   type VariableValues,
   valueList,
@@ -644,6 +645,19 @@ function DashboardView({
     setValues((v) => ({ ...v, [name]: value }));
     if (!auto) setChosen((names) => (names.has(name) ? names : new Set([...names, name])));
   };
+  // The values each query variable offered last, by name: what "All" stands for.
+  const [loadedOptions, setLoadedOptions] = useState<Record<string, readonly string[]>>({});
+  const noteOptions = (name: string, list: string[]) =>
+    setLoadedOptions((known) =>
+      known[name] !== undefined && known[name].join("\u0000") === list.join("\u0000")
+        ? known
+        : { ...known, [name]: list },
+    );
+  // What the queries, links and repeats run with: "All" as every value or its custom value.
+  const sent = useMemo(
+    () => sentValues(values, model.variables, loadedOptions),
+    [values, model.variables, loadedOptions],
+  );
   // Rows opened or closed while viewing; not saved.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
@@ -906,7 +920,7 @@ function DashboardView({
         )
       : [],
     saved: dashboard.model,
-    values,
+    values: sent,
     run: clock.run,
   });
 
@@ -1524,7 +1538,7 @@ function DashboardView({
   const host = {
     orgId,
     dashboardId: dashboard.id,
-    linkValues: values,
+    linkValues: sent,
     openInExplore: (datasourceId: string, query: unknown) => {
       handOffToExplore({ datasourceId, query });
       void navigate({ to: "/explore", search: {} });
@@ -1561,7 +1575,7 @@ function DashboardView({
       orgId,
       dashboardId: dashboard.id,
       range: resolved.ok ? resolved.range : { from: 0, to: 0 },
-      variables: values,
+      variables: sent,
       saved: dashboard.model.variables,
       source: "stored" as const,
       run: clock.run,
@@ -1572,7 +1586,7 @@ function DashboardView({
       orgId,
       dashboard.id,
       resolved,
-      values,
+      sent,
       dashboard.model.variables,
       clock.run,
       clock.manual,
@@ -1665,6 +1679,7 @@ function DashboardView({
             run={clock.manual}
             stored={dashboard.model.variables}
             onChange={pick}
+            onOptions={noteOptions}
           />
         </div>
         <PanelEditor
@@ -1695,7 +1710,7 @@ function DashboardView({
             </>
           }
           range={resolved.range}
-          variables={editorValues(edited, rows, values)}
+          variables={editorValues(edited, rows, sent)}
           stored={(() => {
             const saved = dashboard.model.panels.find((p) => p.id === edited.id);
             return saved === undefined
@@ -1777,7 +1792,7 @@ function DashboardView({
         dashboard: dashboard.id,
         from: textRange.from,
         to: textRange.to,
-        vars: variableTexts(values),
+        vars: variableTexts(sent),
       },
     });
   const toolbarActions = {
@@ -1827,12 +1842,13 @@ function DashboardView({
           run={clock.manual}
           stored={draft === null ? undefined : dashboard.model.variables}
           onChange={pick}
+          onOptions={noteOptions}
         />
         <DashboardLinks
           orgId={orgId}
           dashboardId={dashboard.id}
           links={model.links ?? []}
-          values={values}
+          values={sent}
         />
       </div>
     );
@@ -2078,14 +2094,14 @@ function DashboardView({
                       orgId,
                       dashboardId: dashboard.id,
                       range: panelRange(alone, resolved.range, now),
-                      variables: editorValues(alone, rows, values),
+                      variables: editorValues(alone, rows, sent),
                       saved: dashboard.model.variables,
                       source: "stored",
                       run: clock.run,
                       manual: clock.manual,
                       live: liveOptions,
                     }}
-                    view={{ ...viewActions, values: editorValues(alone, rows, values) }}
+                    view={{ ...viewActions, values: editorValues(alone, rows, sent) }}
                   />
                 </PanelHostContext>
               </div>
@@ -2535,7 +2551,7 @@ function DashboardView({
                   variable.label === undefined || variable.label === ""
                     ? variable.name
                     : variable.label,
-                value: values[variable.name],
+                value: sent[variable.name],
               })),
             panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
             onClose: () => setDialog(null),
