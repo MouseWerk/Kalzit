@@ -65,7 +65,7 @@ import {
   type PanelStart,
   PanelStartChoice,
 } from "../analyses/PanelSources";
-import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
+import { datasourcesQuery, kindsQuery, preferredSource, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
@@ -526,7 +526,8 @@ export function PanelEditor({
   }, [run]);
 
   const addTarget = useCallback(() => {
-    const first = queryable[0];
+    // A new query starts with the source of the one above it, else the default, else the first.
+    const first = preferredSource(queryable);
     const kindOf = (datasourceId: string) =>
       datasources.data?.find((d) => d.id === datasourceId)?.kind;
     setTargets((list) => [

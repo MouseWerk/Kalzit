@@ -1482,5 +1482,12 @@
   "datasources.reason.sql.stage_reference": "Stages (@name) sind nicht erlaubt, sie lesen Dateien. Frag stattdessen Tabellen ab.",
   "datasources.reason.sql.path_table": "{name} liest Dateien direkt und ist nicht erlaubt; frag stattdessen eine Tabelle ab.",
   "datasources.reason.provisioning.read_only": "Aus Dateien verwaltet (Satz „{set}“, {path}) und deshalb schreibgeschützt. Ändere die Datei und wende sie mit kalzit provision apply an; Organisations-Admins können die Sperre im Notfall lösen.",
-  "datasources.reason.sharing.public_links_active": "Aktive öffentliche Links auf diesem Dashboard: {links}. Besucher sähen die Änderung sofort; Speichern braucht deshalb das Recht dashboards:public."
+  "datasources.reason.sharing.public_links_active": "Aktive öffentliche Links auf diesem Dashboard: {links}. Besucher sähen die Änderung sofort; Speichern braucht deshalb das Recht dashboards:public.",
+  "datasources.default.field": "Standard-Datenquelle",
+  "datasources.default.hint": "Explore und neue Panels beginnen damit, wenn keine Quelle gewählt ist. Die Organisation hat eine Standard-Datenquelle.",
+  "datasources.default.badge": "Standard",
+  "datasources.default.set": "„{name}“ ist jetzt die Standard-Datenquelle.",
+  "datasources.default.unset": "„{name}“ ist nicht mehr die Standard-Datenquelle.",
+  "datasources.menu.setDefault": "Als Standard festlegen",
+  "datasources.menu.unsetDefault": "Nicht mehr Standard"
 }

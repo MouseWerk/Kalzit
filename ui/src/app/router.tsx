@@ -31,6 +31,7 @@ import {
   setupRoute,
   ssoTestRoute,
 } from "./baseRoutes";
+import { grafanaAddressRoutes } from "./grafanaAddresses";
 
 export { type LoginSearch, parseLoginSearch, type RouterContext } from "./baseRoutes";
 
@@ -67,6 +68,7 @@ const routeTree = rootRoute.addChildren([
     ...adminRoutes,
     ...settingsRoutes,
     ...appsRoutes,
+    ...grafanaAddressRoutes,
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {

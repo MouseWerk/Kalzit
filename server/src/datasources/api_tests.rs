@@ -379,6 +379,78 @@ async fn pages_are_bounded_and_continue_with_the_cursor() {
     t.finish().await;
 }
 
+/// One source per organization is the default: setting another moves it, unsetting leaves none,
+/// the trash takes it away, and it takes `datasources:write` on the source.
+#[tokio::test]
+async fn the_default_source_is_one_per_organization() {
+    let t = T::new().await;
+    let file = t.sqlite_file("standard.db", "CREATE TABLE x (a INT);").await;
+    let a = t.create_sqlite("Erste", &file).await;
+    let b = t.create_sqlite("Zweite", &file).await;
+    let tr = &t;
+    let set = |id: &str, on: bool, cookie: &str| {
+        let t = tr;
+        let path = t.path(&format!("/datasources/{id}/default"));
+        let cookie = cookie.to_string();
+        async move { t.send(Method::PUT, &path, Some(json!({ "default": on })), Some(&cookie)).await }
+    };
+    let defaults = || async move {
+        let list = tr.get("/datasources").await;
+        list.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["isDefault"] == true)
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(defaults().await, Vec::<String>::new(), "none until one is chosen");
+    assert_eq!(t.get(&format!("/datasources/{a}")).await.body["isDefault"], false);
+
+    let r = set(&a, true, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["isDefault"], true);
+    assert_eq!(defaults().await, std::slice::from_ref(&a));
+    // Setting it again changes nothing.
+    assert_eq!(set(&a, true, &t.owner).await.body["isDefault"], true);
+
+    // Another source takes it over.
+    assert_eq!(set(&b, true, &t.owner).await.status, StatusCode::OK);
+    assert_eq!(defaults().await, std::slice::from_ref(&b));
+    assert_eq!(t.get(&format!("/datasources/{a}")).await.body["isDefault"], false);
+
+    // Unset: the organization has none.
+    let r = set(&b, false, &t.owner).await;
+    assert_eq!((r.status, r.body["isDefault"].clone()), (StatusCode::OK, json!(false)));
+    assert_eq!(defaults().await, Vec::<String>::new());
+
+    // Without write on the source: refused, nothing changes.
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let r = set(&a, true, &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    let editor = t.session_for_role("edda", Some("editor")).await;
+    let r = set(&a, true, &editor).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    assert_eq!(defaults().await, Vec::<String>::new());
+    let r = t
+        .send(Method::PUT, &t.path(&format!("/datasources/{a}/default")), Some(json!({ "on": true })), Some(&t.owner))
+        .await;
+    assert_eq!(r.code(), "validation", "{}", r.text);
+
+    // The trash takes it away; restoring does not bring it back.
+    assert_eq!(set(&a, true, &t.owner).await.status, StatusCode::OK);
+    let del = t.send(Method::DELETE, &t.path(&format!("/datasources/{a}")), None, Some(&t.owner)).await;
+    assert_eq!(del.status, StatusCode::NO_CONTENT);
+    assert_eq!(set(&a, true, &t.owner).await.status, StatusCode::NOT_FOUND, "not for a source in the trash");
+    let restored = t.post(&format!("/datasources/{a}/restore"), json!({})).await;
+    assert_eq!(restored.body["isDefault"], false);
+    assert_eq!(defaults().await, Vec::<String>::new());
+    assert_eq!(crate::routes::datasources::default_datasource(&t.state.db, &t.org).await.unwrap(), None);
+    assert_eq!(set(&b, true, &t.owner).await.status, StatusCode::OK);
+    assert_eq!(crate::routes::datasources::default_datasource(&t.state.db, &t.org).await.unwrap(), Some(b));
+    t.finish().await;
+}
+
 /// New PostgreSQL and MySQL sources get the TLS mode `auto` when they leave it out; a change that
 /// leaves it out keeps `auto`, and a source stored without a mode (from before) stays without.
 #[tokio::test]

@@ -211,16 +211,21 @@ const KIND_OF: Record<string, string> = {
   influxdb: "influxdb",
 };
 
-export type Suggestion = "sameName" | "sameKind" | "none";
+export type Suggestion = "orgDefault" | "sameName" | "sameKind" | "none";
 
 /**
- * The Kalzit source proposed for one of the file: the one of the same name, else the only one of
- * its kind. Nothing is proposed when several of the kind exist; people pick then.
+ * The Kalzit source proposed for one of the file: for Grafana's default source the
+ * organization's default, else the one of the same name, else the only one of its kind. Nothing
+ * is proposed when several of the kind exist; people pick then.
  */
 export function suggestSource(
   source: GrafanaSource,
-  available: readonly { id: string; kind: string; name: string }[],
+  available: readonly { id: string; kind: string; name: string; isDefault?: boolean }[],
 ): { id: string; why: Suggestion } {
+  const orgDefault = available.find((candidate) => candidate.isDefault === true);
+  if (source.key === "default" && orgDefault !== undefined) {
+    return { id: orgDefault.id, why: "orgDefault" };
+  }
   const fold = (value: string) => value.trim().toLowerCase();
   const kind = KIND_OF[source.type];
   const named = available.filter(

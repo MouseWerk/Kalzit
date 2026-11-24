@@ -101,6 +101,7 @@ import {
   datasourcesQuery,
   fetchDistribution,
   kindsQuery,
+  preferredSource,
   runQuery,
   sourceAccess,
 } from "../datasources/api";
@@ -377,7 +378,8 @@ function Explore({
   const list = (datasources.data ?? []).filter(
     (source) => sourceAccess(source.access, permissions).query,
   );
-  const datasource = list.find((d) => d.id === chosen) ?? list[0];
+  // The chosen source (or the last one used), else the organization's default, else the first.
+  const datasource = list.find((d) => d.id === chosen) ?? preferredSource(list);
   const query =
     datasource === undefined ? null : (queries[datasource.id] ?? emptyQuery(datasource.kind));
   // A field holding something the server would refuse keeps the query from running; a MongoDB

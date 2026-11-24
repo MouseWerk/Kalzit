@@ -225,5 +225,6 @@
   "provisioning.note.time_range": "The time range could not be read and is the last 6 hours.",
   "provisioning.note.refresh": "The refresh {refresh} is outside 5 seconds to a day and was dropped.",
   "provisioning.note.time_zone": "The time zone {zone} is not known and was dropped.",
-  "provisioning.note.now_delay": "The now delay {delay} was dropped."
+  "provisioning.note.now_delay": "The now delay {delay} was dropped.",
+  "provisioning.import.orgDefault": "proposed: the organization’s default"
 }

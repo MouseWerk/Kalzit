@@ -44,6 +44,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/dashboards/import/grafana", OrgMember, import_grafana)
             .body_limit(8 * 1024 * 1024),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/import-report", OrgMember, import_report),
+        // A Grafana address (`/d/<uid>`): the dashboard behind a uid, if the caller may read it.
+        route(Method::GET, "/orgs/{orgId}/dashboards/by-uid/{uid}", OrgMember, by_uid),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
         route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash).changes_rights(),
@@ -563,6 +565,8 @@ struct ImportedFrom<'a> {
     source: &'a str,
     source_version: Option<i64>,
     report: &'a Value,
+    /// The `uid` the dashboard had in Grafana, so its old address still finds it.
+    source_uid: Option<&'a str>,
 }
 
 /// Creates a dashboard as `POST /dashboards` does; an import passes its report, which is stored
@@ -630,7 +634,7 @@ async fn create_dashboard(
         summary["importedFrom"] = json!(imported.source);
         sqlx::query(
             "INSERT INTO dashboard_import_reports (dashboard_id, org_id, source, source_version, report, created_by, \
-             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             created_at, source_uid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&id)
         .bind(&ctx.org_id)
@@ -639,6 +643,7 @@ async fn create_dashboard(
         .bind(imported.report.to_string())
         .bind(&ctx.user.id)
         .bind(now)
+        .bind(imported.source_uid)
         .execute(&mut *tx)
         .await?;
     }
@@ -697,6 +702,14 @@ async fn import_grafana(
         })?;
         sources.insert(grafana_ref.clone(), SourceTarget { id: ds.id, kind: ds.kind });
     }
+    // Grafana's default data source (a panel without one) becomes the organization's default
+    // unless the caller mapped it.
+    if !sources.contains_key("default")
+        && let Some(id) = super::datasources::default_datasource(&state.db, &ctx.org_id).await?
+    {
+        let ds = crate::datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
+        sources.insert("default".into(), SourceTarget { id: ds.id, kind: ds.kind });
+    }
     let conversion = grafana::convert(&body.dashboard, &sources)
         .map_err(|e| ApiError::validation(e).with_field("dashboard").because("dashboards.import_unreadable"))?;
     let report_value = serde_json::to_value(&conversion.report).map_err(|e| ApiError::internal("dashboards", e))?;
@@ -712,10 +725,64 @@ async fn import_grafana(
         model: conversion.model.clone(),
         message: Some("Imported from Grafana".into()),
     };
-    let imported =
-        ImportedFrom { source: "grafana", source_version: conversion.report.source_version, report: &report_value };
+    let source_uid = body
+        .dashboard
+        .get("uid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|uid| !uid.is_empty() && uid.len() <= MAX_SOURCE_UID && !uid.chars().any(char::is_control));
+    let imported = ImportedFrom {
+        source: "grafana",
+        source_version: conversion.report.source_version,
+        report: &report_value,
+        source_uid,
+    };
     let dashboard = create_dashboard(&state, &ctx, &info, create, Some(imported)).await?;
     Ok(Json(GrafanaImportAnswer { report: conversion.report, model: conversion.model, dashboard: Some(dashboard) }))
+}
+
+/// The longest Grafana `uid` kept with an import (Grafana's own limit is 40).
+const MAX_SOURCE_UID: usize = 200;
+
+#[derive(Serialize)]
+pub struct ByUidAnswer {
+    id: String,
+}
+
+/// The live dashboard a uid names: the Grafana uid of an imported dashboard (the newest import
+/// first), the uid of a provisioned one, or a dashboard's own id. `not_found` when none is found
+/// or the caller may not read it, so the answer tells nothing about dashboards they cannot see.
+async fn by_uid(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, uid)): Path<(String, String)>,
+) -> ApiResult<Json<ByUidAnswer>> {
+    let imported: Vec<(String,)> = sqlx::query_as(
+        "SELECT r.dashboard_id FROM dashboard_import_reports r JOIN dashboards d ON d.id = r.dashboard_id \
+         WHERE r.org_id = $1 AND r.source_uid = $2 AND d.deleted_at IS NULL ORDER BY r.created_at DESC",
+    )
+    .bind(&ctx.org_id)
+    .bind(&uid)
+    .fetch_all(&state.db)
+    .await?;
+    let provisioned: Vec<(String,)> =
+        sqlx::query_as("SELECT resource_id FROM provisioned_resources WHERE org_id = $1 AND kind = $2 AND uid = $3")
+            .bind(&ctx.org_id)
+            .bind(ResourceKind::Dashboard.as_str())
+            .bind(&uid)
+            .fetch_all(&state.db)
+            .await?;
+    let candidates = imported.into_iter().chain(provisioned).map(|(id,)| id).chain(std::iter::once(uid.clone()));
+    for id in candidates {
+        match fetch(&state.db, &ctx.org_id, &id).await? {
+            Some(row) if row.deleted_at.is_none() => {}
+            _ => continue,
+        }
+        if authz::check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&id)).await.is_ok() {
+            return Ok(Json(ByUidAnswer { id }));
+        }
+    }
+    Err(ApiError::not_found())
 }
 
 #[derive(Serialize)]

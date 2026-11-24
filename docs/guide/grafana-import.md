@@ -48,7 +48,8 @@ through the same checks as every save, including the right to query each mapped 
 
 **Dashboards > Import from Grafana** leads through three steps. First the file: upload it or
 paste its JSON, name the dashboard and choose its folder. Then the data sources: each one the
-file names gets one of Kalzit's, proposed by name and kind, or is left out, which skips its
+file names gets one of Kalzit's, proposed by name and kind (Grafana's default source: the
+organization's [default data source](data-sources.md#default-data-source)), or is left out, which skips its
 panels. Last the report, before anything exists; **Import** creates the dashboard and opens it
 with a line that leads back to the report (the dashboard's address with `/import-report`).
 
@@ -60,7 +61,8 @@ kalzit provision import-grafana lager.json --server https://kalzit.example.com -
 ```
 
 `kalzit import grafana` is the same command. `--map` maps a Grafana data source to the id of a Kalzit data source: by its uid, its name, the
-`${DS_X}` input of an export, or `default` for panels without one. `--dry-run` converts and shows
+`${DS_X}` input of an export, or `default` for panels without one (left out, `default` is the
+organization's default data source, if it has one). `--dry-run` converts and shows
 the report without saving. The token comes from `KALZIT_API_TOKEN`, as for
 [provisioning](provisioning.md); the role needs `dashboards:write` where the dashboard goes and
 `datasources:query` on the mapped sources.
@@ -70,3 +72,8 @@ The API route is `POST /api/orgs/{orgId}/dashboards/import/grafana` with
 report, the converted model and the saved dashboard.
 
 To keep an imported dashboard as code, export it with `kalzit provision export` afterwards.
+
+Kalzit keeps the dashboard's Grafana `uid`, so an old Grafana address still works: `/d/<uid>` and
+`/d/<uid>/<slug>` open the imported dashboard (or the dashboards list when the uid is unknown).
+`/datasources` and `/connections/datasources` lead to the data sources, `/explore` is the same
+in both.

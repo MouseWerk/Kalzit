@@ -370,6 +370,20 @@ data sources. It shows the engine and version and the response time
 ("Connected in N ms"), or the reason for failure. A login with administrator rights (a PostgreSQL
 superuser, a SQL Server sysadmin) is reported with advice to use a read-only login.
 
+When the form's last test passed and you save exactly what it tested, the saved source is tested
+once more and that result becomes its latest test, so the list shows it as tested right away.
+
+## Default data source
+
+One data source of the organization can be its default: **Make default** in a source's menu in
+the list, or **Default data source** in the form, for who may change the source. The list marks
+it **Default**. Explore and new panels start with it when no source is chosen, and a Grafana
+import proposes it for Grafana's default source. Making another source the default moves it
+there; a source in the trash is never the default.
+
+Grafana's addresses lead to the same pages: `/datasources` and `/connections/datasources` to the
+data sources, `/connections/datasources/new` to adding one.
+
 ## Access per team
 
 Beyond their role, members, teams or roles get access to a single data source with **Manage

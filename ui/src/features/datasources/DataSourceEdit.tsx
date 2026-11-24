@@ -29,6 +29,7 @@ import {
   type Health,
   kindsQuery,
   restoreDatasource,
+  setDefaultDatasource,
   sourceAccess,
   testDatasource,
   updateDatasource,
@@ -42,6 +43,7 @@ import {
   HealthWarnings,
   type SaveRequest,
   SettingsForm,
+  sameTarget,
   UntestedNote,
 } from "./DataSourceForm";
 import { KindMark, kindSummary } from "./kindMarks";
@@ -130,21 +132,51 @@ function EditDataSource({ orgId }: { orgId: string }) {
   }
 
   const save = useMutation({
-    mutationFn: ({ output, expected }: SaveRequest) =>
-      updateDatasource(orgId, datasourceId, {
+    mutationFn: async ({ output, expected }: SaveRequest) => {
+      // A passing test of exactly what is saved now counts as the source's latest test: the
+      // stored source is tested again, so the server keeps the result for the list and the page.
+      const tested = testForm.data?.ok === true && sameTarget(testForm.variables, output);
+      let saved = await updateDatasource(orgId, datasourceId, {
         name: output.name,
         secrets: output.secrets,
         ...(output.settings === undefined ? {} : { settings: output.settings }),
         ...(expected === undefined ? {} : { expectedUpdatedAt: expected }),
-      }),
-    onSuccess: (saved) => {
-      // The last test was of the old settings.
+      });
+      const defaultChanged =
+        output.isDefault !== undefined && output.isDefault !== (saved.isDefault === true);
+      if (defaultChanged && output.isDefault !== undefined) {
+        saved = await setDefaultDatasource(orgId, datasourceId, output.isDefault).catch(
+          (error: unknown) => {
+            showErrorToast(errorMessage(t, error));
+            return saved;
+          },
+        );
+      }
+      const retested = tested ? await checkHealth(orgId, datasourceId).catch(() => null) : null;
+      return { saved, retested, defaultChanged };
+    },
+    onSuccess: ({ saved, retested, defaultChanged }) => {
+      // The last test was of the old settings, unless the one just run checked the saved ones.
       forgetHealth(queryClient, orgId, datasourceId);
-      setHealth(null);
+      setHealth(retested);
       setDraft(null);
-      setTestedAt(0);
-      void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
+      setTestedAt(retested === null ? 0 : Date.now());
+      if (retested !== null) {
+        queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, retested);
+      }
+      // A new default changes the source that was the default before, too: every list again.
+      void queryClient.invalidateQueries({
+        queryKey: [DATASOURCES_KEY, orgId],
+        exact: !defaultChanged,
+      });
       startFrom(saved);
+      if (retested !== null) {
+        // The stored source now carries the test as `lastTest`.
+        void queryClient.invalidateQueries({
+          queryKey: datasourceQuery(orgId, datasourceId).queryKey,
+          exact: true,
+        });
+      }
     },
     onError: (error, { output }) => {
       const stored = conflictingDatasource(error);
@@ -372,6 +404,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
             title={t("datasources.edit.settings")}
             subtitle={kindSummary(t, kind.kind) ?? undefined}
             onSubmit={(output) => submit(output)}
+            offerDefault={access.write}
             onDirtyChange={setDirty}
             readOnly={!access.write}
             targetLocked={targetLocked}

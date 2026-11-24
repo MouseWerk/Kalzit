@@ -34,6 +34,7 @@ may not read.
 | `POST /provisioning/resources/{kind}/{uid}/unlock` | `provisioning:write` | | `200 Provisioned` |
 | `POST /dashboards/import/grafana` | member; `dashboards:write` where it goes | `GrafanaImportRequest` | `200 { report, model, dashboard \| null }` |
 | `GET /dashboards/{dashboardId}/import-report` | member; `dashboards:read` on it | | `200 { source, sourceVersion, report, createdAt, createdBy }` |
+| `GET /dashboards/by-uid/{uid}` | member; `dashboards:read` on the dashboard | | `200 { id }` for the live dashboard the uid names: the Grafana `uid` of an import (newest first), the uid of a provisioned dashboard, or a dashboard id; else `404` |
 
 ```ts
 interface SetRequest {

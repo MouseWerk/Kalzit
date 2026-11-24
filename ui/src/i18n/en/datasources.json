@@ -1482,5 +1482,12 @@
   "datasources.reason.sql.stage_reference": "Stages (@name) are not allowed; they read files. Query tables instead.",
   "datasources.reason.sql.path_table": "{name} reads files directly and is not allowed; query a table instead.",
   "datasources.reason.provisioning.read_only": "Managed by files (set “{set}”, {path}) and so read-only. Change the file and apply it with kalzit provision apply; organization admins can unlock it in an emergency.",
-  "datasources.reason.sharing.public_links_active": "Active public links on this dashboard: {links}. Visitors would see the change at once, so saving it needs the permission dashboards:public."
+  "datasources.reason.sharing.public_links_active": "Active public links on this dashboard: {links}. Visitors would see the change at once, so saving it needs the permission dashboards:public.",
+  "datasources.default.field": "Default data source",
+  "datasources.default.hint": "Explore and new panels start with it when no source is chosen. The organization has one default.",
+  "datasources.default.badge": "Default",
+  "datasources.default.set": "“{name}” is now the default data source.",
+  "datasources.default.unset": "“{name}” is no longer the default data source.",
+  "datasources.menu.setDefault": "Make default",
+  "datasources.menu.unsetDefault": "Remove as default"
 }
