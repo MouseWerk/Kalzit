@@ -170,7 +170,9 @@ test.describe("Neo4j", () => {
     }
   });
 
-  test("a Cypher query in Explore stays a graph and offers the graph panels", async ({ page }) => {
+  test("a Cypher query in Explore stays a graph and offers the graph panels", {
+    tag: "@smoke",
+  }, async ({ page }) => {
     await signInOwner(page);
     const result = await explore(page, sourceName, SHOP);
     await expect(result).toContainText(

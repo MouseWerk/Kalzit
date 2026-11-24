@@ -5,10 +5,9 @@ import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery, panelAction } from "./support/ui";
 
-test("a time range chosen on a dashboard lands in the address and survives a reload", async ({
-  page,
-  world,
-}) => {
+test("a time range chosen on a dashboard lands in the address and survives a reload", {
+  tag: "@smoke",
+}, async ({ page, world }) => {
   await signInOwner(page);
   await page.goto(`/dashboards/${world.dashboardId}`);
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
@@ -28,7 +27,10 @@ test("a time range chosen on a dashboard lands in the address and survives a rel
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
 });
 
-test("Explore adds a panel to an existing dashboard", async ({ page, world }) => {
+test("Explore adds a panel to an existing dashboard", { tag: "@smoke" }, async ({
+  page,
+  world,
+}) => {
   // A dashboard of its own: the shared one stays as the page checks expect it.
   const owner = await Api.owner();
   const title = unique("Bestehend");
@@ -56,7 +58,9 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
   await expect(page.locator(".ts__plot")).toHaveCount(2);
 });
 
-test("a data source is renamed, moved to the trash and restored", async ({ page }) => {
+test("a data source is renamed, moved to the trash and restored", { tag: "@smoke" }, async ({
+  page,
+}) => {
   const owner = await Api.owner();
   const name = unique("Papierkorb");
   const id = await owner.createSqliteSource(name, join(fixturesDir(), "sales.db"));
@@ -130,7 +134,9 @@ test("Escape closes a dialog and focus returns to the button that opened it", as
   await expect(opener).toBeFocused();
 });
 
-test("after signing out, going back does not show the signed-in pages", async ({ page }) => {
+test("after signing out, going back does not show the signed-in pages", { tag: "@smoke" }, async ({
+  page,
+}) => {
   await signInOwner(page);
   await page.goto("/admin/members");
   await expect(page.getByRole("heading", { name: t("admin.members.title") })).toBeVisible();
@@ -145,7 +151,9 @@ test("after signing out, going back does not show the signed-in pages", async ({
   await expect(page.getByRole("heading", { name: t("admin.members.title") })).toHaveCount(0);
 });
 
-test("an editor creates a dashboard and adds a panel with a query", async ({ pageAs }) => {
+test("an editor creates a dashboard and adds a panel with a query", { tag: "@smoke" }, async ({
+  pageAs,
+}) => {
   const owner = await Api.owner();
   const editor = await owner.createMember(unique("Edda Editor"), "editor");
   const name = unique("Editorquelle");
@@ -232,10 +240,9 @@ test("a time series drawn as stacked bars is saved with its graph style", async 
   await owner.dispose();
 });
 
-test("the panel editor keeps its changes over a reload and asks before the back button drops them", async ({
-  page,
-  world,
-}) => {
+test("the panel editor keeps its changes over a reload and asks before the back button drops them", {
+  tag: "@smoke",
+}, async ({ page, world }) => {
   const owner = await Api.owner();
   const id = await owner.createDashboard(regionDashboard(unique("Zurück"), world.sourceId));
   await owner.dispose();

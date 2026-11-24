@@ -6,13 +6,16 @@
 #   run.sh PR [--full] [--msi] [--no-status]
 #       tests the pull request merged onto the current origin/main, the way the merge queue did,
 #       and posts the commit statuses local/linux and local/windows to its head commit; main
-#       requires both. Without --full only the areas the change touches run
-#       (.github/scripts/changes.sh).
+#       requires both. Without --full it runs the fast gate (about 15 minutes) for the areas the
+#       change touches (.github/scripts/changes.sh): fmt, clippy, the unit tests and the core
+#       integration tests, the UI checks and build, and the smoke e2e set (@smoke) in Chromium.
+#       That is enough to merge (`passed gate tree ...`); the full suite runs on main after the
+#       merges (main-watch.sh). --full runs the full suite: every job, every test, every browser.
 #   run.sh PR PR... [options]
 #       a batch, as the merge queue built up to four at once: the pull requests merged onto main
 #       one after another in this order and tested together in one run. Each head gets the
-#       statuses, naming the batch (`passed on main <main> batch 391,388 in N min`); merge.sh
-#       then merges exactly these, in this order (merge.sh 391 388).
+#       statuses, naming the batch (`passed gate tree <tree> on main <main> batch 391,388 in N
+#       min`); merge.sh then merges exactly these, in this order (merge.sh 391 388).
 #   run.sh --ref REF [--full] [--msi] [--no-status]
 #       tests REF as it is (for example `--ref origin/main --full` as the release gate) and posts
 #       the statuses to that commit.
@@ -20,9 +23,17 @@
 #   --msi        also the Windows installer test, which installs and removes Kalzit as a service
 #                on this machine
 #   --no-status  posts nothing to GitHub
+#   --only JOBS  runs only these jobs (names separated by commas, for example e2e,postgres), for
+#                bisecting a failure; posts nothing
+#   --no-rerun   no diagnostic rerun of a failed job
 #   --runner-from-pr
 #                runs the leg scripts (tools/local-ci) of the pull request instead of main's; for
 #                a reviewed pull request that changes them, or while main has none yet
+#
+# A failed job runs once more, only to diagnose: the status stays failure. When the second run
+# passes, the run's summary and KALZIT_CI_HOME/flaky.log record "failed, then passed on rerun:
+# <test>", so the test gets a root-cause fix; the summary lists the tests that needed that more
+# than twice in 7 days.
 #
 # Trust: the leg scripts come from origin/main, so a pull request cannot change how it is judged,
 # but its code (build scripts, tests) runs with this machine's rights, and in WSL as a user with sudo. Run it
@@ -51,12 +62,16 @@ full=false
 msi=0
 post=true
 runner_from_pr=false
+only=""
+rerun=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) ref=${2:?--ref needs a value}; shift ;;
     --full) full=true ;;
     --msi) msi=1 ;;
     --no-status) post=false ;;
+    --only) only=${2:?--only needs job names}; post=false; shift ;;
+    --no-rerun) rerun=0 ;;
     --runner-from-pr) runner_from_pr=true ;;
     [0-9]*)
       case " ${prs[*]-} " in *" $1 "*) echo "PR $1 is named twice" >&2; exit 2 ;; esac
@@ -66,9 +81,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$pr" ] && [ -z "$ref" ]; then
-  echo "usage: run.sh PR [PR...] [--full] [--msi] [--no-status] | run.sh --ref REF [--full] [--msi] [--no-status]" >&2
+  echo "usage: run.sh PR [PR...] [--full] [--msi] [--no-status] [--only JOBS] [--no-rerun] | run.sh --ref REF [same options]" >&2
   exit 2
 fi
+stage=gate
+[ "$full" = true ] && stage=full
 
 # E:/GITHUB/Kalzit -> /mnt/e/GITHUB/Kalzit
 to_wsl() {
@@ -166,21 +183,21 @@ tested="$(git -C "$src" rev-parse HEAD)"
 # the tree a merge would make now and takes a pass only for exactly that tree, so a result stays
 # good while main moves in ways that leave the merged content the same (for example, a batch
 # tested ahead on top of another that has merged since), and never covers anything else.
-#   passed tree <tree> on main <main> [batch 391,388] in N min
-#   failed tree <tree> on main <main> [batch 391,388]: <jobs>
+#   passed [gate ]tree <tree> on main <main> [batch 391,388] in N min
+#   failed [gate ]tree <tree> on main <main> [batch 391,388]: <jobs>
+# "gate" marks the fast gate; without it, the full suite.
 tree="$(git -C "$src" rev-parse "HEAD^{tree}")"
-base="tree ${tree:0:12} $base"
+if [ "$stage" = gate ]; then base="gate tree ${tree:0:12} $base"; else base="tree ${tree:0:12} $base"; fi
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
-# Everything runs for --full, for --ref, and when the change detection itself fails.
+# The gate of a pull request runs the areas it changes; everything runs for --full, for --ref,
+# and when the change detection itself fails. The generators' proof belongs to the full suite.
 everything() { (cd "$src" && .github/scripts/changes.sh < /dev/null 2> /dev/null); }
 if [ "$full" != true ] && [ -n "$pr" ]; then
   areas="$(cd "$src" && .github/scripts/changes.sh "$main" "$tested" 2> "$logs/changed-files.txt")" \
     || { echo "the change detection failed; everything runs" >&2; areas="$(everything)"; }
 else
-  # The generators' proof (about 12 minutes) only for a pull request's run, as in ci.yml, where
-  # it runs on pull requests alone; --full and --ref leave it out.
-  areas="$(everything | sed 's/^devgen_proof=true$/devgen_proof=false/')"
+  areas="$(everything)"
 fi
 
 # The leg scripts: main's, unless --runner-from-pr. A copy outside the checkout under test.
@@ -199,7 +216,10 @@ if [ "$runner_from_pr" != true ] && [ -n "$(git -C "$repo" diff --name-only "$ma
   echo "Note: this pull request changes tools/local-ci; the run uses main's scripts (--runner-from-pr after review)."
 fi
 printf '%s\n' "$areas" > "$logs/areas.txt"
-echo "Run $run_id: testing ${tested:0:9} (${pr:+PR ${prs[*]}, }main ${main:0:9})"
+echo "$stage" > "$logs/stage.txt"
+printf '%s\n' "$only" > "$logs/only.txt"
+echo "$rerun" > "$logs/rerun.txt"
+echo "Run $run_id: the $([ "$stage" = gate ] && echo "fast gate" || echo "full suite") of ${tested:0:9} (${pr:+PR ${prs[*]}, }main ${main:0:9})${only:+, only $only}"
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
 echo "Logs: $logs"
 
@@ -213,6 +233,7 @@ rm -rf "$lock"
 (
   LOGS="$logs" AREAS="$areas" SRC="$src" CARGO_TARGET_DIR="$WIN_TARGET" \
     KALZIT_CI_CACHE="$CI_HOME/cache" KALZIT_CI_LOCK="$lock" KALZIT_CI_MSI="$msi" \
+    KALZIT_CI_STAGE="$stage" KALZIT_CI_ONLY="$only" KALZIT_CI_RERUN="$rerun" \
     bash "$runner/windows.sh"
 ) > "$logs/windows.out" 2>&1 &
 windows_pid=$!
@@ -257,15 +278,43 @@ overall=0
 report windows "$windows_ok" || overall=1
 report linux "$linux_ok" || overall=1
 
-echo
-echo "== Windows"; cat "$logs/windows.result" 2> /dev/null || tail -n 20 "$logs/windows.out"
-echo "== Linux"; cat "$logs/linux.result" 2> /dev/null || tail -n 20 "$logs/linux.out"
-echo
-if [ "$overall" -eq 0 ]; then
-  echo "PASSED in $took min (${tested:0:9}); logs in $logs"
-else
-  echo "FAILED after $took min (${tested:0:9}); logs in $logs"
+# The diagnostic reruns: into the flaky log (one line per test), and the tests that needed a
+# rerun to pass more than twice in 7 days into the summary. Neither changes a status.
+flaky_log="$CI_HOME/flaky.log"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+reruns="$(cat "$logs/windows.reruns" "$logs/linux.reruns" 2> /dev/null | tr -d '\r' || true)"
+if [ -n "$reruns" ]; then
+  printf '%s\n' "$reruns" | while IFS=$'\t' read -r where what test; do
+    printf '%s run %s %s (%s): %s: %s\n' "$now" "$run_id" "$where" "${tree:0:12}" "$what" "$test"
+  done >> "$flaky_log"
 fi
+since="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+repeated="$(awk -v since="$since" '$1 >= since && index($0, ": failed, then passed on rerun: ") {
+    sub(/^.*: failed, then passed on rerun: /, ""); count[$0]++ }
+  END { for (t in count) if (count[t] > 2) printf "  %s (%d times)\n", t, count[t] }' "$flaky_log" 2> /dev/null || true)"
+
+{
+  echo "== Windows"; cat "$logs/windows.result" 2> /dev/null || tail -n 20 "$logs/windows.out"
+  echo "== Linux"; cat "$logs/linux.result" 2> /dev/null || tail -n 20 "$logs/linux.out"
+  if [ -n "$reruns" ]; then
+    echo
+    echo "== Diagnostic reruns (the jobs stay failed; find and fix the cause)"
+    printf '%s\n' "$reruns" | awk -F'\t' '{ printf "  %s: %s: %s\n", $1, $2, $3 }'
+  fi
+  if [ -n "$repeated" ]; then
+    echo
+    echo "== Failed, then passed on rerun, more than twice in 7 days ($flaky_log): needs a root-cause fix"
+    printf '%s\n' "$repeated"
+  fi
+  echo
+  if [ "$overall" -eq 0 ]; then
+    echo "PASSED ($stage) in $took min (${tested:0:9}); logs in $logs"
+  else
+    echo "FAILED ($stage) after $took min (${tested:0:9}); logs in $logs"
+  fi
+} > "$logs/summary.txt"
+echo
+cat "$logs/summary.txt"
 exit "$overall"
 }
 

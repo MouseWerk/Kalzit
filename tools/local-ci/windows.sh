@@ -4,11 +4,12 @@
 #
 # Left out on purpose:
 #   msi          installs Kalzit as a Windows service with a firewall rule on this machine; it
-#                runs only with KALZIT_CI_MSI=1 (run.sh --msi), for example before a release.
+#                runs only with KALZIT_CI_MSI=1 (run.sh --msi; main-watch.sh passes it to the
+#                full suite on main).
 #   the e2e job's port range widening (netsh) and TCP watch, which change system settings.
 #
 # Environment: LOGS, AREAS, SRC (see common.sh), CARGO_TARGET_DIR, KALZIT_CI_CACHE,
-# KALZIT_CI_LOCK (optional).
+# KALZIT_CI_LOCK, KALZIT_CI_STAGE, KALZIT_CI_ONLY (optional, see common.sh).
 
 LEG=windows
 # shellcheck source=common.sh
@@ -34,56 +35,19 @@ export MSYS_NO_PATHCONV=1
 if ! command -v go > /dev/null && [ -x "/c/Program Files/Go/bin/go.exe" ]; then
   export PATH="$PATH:/c/Program Files/Go/bin"
 fi
+# The same for sccache and cargo-nextest when cargo installed them (README, Setup).
+if ! command -v sccache > /dev/null && [ -x "$HOME/.cargo/bin/sccache.exe" ]; then
+  export PATH="$PATH:$HOME/.cargo/bin"
+fi
+sccache_start
 
-server() {
-  cargo fmt --all --check
-  cargo clippy --locked --all-targets -- -D warnings
-  cargo test --locked
-}
-
-ui() {
-  cd ui
-  npm ci --no-audit --no-fund
-  npm run format:check
-  npm run lint
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-  KALZIT_LICENSES_STRICT=0 npm run build
-  npm run budget
-}
-
-devkit() {
-  cd tools/devkit
-  npm ci --no-audit --no-fund
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-  npm run build
-}
-
-devgen() {
-  cd tools/devgen
-  npm ci --no-audit --no-fund
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-}
-
-E2E_BUILT=false
-e2e_build() {
-  if [ "$E2E_BUILT" != true ]; then
-    (cd ui && npm ci --no-audit --no-fund && npm run build)
-    cargo build --profile e2e --locked -p kalzit -p kalzit-test-plugin
-    E2E_BUILT=true
-  fi
-}
-
+# The gate installs Chromium only (the smoke set runs there), the full suite all three.
 e2e() {
   e2e_build
-  local attempt
+  local attempt browsers=(chromium firefox webkit)
+  [ "$STAGE" = gate ] && browsers=(chromium)
   for attempt in 1 2 3; do
-    (cd ui && npx playwright install chromium firefox webkit) && break
+    (cd ui && npx playwright install "${browsers[@]}") && break
     echo "installing the browsers failed (attempt $attempt of 3)" >&2
     [ "$attempt" -lt 3 ] || return 1
   done
@@ -99,20 +63,13 @@ e2e() {
   pwsh -NoProfile -File .github/scripts/e2e-services.ps1 start -Tools "$tools" -Data "$data"
   GITHUB_ENV="$(cygpath -w "$env_file")" pwsh -NoProfile -File .github/scripts/e2e-services.ps1 ready -Tools "$tools" -Data "$data"
   load_env_file <(tr -d '\r' < "$env_file")
-  local run_dir="$KALZIT_CI_CACHE/e2e-run"
-  rm -rf "$run_dir"
-  local status=0
-  (cd ui && KALZIT_E2E_BINARY="$(cygpath -w "$T/e2e/kalzit.exe")" \
-    KALZIT_E2E_PLUGIN_BINARY="$(cygpath -w "$T/e2e/kalzit-test-plugin.exe")" \
-    KALZIT_E2E_RUN_DIR="$(cygpath -w "$run_dir")" npm run e2e) || status=$?
-  if [ "$status" -ne 0 ] && [ -d ui/e2e/.output ]; then
-    cp -r ui/e2e/.output "$LOGS/windows-e2e-output" || true
-  fi
-  return "$status"
+  e2e_playwright "$T/e2e/kalzit.exe" "$T/e2e/kalzit-test-plugin.exe"
 }
 
+# The installer of the e2e build the other jobs use (ci.yml builds `-p kalzit --bin kalzit`, which
+# here would make a second build with other features).
 msi() {
-  cargo build --profile e2e --locked -p kalzit --bin kalzit
+  e2e_build
   local exe dist logs
   exe="$(cygpath -w "$T/e2e/kalzit.exe")"
   dist="$(cygpath -w "$(mktemp -d)")"
@@ -133,16 +90,25 @@ msi() {
   "
 }
 
+# The UI checks (npm) run next to the server job (cargo). The gate stops after the smoke e2e.
+job_bg ui ui -- ui
 job server server -- server
-job plugins server -- plugins
-job ui ui -- ui
+wait_jobs
 job sdk sdk -- sdk
 job devkit devkit -- devkit
 job devgen devgen server ui -- devgen
+if [ "$STAGE" = gate ]; then
+  job e2e e2e -- e2e
+  skip_job plugins "full suite"
+  skip_job msi "full suite"
+  finish
+  exit
+fi
+job plugins server -- plugins
 job e2e e2e -- e2e
 if [ "${KALZIT_CI_MSI:-0}" = 1 ]; then
   job msi installer -- msi
 else
-  SUMMARY+=("skipped  msi (run.sh --msi)")
+  skip_job msi "run.sh --msi"
 fi
 finish

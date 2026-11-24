@@ -5,9 +5,9 @@ import { expectSelectValue, selectOption, selectOptionsOf } from "./support/sele
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery, panelAction } from "./support/ui";
 
-test("the owner connects SQLite, explores a time series and builds a dashboard with a variable", async ({
-  page,
-}) => {
+test("the owner connects SQLite, explores a time series and builds a dashboard with a variable", {
+  tag: "@smoke",
+}, async ({ page }) => {
   await signInOwner(page);
   const source = unique("Umsätze");
   const title = unique("Umsatz nach Region");

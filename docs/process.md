@@ -28,10 +28,13 @@ flowchart TD
   W --> P[Pull request<br/>feature branch, release fragment]
   P --> R[Review agent<br/>read-only findings]
   R -- findings --> W
-  R -- clean --> C[Local CI on this machine<br/>Windows and WSL, PR merged onto main]
+  R -- clean --> C[Fast gate on this machine<br/>Windows and WSL, PR merged onto main]
   C -- red --> W
   C -- green --> Q[Merge by the orchestrator<br/>squash, only on the main it was tested on]
   Q --> M[main<br/>branch and worktree deleted]
+  M --> F[Full suite on main<br/>after each merge batch]
+  F -- red --> V[Bisect, revert pull request<br/>through review and the gate]
+  V --> W
   M --> G["Release<br/>fragments assembled, one full local run, tag"]
   G --> S[Two independent security reviews<br/>fixes as normal pull requests]
 ```
@@ -48,17 +51,23 @@ flowchart TD
    `docs/releases/unreleased/`. Commits are authored as the owner and carry no trailers.
 5. **Review.** Every pull request gets a read-only review. Its findings go back to the builder.
    The pull request moves on only when the review has no open findings.
-6. **CI.** The local CI (`tools/local-ci`) tests the pull request merged onto the current
-   `main`, on Windows and in WSL, and posts the statuses `local/windows` and `local/linux`;
-   `main` requires both. A red status goes back to the builder. Tests are never weakened or
-   skipped to get green.
+6. **CI.** The local CI (`tools/local-ci`) runs the fast gate on the pull request merged onto
+   the current `main`, on Windows and in WSL (about 15 minutes: fmt, clippy, unit and core
+   integration tests, the UI checks and build, the smoke e2e set), and posts the statuses
+   `local/windows` and `local/linux`; `main` requires both. A red status goes back to the
+   builder. A failed job runs once more only to diagnose: the status stays red, and a pass on
+   that rerun goes to the flaky log as a test to fix. Tests are never weakened, skipped or
+   quarantined to get green.
 7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
-   both statuses passed for exactly the content the merge makes (the merged tree; otherwise it
-   runs the CI first). Several pull requests can be tested and merged as one batch, and
-   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners, for example overnight.
-   `main` takes no direct or force pushes.
+   both statuses passed the fast gate (or the full suite) for exactly the content the merge
+   makes (the merged tree; otherwise it runs the gate first). Several pull requests can be
+   tested and merged as one batch, and `tools/local-ci/gh-run.sh` runs the same test on
+   GitHub's runners, for example overnight. `main` takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
-   folders.
+   folders. The full suite runs on `main` after each merge batch, or within the hour when `main`
+   changed (`tools/local-ci/main-watch.sh`). When it fails, it bisects the batch and opens a
+   pull request that reverts the merge that broke it; that revert goes through review and the
+   gate like any other pull request, and the change comes back with its fix.
 9. **Release.** The release pull request assembles the fragments into
    `docs/releases/v<version>.md` and bumps the version. The tag follows one full local CI run
    on the release commit (`tools/local-ci/run.sh --ref origin/main --full`). Releases
@@ -109,15 +118,28 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
 
 | Run | What runs |
 |---|---|
-| `run.sh <pr>` | The jobs for the areas the pull request changes (`.github/scripts/changes.sh`), on the PR merged onto the current `main` |
-| `run.sh <pr> --full` | Everything |
-| `run.sh --ref origin/main --full` | Everything, on that commit: the release gate |
+| `run.sh <pr>` | The fast gate for the areas the pull request changes (`.github/scripts/changes.sh`), on the PR merged onto the current `main`: enough to merge |
+| `run.sh <pr> --full` | The full suite on the same content |
+| `main-watch.sh` | The full suite on `main` after each merge batch, or hourly when `main` changed; bisect and revert pull request on a failure |
+| `run.sh --ref origin/main --full` | The full suite on that commit: the release gate |
 
+- **Two stages** (owner decision 2026-11-24). The fast gate (about 15 minutes) runs fmt,
+  clippy, the unit tests and the core integration tests, the UI checks, build and bundle
+  budget, and 30 core e2e flows (`@smoke`) in Chromium on both systems. The full suite (70 to
+  160 minutes) runs every test in every browser, the databases and services, packages, docker
+  and the MSI, on `main` after the merges. A merge needs the gate only.
+- **Failures.** A failed job runs once more, only to diagnose; the status stays failure. Tests
+  that failed and then passed on rerun go to `C:/Users/klein/kz-ci/flaky.log` and the run's
+  summary, which lists those that needed it more than twice in 7 days: they need a root-cause
+  fix. A full-suite failure on `main` is bisected to the merge that caused it and reverted
+  through a pull request; an intermittent one (every failed job passed on its rerun) is
+  reported for a fix instead. Nothing is skipped, quarantined or retried into a pass.
 - **Areas.** Docs and boards run only the change detection test (and `roadmap` for the
   README's progress bars). A change under `.github/` or `tools/local-ci/`, or a path no area
-  knows, runs everything.
-- **Statuses.** Each leg posts one status to the PR's head commit, naming the `main` commit it
-  ran on. `merge.sh` merges only when that is still the current `main`.
+  knows, runs everything of the stage.
+- **Statuses.** Each leg posts one status to the PR's head commit, naming the tested tree and
+  the `main` commit it ran on (`passed gate tree ...` or `passed tree ...`). `merge.sh` merges
+  only when a merge would make exactly that tree.
 - **Not covered locally.** `packages (arm64)`; the release workflow still builds and checks
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.

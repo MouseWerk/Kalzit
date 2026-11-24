@@ -20,7 +20,8 @@ where it is more specific.
   `main` is protected: no direct push, no force push, merge only with green CI on Windows and
   Linux. CI runs on the owner's machine (`tools/local-ci`, Windows and WSL; owner decision
   2026-11-23: GitHub's runners were too slow), not on GitHub; `main` requires the statuses
-  `local/windows` and `local/linux`. The orchestrator merges once CI is green and the review agent has no open findings, and
+  `local/windows` and `local/linux`, which the fast gate posts (owner decision 2026-11-24; the full
+  suite runs on main after the merges). The orchestrator merges once CI is green and the review agent has no open findings, and
   sends the owner a short summary per PR.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets are encrypted in Kalzit's own database with a key from `KALZIT_SECRETS_KEY`, systemd
@@ -266,12 +267,19 @@ skip or weaken a test.
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
   (`gh pr diff`, `git show`, never a checkout in the main folder). CI runs locally on the
-  owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed);
-  merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once `local/windows` and `local/linux`
-  passed for the merged tree and the review is clean; delete worktree and branch after merge.
-  `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners (owner decision 2026-11-23:
-  such a pass counts; green work may merge overnight). GitHub Actions CI otherwise runs only by
-  hand.
+  owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed).
+  Two stages (owner decision 2026-11-24): the fast gate (`run.sh <pr>`, about 15 minutes: fmt,
+  clippy, unit and core integration tests, UI checks and build, 30 `@smoke` e2e flows in
+  Chromium) is enough to merge; merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once
+  `local/windows` and `local/linux` passed the gate for the merged tree and the review is clean;
+  delete worktree and branch after merge. The full suite runs on main after each merge batch or
+  hourly when main changed (`tools/local-ci/main-watch.sh`); on a failure it bisects the batch
+  and opens a revert PR for the culprit, which goes through review and the gate (never a push to
+  main, never a test change). A failed job reruns once only to diagnose: the status stays
+  failure, and "failed, then passed on rerun" goes to `C:/Users/klein/kz-ci/flaky.log` for a
+  root-cause fix; no quarantine, no retries into a pass. `tools/local-ci/gh-run.sh [--gate]` runs
+  the same test on GitHub's runners (owner decision 2026-11-23: such a pass counts; green work
+  may merge overnight). GitHub Actions CI otherwise runs only by hand.
 - Owner decisions are asked as a selection menu with the recommended option first.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles

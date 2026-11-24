@@ -7,10 +7,13 @@
 #
 # It computes the tree that merging the heads onto the current main would make (git merge-tree,
 # one pull request after another) and looks for a pass of exactly that tree on every head, from
-# the local CI (run.sh) or a GitHub run (gh-run.sh): `passed tree <tree> ...`. So a result stays
-# good when main moved in a way that leaves the merged content the same, for example a batch
-# tested ahead on top of another that has merged since, and covers nothing else. Without such a
-# pass, the local CI runs first (run.sh with the same arguments); a failure of that tree stops.
+# the local CI (run.sh) or a GitHub run (gh-run.sh): `passed gate tree <tree> ...` from the fast
+# gate, or `passed tree <tree> ...` from the full suite; either is enough to merge, since the full
+# suite runs on main after the merges (main-watch.sh) and reverts a merge that breaks it. So a
+# result stays good when main moved in a way that leaves the merged content the same, for
+# example a batch tested ahead on top of another that has merged since, and covers nothing else.
+# Without such a pass, the fast gate runs first (run.sh with the same arguments); a failure of
+# that tree stops.
 #
 # The merges name the head commits that were checked, so a push made in between is refused.
 # Before each merge after the first, main must be exactly the commit the merge before it made;
@@ -20,6 +23,7 @@
 set -euo pipefail
 
 REPO_SLUG=MouseWerk/Kalzit
+CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 [ $# -ge 1 ] || { echo "usage: merge.sh PR [PR...]" >&2; exit 2; }
 prs=()
 for n in "$@"; do
@@ -66,8 +70,9 @@ check() {
       line="$(gh api "repos/$REPO_SLUG/commits/${heads[$i]}/status" \
         --jq ".statuses[] | select(.context == \"$context\") | \"\(.state) \(.description)\"" | head -1)"
       case "$line" in
-        "success passed tree ${tree:0:12} "*) ;;
-        "failure failed tree ${tree:0:12} "*) echo "PR ${prs[$i]} $context: $line"; verdict=2 ;;
+        "success passed tree ${tree:0:12} "* | "success passed gate tree ${tree:0:12} "*) ;;
+        "failure failed tree ${tree:0:12} "* | "failure failed gate tree ${tree:0:12} "*)
+          echo "PR ${prs[$i]} $context: $line"; verdict=2 ;;
         "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=1 ;;
         *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=1 ;;
       esac
@@ -84,7 +89,7 @@ if [ "$verdict" -eq 2 ]; then
   exit 1
 fi
 if [ "$verdict" -eq 1 ]; then
-  echo "No pass for tree ${tree:0:12} yet; running the local CI first."
+  echo "No pass for tree ${tree:0:12} yet; running the fast gate first."
   "$here/run.sh" "${prs[@]}" || true
   predict || exit 1
   verdict=0
@@ -132,3 +137,6 @@ for i in "${!prs[@]}"; do
   echo "PR $n merged as ${made:0:9} (head ${heads[$i]:0:9}); branch $branch deleted."
 done
 echo "Merged tree ${tree:0:12}, tested as such."
+# Tells main-watch.sh that a batch landed, so the full suite runs on main now instead of within
+# the hour.
+mkdir -p "$CI_HOME" && echo "${prs[*]} as ${expected:0:9}" > "$CI_HOME/main-watch.trigger" || true

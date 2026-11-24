@@ -5,7 +5,8 @@
 # here too. Not covered: `packages (arm64)` (no arm64 machine; release.yml still builds it).
 #
 # Environment: LOGS, AREAS, SRC (see common.sh), CARGO_TARGET_DIR, KALZIT_CI_CACHE (downloads
-# and tools kept between runs), KALZIT_CI_LOCK (optional, see common.sh).
+# and tools kept between runs), KALZIT_CI_LOCK, KALZIT_CI_STAGE, KALZIT_CI_ONLY (optional, see
+# common.sh).
 
 LEG=linux
 # shellcheck source=common.sh
@@ -26,6 +27,7 @@ PLATFORM=linux-x64
 EXE=""
 mkdir -p "$KALZIT_CI_CACHE"
 export PLAYWRIGHT_BROWSERS_PATH="$KALZIT_CI_CACHE/playwright"
+sccache_start
 
 # A container by name, removed first so a run that died leaves nothing in the way.
 container() {
@@ -48,12 +50,6 @@ wait_for() {
 }
 
 changes_test() { .github/scripts/changes.test.sh; }
-
-server() {
-  cargo fmt --all --check
-  cargo clippy --locked --all-targets -- -D warnings
-  cargo test --locked
-}
 
 postgres() {
   cargo test --locked --no-run --test api --test access --test analyses --test dashboard_features \
@@ -86,10 +82,12 @@ ldap() {
     cargo test --locked --test ldap -- --nocapture
 }
 
+# Without `-p kalzit` (ci.yml has it): the whole workspace's features, as the server job builds
+# them, so the test binary comes from that build instead of a second one (about 3 minutes).
 update_rights() {
-  cargo test --locked -p kalzit --test update_rights --no-run
+  cargo test --locked --test update_rights --no-run
   local binary
-  binary="$(cargo test --locked -p kalzit --test update_rights --no-run --message-format=json \
+  binary="$(cargo test --locked --test update_rights --no-run --message-format=json \
     | jq -r 'select(.reason == "compiler-artifact" and .target.name == "update_rights" and .profile.test
         and .executable != null) | .executable' | head -1)"
   test -x "$binary"
@@ -268,70 +266,23 @@ datasources_more() {
   cargo test --locked --test couchbase -- --nocapture
 }
 
-UI_INSTALLED=false
-ui_install() {
-  if [ "$UI_INSTALLED" != true ]; then
-    (cd ui && npm ci --no-audit --no-fund)
-    UI_INSTALLED=true
-  fi
-}
-
-ui() {
-  cd ui
-  npm ci --no-audit --no-fund
-  npm run format:check
-  npm run lint
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-  TZ=America/New_York npm test -- "$TEST_WORKERS"
-  KALZIT_LICENSES_STRICT=0 npm run build
-  npm run budget
-}
-
 roadmap() { node tools/roadmap/render-progress.mjs --check; }
-
-devkit() {
-  cd tools/devkit
-  npm ci --no-audit --no-fund
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-  npm run build
-}
-
-devgen() {
-  cd tools/devgen
-  npm ci --no-audit --no-fund
-  npm run check
-  npm run typecheck
-  npm test -- "$TEST_WORKERS"
-}
 
 # Writes scaffolds into the checkout, so it runs last.
 devgen_proof() {
-  (cd ui && npm ci --no-audit --no-fund)
+  ui_install
   (cd tools/devgen && npm ci --no-audit --no-fund)
   (cd tools/devgen && npm run proof -- --in-place)
 }
 
-# The UI build with strict license lists and the e2e profile binaries, shared by e2e, docker
-# (no: docker builds its own image) and packages.
-E2E_BUILT=false
-e2e_build() {
-  if [ "$E2E_BUILT" != true ]; then
-    (cd ui && npm ci --no-audit --no-fund && npm run build)
-    cargo build --profile e2e --locked -p kalzit -p kalzit-test-plugin
-    E2E_BUILT=true
-  fi
-}
-
+# The gate installs Chromium only (the smoke set runs there), the full suite all three.
 e2e() {
   e2e_build
   .github/scripts/browser-deps.test.sh
-  local attempt
+  local attempt browsers=(chromium firefox webkit)
+  [ "$STAGE" = gate ] && browsers=(chromium)
   for attempt in 1 2 3; do
-    (cd ui && npx playwright install --with-deps chromium firefox webkit) && break
+    (cd ui && npx playwright install --with-deps "${browsers[@]}") && break
     echo "installing the browsers failed (attempt $attempt of 3)" >&2
     [ "$attempt" -lt 3 ] || return 1
   done
@@ -344,15 +295,7 @@ e2e() {
   .github/scripts/e2e-services.sh start
   GITHUB_ENV="$env_file" .github/scripts/e2e-services.sh ready
   load_env_file "$env_file"
-  local run_dir="$KALZIT_CI_CACHE/e2e-run"
-  rm -rf "$run_dir"
-  local status=0
-  (cd ui && KALZIT_E2E_BINARY="$T/e2e/kalzit" KALZIT_E2E_PLUGIN_BINARY="$T/e2e/kalzit-test-plugin" \
-    KALZIT_E2E_RUN_DIR="$run_dir" npm run e2e) || status=$?
-  if [ "$status" -ne 0 ] && [ -d ui/e2e/.output ]; then
-    cp -r ui/e2e/.output "$LOGS/linux-e2e-output" || true
-  fi
-  return "$status"
+  e2e_playwright "$T/e2e/kalzit" "$T/e2e/kalzit-test-plugin"
 }
 
 docker_image() {
@@ -402,7 +345,8 @@ acme() {
     git clone --quiet --depth 1 --branch v2.10.1 https://github.com/letsencrypt/pebble.git "$pebble/src"
     (cd "$pebble/src" && go build -o "$pebble/bin/" ./cmd/pebble ./cmd/pebble-challtestsrv)
   fi
-  cargo test --locked -p kalzit --test acme_pebble --no-run
+  # Without `-p kalzit`, as in update_rights: the server job's build.
+  cargo test --locked --test acme_pebble --no-run
   grep -q 'http.kalzit.test' /etc/hosts     || echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" | sudo tee -a /etc/hosts > /dev/null
   local logs
   logs="$(mktemp -d)"
@@ -419,7 +363,7 @@ acme() {
   wait_for pebble 30 curl -fsS --cacert "$pebble/src/test/certs/pebble.minica.pem" https://localhost:14000/dir
   KALZIT_TEST_PEBBLE_DIRECTORY=https://localhost:14000/dir \
     KALZIT_TEST_PEBBLE_CA="$pebble/src/test/certs/pebble.minica.pem" \
-    cargo test --locked -p kalzit --test acme_pebble -- --ignored --nocapture
+    cargo test --locked --test acme_pebble -- --ignored --nocapture
 }
 
 audit() {
@@ -448,14 +392,26 @@ audit() {
   if [ -f ui/package-lock.json ]; then node .github/scripts/npm-audit.mjs ui; fi
 }
 
+# The UI checks (npm) run next to the server job (cargo); everything else one after another, the
+# jobs with services under the services lock. The gate stops after the smoke e2e.
 job changes always -- changes_test
+job_bg ui ui -- ui
 job server server -- server
-job plugins server -- plugins
-job ui ui -- ui
+wait_jobs
 job sdk sdk -- sdk
 job roadmap roadmap -- roadmap
 job devkit devkit -- devkit
 job devgen devgen server ui -- devgen
+if [ "$STAGE" = gate ]; then
+  job e2e e2e -- e2e
+  for name in plugins audit update-rights postgres ldap datasources datasources-sql-kv datasources-more \
+    acme packages docker devgen-proof; do
+    skip_job "$name" "full suite"
+  done
+  finish
+  exit
+fi
+job plugins server -- plugins
 job audit audit -- audit
 job update-rights server -- update_rights
 job postgres server -- postgres
