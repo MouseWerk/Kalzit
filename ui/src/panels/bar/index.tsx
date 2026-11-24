@@ -156,7 +156,9 @@ function BarPanel({
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   const values = data.series.flatMap((s) => s.values).filter((v): v is number => v !== null);
-  const low = Math.min(0, ...values);
+  // A loop, not a spread: many series of many bars would overflow the call stack.
+  let low = 0;
+  for (const v of values) if (v < low) low = v;
   // The value axis from the panel's axis options (linear, log, log around zero, soft limits).
   const axis = barAxis(values, config.defaults, 4);
   const yMin = axis.min;

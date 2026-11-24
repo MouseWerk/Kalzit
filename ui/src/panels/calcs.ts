@@ -10,9 +10,9 @@
 export const CALC_GROUPS = {
   frequent: ["last", "min", "max", "mean", "sum"],
   history: ["first", "delta", "deltaPercent", "range"],
-  distribution: ["median", "percentile", "stdDev", "variance"],
+  distribution: ["median", "percentile", "stddev", "variance"],
   count: ["count", "distinct", "gaps"],
-  more: ["lastNotNull", "firstNotNull", "maxTime"],
+  more: ["lastRow", "firstRow", "maxTime"],
 } as const;
 
 export type CalcGroup = keyof typeof CALC_GROUPS;
@@ -48,9 +48,14 @@ export function percentileOf(calc: string): number | null {
   return match === null ? null : Number(match[1]);
 }
 
+/** Older spellings read as today's names. */
+const ALIASES: Readonly<Record<string, NamedCalc>> = { stdDev: "stddev" };
+
 /** A stored calculation name, or null when it is none. */
 export function parseCalc(value: unknown): Calc | null {
   if (typeof value !== "string") return null;
+  const alias = ALIASES[value];
+  if (alias !== undefined) return alias;
   if ((NAMED_CALCS as readonly string[]).includes(value)) return value as NamedCalc;
   return percentileOf(value) === null ? null : (value as PercentileCalc);
 }
@@ -96,8 +101,9 @@ export function calcKind(calc: Calc): CalcKind {
   }
 }
 
+/** No value: null, undefined, NaN or an infinity (which no chart can place either). */
 function isGap(value: number | null | undefined): boolean {
-  return value === null || value === undefined || Number.isNaN(value);
+  return value === null || value === undefined || !Number.isFinite(value);
 }
 
 /**
@@ -188,28 +194,31 @@ function sortedOf(s: Summary): number[] {
 }
 
 function variance(s: Summary): number {
-  if (s.present === 0) return Number.NaN;
+  // The sample variance (n - 1), as the steps "Gruppieren" and "Pivot" store it: one value has
+  // no spread to speak of.
+  if (s.present < 2) return Number.NaN;
   const mean = s.sum / s.present;
   let squares = 0;
   for (let i = 0; i < s.values.length; i++) {
     const value = s.values[i];
     if (!isGap(value)) squares += ((value as number) - mean) ** 2;
   }
-  // The population variance: the values shown are all there is in the range, not a sample.
-  return squares / s.present;
+  return squares / (s.present - 1);
 }
 
 function calcOf(s: Summary, calc: Calc): number {
   const none = s.present === 0;
   switch (calc) {
+    // "Letzter" and "Erster" skip gaps, as the stat panel's reducer and stored legends always
+    // did; the row-exact values have keys of their own.
     case "last":
-      return s.last;
-    case "first":
-      return s.first;
-    case "lastNotNull":
       return s.lastPresent;
-    case "firstNotNull":
+    case "first":
       return s.firstPresent;
+    case "lastRow":
+      return s.last;
+    case "firstRow":
+      return s.first;
     case "min":
       return none ? Number.NaN : s.min;
     case "max":
@@ -231,7 +240,7 @@ function calcOf(s: Summary, calc: Calc): number {
       return percentile(sortedOf(s), 50);
     case "variance":
       return variance(s);
-    case "stdDev":
+    case "stddev":
       return Math.sqrt(variance(s));
     case "count":
       return s.present;

@@ -13,6 +13,7 @@ import {
   type TooltipOptions,
 } from "./fieldConfig/legendOptions";
 import { getPanel } from "./registry";
+import { chartData } from "./timeseries/align";
 import { planAxes, skippedPoints } from "./timeseries/axes";
 import { buildSeries } from "./timeseries/series";
 import { resolveStyles } from "./timeseries/styles";
@@ -54,6 +55,7 @@ function LegendEditor() {
         onChange={(next) => setLegend(next)}
       />
       <output data-testid="stored">{JSON.stringify(legend.values)}</output>
+      <output data-testid="mode">{legend.mode}</output>
     </>
   );
 }
@@ -63,7 +65,7 @@ describe("legend and tooltip options", () => {
     const legend: LegendOptions = {
       mode: "table",
       placement: "right",
-      values: ["last", "sum", "p95", "stdDev"],
+      values: ["last", "sum", "p95", "stddev"],
       width: 250,
       limit: 5,
     };
@@ -124,6 +126,10 @@ describe("legend and tooltip options", () => {
     // The chips can be removed one by one.
     await user.click(screen.getByRole("button", { name: "Remove Total" }));
     expect(screen.getByTestId("stored").textContent).toBe('["p99"]');
+    // Hiding and showing the legend again keeps it a table.
+    await user.click(screen.getByRole("checkbox", { name: "Show legend" }));
+    await user.click(screen.getByRole("checkbox", { name: "Show legend" }));
+    expect(screen.getByTestId("mode").textContent).toBe("table");
   });
 });
 
@@ -193,7 +199,9 @@ describe("axis options", () => {
     const config = parseFieldConfig({ defaults: { axisScale: "log" } });
     const series = buildSeries([traffic], "", config);
     const { axes, axisOf } = planAxes(series, resolveStyles(series), config.defaults);
-    expect(skippedPoints(series, axes, axisOf)).toBe(3);
+    expect(skippedPoints(chartData(series, resolveStyles(series)).stacked.ys, axes, axisOf)).toBe(
+      3,
+    );
     renderPanel("timeseries", [traffic], {}, config);
     expect(screen.getByText("3 points left out (value ≤ 0). Use “Log around zero”.")).toBeTruthy();
     // Log around zero draws them all.

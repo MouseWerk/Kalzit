@@ -32,10 +32,10 @@ describe("the shared calculations", () => {
     const all = calculateAll([...NAMED_CALCS, "p50", "p90"], values, times);
     expect(all).toMatchObject({
       // The last row is a gap: "Letzter" has nothing, "Letzter ohne Lücke" skips it.
-      last: Number.NaN,
-      lastNotNull: 3,
+      lastRow: Number.NaN,
+      last: 3,
+      firstRow: 4,
       first: 4,
-      firstNotNull: 4,
       min: 1,
       max: 7,
       sum: 16,
@@ -50,10 +50,21 @@ describe("the shared calculations", () => {
       distinct: 4,
       maxTime: 30,
     });
-    // Population variance of 4, 1, 7, 1, 3 around 3.2.
-    expect(all.variance).toBeCloseTo(4.96);
-    expect(all.stdDev).toBeCloseTo(Math.sqrt(4.96));
+    // Sample variance (n - 1) of 4, 1, 7, 1, 3 around 3.2: 24.8 / 4.
+    expect(all.variance).toBeCloseTo(6.2);
+    expect(all.stddev).toBeCloseTo(Math.sqrt(6.2));
+    expect(calculate("stddev", [5])).toBeNaN();
     expect(all.p90).toBeCloseTo(5.8);
+  });
+
+  it("keeps the stored meaning of last: the newest value that is not a gap", () => {
+    expect(calculateAll(["last"], [1, 2, Number.NaN])).toEqual({ last: 2 });
+    expect(calculate("lastRow", [1, 2, Number.NaN])).toBeNaN();
+    expect(calculate("first", [null, 5, 6])).toBe(5);
+    expect(calculate("firstRow", [null, 5, 6])).toBeNaN();
+    // Infinities are gaps, as everywhere a chart reads values.
+    expect(calculate("max", [1, Number.POSITIVE_INFINITY, 3])).toBe(3);
+    expect(calculate("gaps", [Number.NEGATIVE_INFINITY, 2])).toBe(1);
   });
 
   it("interpolates percentiles between the nearest ranks", () => {
@@ -96,6 +107,8 @@ describe("the shared calculations", () => {
   it("reads stored names defensively: known ones, each once, at most six", () => {
     expect(parseCalc("sum")).toBe("sum");
     expect(parseCalc("p95")).toBe("p95");
+    // The older spelling reads as today's name.
+    expect(parseCalc("stdDev")).toBe("stddev");
     for (const wrong of ["total", "p0", "p100", "p095", "p9.5", "percentile", 3, null]) {
       expect(parseCalc(wrong)).toBeNull();
     }

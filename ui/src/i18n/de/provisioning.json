@@ -228,5 +228,6 @@
   "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen.",
   "provisioning.note.legend_calcs": "Die Legendenwerte {calcs} gibt es in Kalzit nicht; sie wurden weggelassen.",
   "provisioning.note.legend_calcs_cut": "Nur die ersten {max} Legendenwerte wurden übernommen.",
-  "provisioning.note.axis_symlog": "Der lineare Bereich von „Log um null“ wurde nicht übernommen; in Kalzit ist er fest."
+  "provisioning.note.axis_symlog": "Der lineare Bereich von „Log um null“ wurde nicht übernommen; in Kalzit ist er fest.",
+  "provisioning.note.legend_sample": "Standardabweichung und Varianz werden über eine Stichprobe (n − 1) gerechnet; Grafana nimmt die ganze Grundgesamtheit, die Werte weichen etwas ab."
 }

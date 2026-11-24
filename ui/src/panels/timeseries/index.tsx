@@ -15,6 +15,7 @@ import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { chartData } from "./align";
 import { planAxes, skippedPoints } from "./axes";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
@@ -103,7 +104,7 @@ function TimeSeriesPanel({
   }
   // Each value axis follows the unit and decimals of its first series (`axes.ts`).
   const { axes, axisOf } = planAxes(series, styles, config.defaults);
-  const skipped = skippedPoints(series, axes, axisOf);
+  const skipped = skippedPoints(chartData(series, styles).stacked.ys, axes, axisOf);
   return (
     <TimeSeriesChart
       series={series}

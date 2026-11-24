@@ -58,22 +58,27 @@ pub const CALCS: &[&str] = &[
     "deltaPercent",
     "range",
     "median",
-    "stdDev",
+    "stddev",
     "variance",
     "count",
     "distinct",
     "gaps",
-    "lastNotNull",
-    "firstNotNull",
+    "lastRow",
+    "firstRow",
     "maxTime",
 ];
 
 /// Whether a stored calculation name is one of `CALCS` or a percentile `p1` to `p99`.
 pub fn is_calc(name: &str) -> bool {
+    // `stdDev` is the older spelling of `stddev`; the UI reads it as that.
     CALCS.contains(&name)
-        || name
-            .strip_prefix('p')
-            .is_some_and(|n| !n.starts_with('0') && n.parse::<u32>().is_ok_and(|n| (1..=99).contains(&n)))
+        || name == "stdDev"
+        || name.strip_prefix('p').is_some_and(|n| {
+            (1..=2).contains(&n.len())
+                && !n.starts_with('0')
+                && n.bytes().all(|b| b.is_ascii_digit())
+                && n.parse::<u32>().is_ok_and(|n| (1..=99).contains(&n))
+        })
 }
 /// A dotted field path of the document panels, as for projection columns.
 pub const MAX_FIELD_PATH_CHARS: usize = 500;
@@ -1493,7 +1498,7 @@ mod tests {
     fn legend_values_tooltip_details_and_axes_pass_at_their_bounds() {
         let legend = json!({
             "mode": "table", "placement": "right", "width": MAX_LEGEND_WIDTH, "limit": 1,
-            "values": ["last", "sum", "p95", "p1", "p99", "lastNotNull"],
+            "values": ["last", "sum", "p95", "p1", "p99", "lastRow"],
         });
         let tooltip = json!({ "mode": "all", "sort": "desc", "hideZeros": true, "maxWidth": MIN_TOOLTIP_SIZE, "maxHeight": MAX_TOOLTIP_SIZE });
         for kind in ["timeseries", "bar"] {
@@ -1537,6 +1542,8 @@ mod tests {
             (legend(json!({ "values": ["p0"] })), "legend.values[0]"),
             (legend(json!({ "values": ["p100"] })), "legend.values[0]"),
             (legend(json!({ "values": ["p095"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["p+5"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["lastNotNull"] })), "legend.values[0]"),
             (legend(json!({ "width": MIN_LEGEND_WIDTH - 1 })), "options.legend.width"),
             (legend(json!({ "limit": 0 })), "options.legend.limit"),
             (legend(json!({ "limit": MAX_LEGEND_LIMIT + 1 })), "options.legend.limit"),

@@ -111,16 +111,20 @@ export function planAxes(
   return { axes, axisOf };
 }
 
-/** How many points the log axes leave out (values ≤ 0), over all series on them. */
+/**
+ * How many points the log axes leave out (values ≤ 0), over all series on them. The values are
+ * the ones the charts draw: stacked where a series stacks (`chartData`), so the count is exactly
+ * what the renderers drop.
+ */
 export function skippedPoints(
-  series: readonly Series[],
+  drawn: readonly (readonly (number | null)[])[],
   axes: readonly AxisPlan[],
   axisOf: readonly AxisKey[],
 ): number {
   let skipped = 0;
-  series.forEach((s, i) => {
+  drawn.forEach((values, i) => {
     const axis = axes.find((a) => a.key === axisOf[i]);
-    if (axis !== undefined) skipped += skippedCount(axis.spec.scale, s.values);
+    if (axis !== undefined) skipped += skippedCount(axis.spec.scale, values);
   });
   return skipped;
 }

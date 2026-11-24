@@ -353,8 +353,8 @@
           "count",
           "distinct",
           "gaps",
-          "lastNotNull",
-          "firstNotNull",
+          "lastRow",
+          "firstRow",
           "maxTime"
         ],
         "width": 80,
@@ -1619,8 +1619,8 @@
           "count",
           "distinct",
           "gaps",
-          "lastNotNull",
-          "firstNotNull",
+          "lastRow",
+          "firstRow",
           "maxTime"
         ],
         "width": 80,

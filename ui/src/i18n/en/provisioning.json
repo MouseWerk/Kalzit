@@ -228,5 +228,6 @@
   "provisioning.note.now_delay": "The now delay {delay} was dropped.",
   "provisioning.note.legend_calcs": "The legend values {calcs} have no counterpart in Kalzit and were left out.",
   "provisioning.note.legend_calcs_cut": "Only the first {max} legend values are kept.",
-  "provisioning.note.axis_symlog": "The linear range of “Log around zero” is not taken over; Kalzit’s is fixed."
+  "provisioning.note.axis_symlog": "The linear range of “Log around zero” is not taken over; Kalzit’s is fixed.",
+  "provisioning.note.legend_sample": "Standard deviation and variance are calculated over a sample (n − 1); Grafana uses the whole population, so values differ slightly."
 }

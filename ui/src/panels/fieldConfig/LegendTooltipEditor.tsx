@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { CheckboxField, NumberField, SelectField } from "../shared";
 import { Section } from "./FieldConfigEditor";
@@ -44,6 +44,8 @@ export function LegendTooltipEditor({
 }) {
   const { t } = useI18n();
   const id = useId();
+  // Hiding and showing the legend again keeps its kind (list or table).
+  const [kind, setKind] = useState<"list" | "table">(legend.mode === "table" ? "table" : "list");
   const tip: TooltipOptions = tooltip ?? { mode: "all" };
   const setTip = (next: TooltipOptions) => onChange(legend, next);
   const setLegend = (next: LegendOptions) => onChange(next, tip);
@@ -126,7 +128,7 @@ export function LegendTooltipEditor({
         <CheckboxField
           label={t("panels.legend.show")}
           checked={shown}
-          onChange={(show) => setLegend({ ...legend, mode: show ? "list" : "hidden" })}
+          onChange={(show) => setLegend({ ...legend, mode: show ? kind : "hidden" })}
         />
         {!shown ? null : (
           <>
@@ -135,7 +137,10 @@ export function LegendTooltipEditor({
               label={t("panels.legend.kind")}
               value={legend.mode === "table" ? "table" : "list"}
               choices={LEGEND_KINDS.map((m) => [m, t(`panels.legend.mode.${m}`)] as const)}
-              onChange={(mode) => setLegend({ ...legend, mode })}
+              onChange={(mode) => {
+                setKind(mode);
+                setLegend({ ...legend, mode });
+              }}
             />
             <SelectField
               id={`${id}-placement`}

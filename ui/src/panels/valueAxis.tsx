@@ -67,7 +67,13 @@ export function barAxis(
     fraction = (value) => (value - min) / (max - min || 1);
   } else {
     const drawn = spec.scale === "log" ? values.filter((v) => v > 0) : [0, ...values];
-    const extent = drawn.length === 0 ? null : { min: Math.min(...drawn), max: Math.max(...drawn) };
+    let extent: { min: number; max: number } | null = null;
+    for (const v of drawn) {
+      extent =
+        extent === null
+          ? { min: v, max: v }
+          : { min: Math.min(extent.min, v), max: Math.max(extent.max, v) };
+    }
     const scale = valueScale(extent, spec, count);
     min = scale.min;
     max = scale.max;

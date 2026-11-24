@@ -94,7 +94,8 @@ export function LegendValuesField({
     setAskPercentile(false);
   };
   const onListKey = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const inPercentile = event.target instanceof HTMLInputElement && event.target.type === "number";
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !inPercentile) {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActive((current) => Math.min(Math.max(current + step, 0), entries.length - 1));

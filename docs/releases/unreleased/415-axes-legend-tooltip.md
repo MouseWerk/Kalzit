@@ -9,7 +9,8 @@
 - The legend shows any of 19 values per series, picked in four groups (frequent, over time,
   distribution, count) with a search: among them total, count, first, difference, change in %,
   range, standard deviation, variance, median and any percentile. At most six per panel; the list
-  shows the first two, the table all of them and sorts by a click on a column. The legend takes a
+  shows the first two, the table all of them and sorts by a click on a column. Legends in list
+  mode that had more than two values now show the first two; switch to the table for all. The legend takes a
   width beside the chart and a limit of series, with "show all" for the rest.
 - The time series tooltip sorts its series by value, can hide series at zero (and says how many)
   and takes a largest width and height; beyond that it scrolls with the time kept at the top.

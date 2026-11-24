@@ -89,7 +89,8 @@ such as `{{job}} on {{instance}}`), the **Axes** and the **Graph style**.
 
 The legend's values are calculated over the visible time range: Last, Min, Max, Mean, Total;
 First, Difference, Change in %, Range; Median, any percentile (p1 to p99), Standard deviation,
-Variance; Count, Distinct values, Gaps; and Last or First without gap and Time of the max. The list
+Variance; Count, Distinct values, Gaps; and Last or First row (the exact newest or oldest row, empty
+when it is a gap) and Time of the max. Last and First skip gaps. The list
 shows the first two, the table shows each as a column and sorts by a click on its heading.
 
 **Axes**: placement Auto (left; a field with a second unit gets the right axis), Left, Right or Off,

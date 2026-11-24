@@ -103,7 +103,8 @@ export function softRange(
 /** The power of the base at or below (`floor`) or at or above a positive value. */
 function power(base: LogBase, value: number, round: (x: number) => number): number {
   const exponent = round(Math.log(value) / Math.log(base) - (round === Math.ceil ? 1e-9 : -1e-9));
-  return base ** exponent;
+  // Huge values (near Number.MAX_VALUE) would round up to Infinity.
+  return Math.min(base ** exponent, Number.MAX_VALUE);
 }
 
 /** A value on the symmetric log scale rounded outward to 0 or ± a power of the base. */

@@ -97,8 +97,9 @@ Serie), **Namen der Reihen** (Label-Namen in doppelten geschweiften Klammern, et
 
 Die Werte der Legende werden über den sichtbaren Zeitraum gerechnet: Letzter, Min, Max, Mittel,
 Summe; Erster, Differenz, Änderung in %, Spanne; Median, jedes Perzentil (p1 bis p99),
-Standardabweichung, Varianz; Anzahl, Eindeutige Werte, Lücken; und Letzter oder Erster ohne Lücke
-und Zeitpunkt des Max. Die Liste zeigt die ersten zwei, die Tabelle jeden als Spalte und sortiert
+Standardabweichung, Varianz; Anzahl, Eindeutige Werte, Lücken; und Letzter oder Erster als Zeile
+(genau die jüngste oder älteste Zeile, leer bei einer Lücke) und Zeitpunkt des Max. Letzter und
+Erster überspringen Lücken. Die Liste zeigt die ersten zwei, die Tabelle jeden als Spalte und sortiert
 per Klick auf den Spaltenkopf.
 
 **Achsen**: Platzierung Auto (links; ein Feld mit einer zweiten Einheit bekommt die rechte Achse),

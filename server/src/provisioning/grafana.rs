@@ -579,9 +579,21 @@ impl Converter<'_> {
         }
         let mut values: Vec<String> = Vec::new();
         let mut unknown: Vec<String> = Vec::new();
+        let mut sample = false;
         for calc in legend.get("calcs").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
             let mapped = match calc {
+                // Kalzit's "last" and "first" skip gaps; the row-exact ones are "lastRow" and
+                // "firstRow".
+                "lastNotNull" => Some("last".to_string()),
+                "firstNotNull" => Some("first".to_string()),
+                "last" => Some("lastRow".to_string()),
+                "first" => Some("firstRow".to_string()),
                 "diff" => Some("delta".to_string()),
+                // Grafana spreads over the population, Kalzit over a sample (n - 1).
+                "stdDev" | "variance" => {
+                    sample = true;
+                    Some(if calc == "stdDev" { "stddev" } else { "variance" }.to_string())
+                }
                 "diffperc" => Some("deltaPercent".to_string()),
                 "distinctCount" => Some("distinct".to_string()),
                 // Grafana's "delta" adds up a counter's increases; Kalzit's is last minus first.
@@ -594,6 +606,12 @@ impl Converter<'_> {
                 Some(_) => {}
                 None => unknown.push(calc.to_string()),
             }
+        }
+        if sample {
+            notes.push(note(
+                "legend_sample",
+                "standard deviation and variance are calculated over a sample (n - 1) instead of the population",
+            ));
         }
         if values.len() > MAX_LEGEND_VALUES {
             notes.push(
@@ -1661,7 +1679,7 @@ mod tests {
                   "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
                   "options": {
                     "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "width": 250,
-                                "calcs": ["lastNotNull", "mean", "sum", "p95", "diff", "delta", "allValues"] },
+                                "calcs": ["lastNotNull", "last", "sum", "stdDev", "diff", "delta", "allValues"] },
                     "tooltip": { "mode": "multi", "sort": "desc", "hideZeros": true, "maxWidth": 320, "maxHeight": 50 }
                   },
                   "fieldConfig": { "defaults": { "custom": {
@@ -1684,7 +1702,7 @@ mod tests {
         assert_eq!(
             ts["options"]["legend"],
             json!({ "mode": "table", "placement": "right", "width": 250,
-                    "values": ["lastNotNull", "mean", "sum", "p95", "delta"] })
+                    "values": ["last", "lastRow", "sum", "stddev", "delta"] })
         );
         assert_eq!(
             ts["options"]["tooltip"],
@@ -1699,6 +1717,7 @@ mod tests {
         let notes: Vec<_> = item(&c.report, "panel 1 \"Revenue\"").notes.iter().map(|n| n.code.clone()).collect();
         assert!(notes.contains(&"legend_calcs".to_string()), "{notes:?}");
         assert!(notes.contains(&"axis_symlog".to_string()), "{notes:?}");
+        assert!(notes.contains(&"legend_sample".to_string()), "{notes:?}");
         let legend_note =
             item(&c.report, "panel 1 \"Revenue\"").notes.iter().find(|n| n.code == "legend_calcs").unwrap();
         assert_eq!(legend_note.params["calcs"], "delta, allValues");
