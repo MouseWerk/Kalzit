@@ -58,7 +58,8 @@ async function shoot(screen: Screen, page: Page, seed: Seed) {
     await screen.ready(tab, seed, "en");
     await settle(tab);
     await steadyText(tab, seed.dynamic);
-    await expect(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
+    // Soft: both themes are compared and reported, not only the first that differs.
+    await expect.soft(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
       mask: screen.masks?.(tab) ?? [],
     });
   }
