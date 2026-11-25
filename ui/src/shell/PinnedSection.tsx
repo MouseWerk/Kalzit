@@ -72,7 +72,15 @@ export function PinnedSection({ orgId }: { orgId: string }) {
     });
   }
   if (pins.data === undefined) {
-    return null;
+    // The heading holds its place while the pins load (usually they are there already after a
+    // full page load, src/shell/primeShell.ts), so the area does not pop in.
+    return pins.isError ? null : (
+      <section className="shell__pins" aria-labelledby={headingId} aria-busy="true">
+        <h2 id={headingId} className="shell__group-heading">
+          {t("shell.pins.title")}
+        </h2>
+      </section>
+    );
   }
   return (
     <section ref={sectionRef} className="shell__pins" aria-labelledby={headingId}>
@@ -116,6 +124,47 @@ export function PinnedSection({ orgId }: { orgId: string }) {
       ) : null}
     </section>
   );
+}
+
+/**
+ * The pins in the icon rail: one letter tile per pinned dashboard, so pins stay one click away
+ * while the sidebar is collapsed. The title is the link's accessible name and its tooltip.
+ */
+export function RailPins({ orgId }: { orgId: string }) {
+  const { t } = useI18n();
+  const pins = useQuery(pinsQuery(orgId));
+  const items = pins.data?.items ?? [];
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      <hr className="shell__divider" />
+      <ul className="shell__nav-list shell__rail-pins" aria-label={t("shell.pins.title")}>
+        {items.map((entry) => (
+          <li key={entry.id}>
+            <Link
+              to="/dashboards/$dashboardId"
+              params={{ dashboardId: entry.id }}
+              className="nav-link"
+              title={[...entry.path, entry.title].join(" / ")}
+            >
+              <span className="rail-pin" aria-hidden="true">
+                {initialOf(entry.title)}
+              </span>
+              <span className="nav-link__label">{entry.title}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** The first letter or digit of a title, upper case; a dot when there is none. */
+function initialOf(title: string): string {
+  const match = /[\p{L}\p{N}]/u.exec(title);
+  return match === null ? "·" : match[0].toLocaleUpperCase();
 }
 
 function PinnedEntry({

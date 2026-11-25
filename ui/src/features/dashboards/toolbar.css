@@ -911,6 +911,19 @@
     width: var(--size-drawer);
   }
 
+  /*
+   * While editing every pane has the inspector's width from the start, so selecting a panel,
+   * or going from Add to the outline, never narrows the canvas under the pointer.
+   */
+  .dash-rail--editing .dash-pane {
+    width: var(--size-drawer);
+  }
+
+  /* Nor does a taller pane: the page's scrollbar keeps its room while editing. */
+  html:has(.dash-rail--editing) {
+    scrollbar-gutter: stable;
+  }
+
   .dash-pane__outline {
     display: grid;
     align-content: start;

@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::Value;
 
 use super::detail::Detail;
+use super::sql::{Fill, FillMode};
 use crate::shapes::{Field, FieldType, Frame, FrameMeta, Notice, NoticeSeverity};
 
 /// Bytes left for the results of one request; queries running in parallel draw from it. When
@@ -189,11 +190,27 @@ pub struct FrameBuilder {
     truncated: bool,
     notices: Vec<Notice>,
     executed_query: Option<String>,
+    fill: Option<Fill>,
 }
 
 impl FrameBuilder {
     pub fn new(columns: Vec<Column>, max_rows: usize, budget: ResponseBudget) -> Self {
-        Self { columns, rows: 0, max_rows, budget, truncated: false, notices: Vec::new(), executed_query: None }
+        Self {
+            columns,
+            rows: 0,
+            max_rows,
+            budget,
+            truncated: false,
+            notices: Vec::new(),
+            executed_query: None,
+            fill: None,
+        }
+    }
+
+    /// Fills the time buckets without a row when the frame is finished, as the query's
+    /// `$__timeGroup(col, interval, fill)` asks (`sql::Prepared::fill`).
+    pub fn fill_gaps(&mut self, fill: Option<Fill>) {
+        self.fill = fill;
     }
 
     pub fn columns_mut(&mut self) -> &mut [Column] {
@@ -250,7 +267,140 @@ impl FrameBuilder {
         self.notice(NoticeSeverity::Warning, notice);
     }
 
-    pub fn finish(self) -> Frame {
+    /// Adds a row for every bucket of the fill's range that has none, between the rows read. The
+    /// time column is the one named `time`, else the first time column; its values must rise
+    /// from row to row (one row per bucket, ordered by time), or nothing is added and a notice
+    /// says why. A result cut by a limit is not filled.
+    fn apply_fill(&mut self, fill: Fill) {
+        if self.truncated || fill.step_ms <= 0 || fill.from > fill.to {
+            return;
+        }
+        let is_time = |c: &Column| c.field_type == Some(FieldType::Time);
+        let Some(t) = self
+            .columns
+            .iter()
+            .position(|c| is_time(c) && c.name == "time")
+            .or_else(|| self.columns.iter().position(is_time))
+        else {
+            self.notice(
+                NoticeSeverity::Warning,
+                Detail::new("frame.fill_no_time", "the gaps were not filled: the result has no time column"),
+            );
+            return;
+        };
+        let times: Option<Vec<i64>> = self.columns[t].values.iter().map(Value::as_i64).collect();
+        let Some(times) = times.filter(|ts| ts.windows(2).all(|w| w[0] < w[1])) else {
+            let name = self.columns[t].name.clone();
+            let message = format!(
+                "the gaps were not filled: {name} must hold one time per row, rising (ORDER BY {name}, one row per bucket)"
+            );
+            self.notice(NoticeSeverity::Warning, Detail::new("frame.fill_order", message).with("column", name));
+            return;
+        };
+        // The number of buckets first, without overflow and before anything is allocated: a range of
+        // years at a step of a second asks for far more rows than any result may hold.
+        let too_many = |b: &mut Self| {
+            let message = format!("the gaps were not filled: that would take more than {} rows", b.max_rows);
+            b.notice(NoticeSeverity::Warning, Detail::new("frame.fill_row_limit", message).with("rows", b.max_rows));
+        };
+        let step = fill.step_ms;
+        let first = fill.from.div_euclid(step).checked_mul(step);
+        let buckets = first.and_then(|f| fill.to.checked_sub(f)).map(|span| span / step).and_then(|n| n.checked_add(1));
+        let (Some(first), Some(buckets)) = (first, buckets) else {
+            too_many(self);
+            return;
+        };
+        if usize::try_from(buckets).map_or(true, |n| n > self.max_rows) {
+            too_many(self);
+            return;
+        }
+        let slots = || Slots { times: &times, row: 0, bucket: 0, buckets, first, step };
+        let missing = slots().filter(|s| matches!(s, Slot::Gap(_))).count();
+        if missing == 0 {
+            return;
+        }
+        if self.rows.saturating_add(missing) > self.max_rows {
+            too_many(self);
+            return;
+        }
+        let types: Vec<Option<FieldType>> = self.columns.iter().map(|c| c.field_type).collect();
+        let fixed = |field_type: Option<FieldType>, v: f64| match field_type {
+            Some(FieldType::Number) => serde_json::Number::from_f64(v).map_or(Value::Null, Value::Number),
+            Some(FieldType::Int64) if v.fract() == 0.0 && v.abs() < 9.0e18 => Value::String((v as i64).to_string()),
+            Some(FieldType::Decimal) => Value::String(v.to_string()),
+            _ => Value::Null,
+        };
+        // What the added rows hold, reserved before they are made. A filled row costs the same as
+        // the row it copies (or a fixed size), so each size is worked out once, not per gap, and
+        // counting stops once it is more than the budget has left.
+        let left = self.budget.remaining();
+        let row_size = |row: Option<usize>| -> usize {
+            self.columns
+                .iter()
+                .enumerate()
+                .map(|(c, column)| match (fill.mode, row) {
+                    _ if c == t => VALUE_INLINE,
+                    (FillMode::Previous, Some(i)) => value_size(&column.values[i]),
+                    (FillMode::Value(v), _) => value_size(&fixed(types[c], v)),
+                    _ => VALUE_INLINE,
+                })
+                .sum()
+        };
+        let mut added = 0_usize;
+        let mut gap_size = row_size(None);
+        let mut sized = true;
+        let mut last_row = None;
+        for slot in slots() {
+            match slot {
+                Slot::Row(i) => {
+                    last_row = Some(i);
+                    sized = !matches!(fill.mode, FillMode::Previous);
+                }
+                Slot::Gap(_) => {
+                    if !sized {
+                        gap_size = row_size(last_row);
+                        sized = true;
+                    }
+                    added = added.saturating_add(gap_size);
+                    if added > left {
+                        break;
+                    }
+                }
+            }
+        }
+        if added > left || !self.budget.take(added) {
+            let message = "the gaps were not filled: the result would exceed the response size limit";
+            self.notice(NoticeSeverity::Warning, Detail::new("frame.size_limit", message));
+            return;
+        }
+        let rows = self.rows + missing;
+        let mut read: Vec<std::vec::IntoIter<Value>> =
+            self.columns.iter_mut().map(|c| std::mem::take(&mut c.values).into_iter()).collect();
+        let mut merged: Vec<Vec<Value>> = self.columns.iter().map(|_| Vec::with_capacity(rows)).collect();
+        for slot in (Slots { times: &times, row: 0, bucket: 0, buckets, first, step }) {
+            for (c, values) in merged.iter_mut().enumerate() {
+                let value = match slot {
+                    Slot::Row(_) => read[c].next().unwrap_or(Value::Null),
+                    Slot::Gap(at) if c == t => Value::from(at),
+                    Slot::Gap(_) => match fill.mode {
+                        FillMode::Null => Value::Null,
+                        FillMode::Previous => values.last().cloned().unwrap_or(Value::Null),
+                        FillMode::Value(v) => fixed(types[c], v),
+                    },
+                };
+                values.push(value);
+            }
+        }
+        for (column, values) in self.columns.iter_mut().zip(merged) {
+            column.values = values;
+        }
+        self.rows = rows;
+    }
+
+    pub fn finish(mut self) -> Frame {
+        if let Some(fill) = self.fill.take() {
+            self.apply_fill(fill);
+        }
         let fields = self
             .columns
             .into_iter()
@@ -268,6 +418,51 @@ impl FrameBuilder {
             rows_truncated: self.truncated,
             notices: self.notices,
         })
+    }
+}
+
+/// One row of a filled frame, in time order: a row read (its index) or a bucket without one.
+#[derive(Clone, Copy, Debug)]
+enum Slot {
+    Row(usize),
+    Gap(i64),
+}
+
+/// The rows read and the buckets `first`, `first + step`, ... (`buckets` of them) without a row,
+/// merged by time, one at a time. `times` rise strictly.
+struct Slots<'a> {
+    times: &'a [i64],
+    row: usize,
+    bucket: i64,
+    buckets: i64,
+    first: i64,
+    step: i64,
+}
+
+impl Iterator for Slots<'_> {
+    type Item = Slot;
+
+    fn next(&mut self) -> Option<Slot> {
+        loop {
+            // Within the range checked by the caller, so no bucket start overflows.
+            let bucket = (self.bucket < self.buckets).then(|| self.first + self.bucket * self.step);
+            match (self.times.get(self.row), bucket) {
+                (None, None) => return None,
+                (Some(&at), Some(b)) if b == at => self.bucket += 1,
+                (Some(&at), Some(b)) if b < at => {
+                    self.bucket += 1;
+                    return Some(Slot::Gap(b));
+                }
+                (None, Some(b)) => {
+                    self.bucket += 1;
+                    return Some(Slot::Gap(b));
+                }
+                (Some(_), _) => {
+                    self.row += 1;
+                    return Some(Slot::Row(self.row - 1));
+                }
+            }
+        }
     }
 }
 
@@ -368,5 +563,80 @@ mod tests {
             rows += 1;
         }
         assert_eq!(rows, (16 << 20) / 32);
+    }
+
+    fn filled(rows: &[(i64, Option<f64>)], mode: FillMode, max_rows: usize) -> Frame {
+        let columns = vec![Column::new("time", Some(FieldType::Time)), Column::new("n", Some(FieldType::Number))];
+        let mut b = FrameBuilder::new(columns, max_rows, ResponseBudget::new(1 << 20));
+        for (t, n) in rows {
+            assert!(b.push_row(vec![json!(t), n.map_or(Value::Null, |n| json!(n))]));
+        }
+        b.fill_gaps(Some(Fill { step_ms: 10, mode, from: 3, to: 45 }));
+        b.finish()
+    }
+
+    fn values(frame: &Frame, field: usize) -> Value {
+        serde_json::to_value(frame).unwrap()["fields"][field]["values"].clone()
+    }
+
+    #[test]
+    fn fill_adds_the_missing_buckets_of_the_range() {
+        let rows = [(10, Some(1.0)), (30, Some(3.0))];
+        let f = filled(&rows, FillMode::Null, 100);
+        // Buckets from the one holding 3 (0) to 40, the last one starting before 45.
+        assert_eq!(values(&f, 0), json!([0, 10, 20, 30, 40]));
+        assert_eq!(values(&f, 1), json!([null, 1.0, null, 3.0, null]));
+        let f = filled(&rows, FillMode::Previous, 100);
+        assert_eq!(values(&f, 1), json!([null, 1.0, 1.0, 3.0, 3.0]));
+        let f = filled(&rows, FillMode::Value(0.0), 100);
+        assert_eq!(values(&f, 1), json!([0.0, 1.0, 0.0, 3.0, 0.0]));
+        assert!(f.meta().unwrap().notices.is_empty());
+
+        // Unordered or repeated times, too many rows, no time column: nothing added, a notice.
+        let f = filled(&[(30, Some(3.0)), (10, Some(1.0))], FillMode::Null, 100);
+        assert_eq!(values(&f, 0), json!([30, 10]));
+        assert_eq!(f.meta().unwrap().notices[0].code, "frame.fill_order");
+        let f = filled(&rows, FillMode::Null, 4);
+        assert_eq!(values(&f, 0), json!([10, 30]));
+        assert_eq!(f.meta().unwrap().notices[0].code, "frame.fill_row_limit");
+        let mut b =
+            FrameBuilder::new(vec![Column::new("t", Some(FieldType::String))], 10, ResponseBudget::new(1 << 20));
+        assert!(b.push_row(vec![json!("2026-01-01 00:00:00")]));
+        b.fill_gaps(Some(Fill { step_ms: 10, mode: FillMode::Null, from: 0, to: 20 }));
+        assert_eq!(b.finish().meta().unwrap().notices[0].code, "frame.fill_no_time");
+    }
+
+    #[test]
+    fn fill_refuses_huge_and_overflowing_ranges_before_allocating() {
+        let year = 365 * 86_400_000_i64;
+        for (from, to, step) in [
+            // Ten years at a step of one second: about 315 million buckets.
+            (0, 10 * year, 1_000),
+            // Ranges at the ends of the time axis, where `to - first` overflows.
+            (i64::MIN, i64::MAX, 1_000),
+            (i64::MIN + 1, 0, 1),
+            (-1, i64::MAX, 3),
+        ] {
+            let columns = vec![Column::new("time", Some(FieldType::Time)), Column::new("n", Some(FieldType::Number))];
+            let mut b = FrameBuilder::new(columns, 1_000_000, ResponseBudget::new(1 << 20));
+            assert!(b.push_row(vec![json!(0), json!(1)]));
+            b.fill_gaps(Some(Fill { step_ms: step, mode: FillMode::Previous, from, to }));
+            let frame = b.finish();
+            assert_eq!(frame.rows(), 1, "{from}..{to} by {step}");
+            assert_eq!(frame.meta().unwrap().notices[0].code, "frame.fill_row_limit", "{from}..{to} by {step}");
+        }
+    }
+
+    #[test]
+    fn fill_stays_within_the_response_budget() {
+        let columns = vec![Column::new("time", Some(FieldType::Time)), Column::new("s", Some(FieldType::String))];
+        let budget = ResponseBudget::new(4096);
+        let mut b = FrameBuilder::new(columns, 1000, budget.clone());
+        assert!(b.push_row(vec![json!(0), json!("x".repeat(1000))]));
+        b.fill_gaps(Some(Fill { step_ms: 10, mode: FillMode::Previous, from: 0, to: 100 }));
+        let frame = b.finish();
+        assert_eq!(frame.rows(), 1);
+        assert_eq!(frame.meta().unwrap().notices[0].code, "frame.size_limit");
+        assert!(!frame.meta().unwrap().rows_truncated, "the rows read are all there");
     }
 }

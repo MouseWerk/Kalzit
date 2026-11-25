@@ -16,17 +16,21 @@
      * (surface) a step below the canvas (bg), cards and inputs (raised) a step above it, joined by
      * hairline borders instead of shadows. Light is the same idea inverted: soft greys, white
      * cards.
+     *
+     * The neutral tokens join a light and a dark side (--light-*, --dark-*), so a theme variant
+     * (data-light, data-dark on <html>, see the variant blocks below) replaces one side only and
+     * "System" switches between the two chosen variants through CSS alone.
      */
-    --bg: light-dark(oklch(97.8% 0.0015 286), oklch(19.7% 0.004 286));
-    --bg-surface: light-dark(oklch(95.8% 0.002 286), oklch(16.9% 0.003 286));
-    --bg-raised: light-dark(oklch(100% 0 0), oklch(22.8% 0.006 286));
-    --bg-hover: light-dark(oklch(94% 0.003 286), oklch(25.5% 0.006 286));
-    --bg-active: light-dark(oklch(91.5% 0.004 286), oklch(28% 0.007 286));
-    --border: light-dark(oklch(91% 0.004 286), oklch(30% 0.007 286));
-    --border-strong: light-dark(oklch(58% 0.01 286), oklch(56% 0.008 286));
+    --bg: light-dark(var(--light-bg), var(--dark-bg));
+    --bg-surface: light-dark(var(--light-bg-surface), var(--dark-bg-surface));
+    --bg-raised: light-dark(var(--light-bg-raised), var(--dark-bg-raised));
+    --bg-hover: light-dark(var(--light-bg-hover), var(--dark-bg-hover));
+    --bg-active: light-dark(var(--light-bg-active), var(--dark-bg-active));
+    --border: light-dark(var(--light-border), var(--dark-border));
+    --border-strong: light-dark(var(--light-border-strong), var(--dark-border-strong));
 
-    --text: light-dark(oklch(20.5% 0.006 286), oklch(96% 0.002 286));
-    --text-muted: light-dark(oklch(46% 0.012 286), oklch(72% 0.008 286));
+    --text: light-dark(var(--light-text), var(--dark-text));
+    --text-muted: light-dark(var(--light-text-muted), var(--dark-text-muted));
     /*
      * The hint inside an empty field, on every background a field can have. The muted text color,
      * never the browser's own grey, which falls below 4.5:1 on the dark and the sunken surfaces.
@@ -68,7 +72,7 @@
     --shadow-menu: 0 0.5rem 1.5rem -0.5rem var(--shadow-color), 0 1px 2px var(--shadow-color);
 
     /* Focus: neutral, from one token, only on :focus-visible. */
-    --focus-ring: light-dark(oklch(36% 0.008 286), oklch(85% 0.004 286));
+    --focus-ring: light-dark(var(--light-focus-ring), var(--dark-focus-ring));
     --focus-ring-width: 2px;
     --focus-ring-offset: 2px;
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
@@ -129,7 +133,8 @@
     --radius-lg: 12px;
     --radius-pill: 999px;
 
-    /* Layers, lowest first. */
+    /* Layers, lowest first. Below: under the content of its own element (a key cap's surface). */
+    --z-below: -1;
     --z-base: 0;
     /* The first column of a wide table, which stays put while the others scroll under it. */
     --z-sticky-column: 5;
@@ -138,6 +143,8 @@
     --z-sticky-corner: 11;
     /* The top bar and the dashboard toolbar: above sticky parts inside panels, below menus. */
     --z-bar: 50;
+    /* The sidebar while it peeks over the page: above the page's sticky bars. */
+    --z-sidebar: 51;
     /* Kiosk and TV mode cover the page, bars included. */
     --z-kiosk: 60;
     --z-menu: 100;
@@ -148,6 +155,8 @@
     --z-tooltip: 275;
     --z-toast: 300;
     --z-skip-link: 400;
+    /* The boot state of index.html: over everything until the first page has rendered. */
+    --z-boot: 500;
 
     /* Compact density, as in developer tools: 240 px sidebar, 56 px rail, 32 px rows. */
     --sidebar-width: 15rem;
@@ -188,6 +197,8 @@
     /* A data source kind's mark: in the picker's cards, and next to a name in lists. */
     --size-kind-mark: 2.5rem;
     --size-kind-mark-small: 1.5rem;
+    /* The bar of the boot state under the mark (index.html). */
+    --size-boot-bar: 6rem;
     /* A family glyph in a kind's tile: its drawing fills about 70 % of the icon box, so at 80 % it
        covers as much of the tile as a logo does (--size-kind-logo). */
     --size-kind-glyph: 80%;
@@ -225,14 +236,44 @@
      */
     --space-ring-room: calc(var(--focus-ring-width) + var(--focus-ring-offset));
     --space-ring-pull: calc(-1 * var(--space-ring-room));
+    /*
+     * A key cap (board Shortcuts, frame 5): its height, and the corner cut off at the top right
+     * like the corners of the facet icons.
+     */
+    --size-kbd: calc(var(--space-5) + var(--space-half));
+    --kbd-bevel: calc(var(--space-1) + var(--border-width));
     --icon-size: 1rem;
     /* An icon inside a line of smaller text (a sort mark, a tree toggle): sized with the text. */
     --icon-size-inline: 1.125em;
+    /* The 12 px icons (arrows and close in chips) and the 20 px ones (large navigation, empty states). */
+    --icon-size-small: 0.75rem;
+    --icon-size-lg: 1.25rem;
     --avatar-size: 1.5rem;
 
     --duration-fast: 120ms;
     --duration-normal: 180ms;
+    /* The sidebar's slide between the column and the icon rail. */
+    --duration-sidebar: 220ms;
+    /* The boot state's mark waits this long, so a fast load shows only the canvas. */
+    --duration-boot-delay: 150ms;
     --easing: cubic-bezier(0.2, 0, 0, 1);
+    /*
+     * Icons in motion (board Icons.dc.html): a press, a quarter turn, the check drawing itself,
+     * the usual motion, one step of parts that move one after the other (knobs, nodes), a glint,
+     * the long one (a needle, a bell, a turn of refresh), and the two offsets between such parts.
+     * Motions that go out and come back use the return curve.
+     */
+    --duration-icon-press: 90ms;
+    --duration-icon-short: 240ms;
+    --duration-icon-draw: 280ms;
+    --duration-icon: 320ms;
+    --duration-icon-step: 360ms;
+    --duration-icon-glint: 420ms;
+    --duration-icon-long: 480ms;
+    --duration-icon-stagger-short: 40ms;
+    --duration-icon-stagger: 90ms;
+    --easing-icon: var(--easing);
+    --easing-icon-return: cubic-bezier(0.45, 0, 0.25, 1);
   }
 
   :root[data-theme="light"] {
@@ -280,7 +321,173 @@
     :root {
       --duration-fast: 0ms;
       --duration-normal: 0ms;
+      --duration-sidebar: 0ms;
+      --duration-icon-press: 0ms;
+      --duration-icon-short: 0ms;
+      --duration-icon-draw: 0ms;
+      --duration-icon: 0ms;
+      --duration-icon-step: 0ms;
+      --duration-icon-glint: 0ms;
+      --duration-icon-long: 0ms;
+      --duration-icon-stagger-short: 0ms;
+      --duration-icon-stagger: 0ms;
     }
+  }
+}
+
+/*
+ * Theme variants (board Themes, owner decision of 2026-11-21): besides Light and Dark, two more
+ * light variants (Paper: warm off-white; Calcite: a cool mineral blue-grey) and two more dark ones
+ * (Graphite: neutral, almost black; Night: deep blue-grey). The mode (data-theme) decides which
+ * side applies; data-light and data-dark on <html> name the variant of each side, so "System"
+ * switches between the two chosen variants without script and without a flash.
+ *
+ * A variant changes only the neutral surfaces, text, lines, focus and the monochrome chart
+ * colors; accents, status colors, the eight series, ramps and heat steps stay those of the
+ * scheme, so a dashboard looks the same on every ground. The one exception is the warning
+ * threshold of the light variants, a little darker and more yellow, which would otherwise fall
+ * below 3:1 on their sunken surfaces. High contrast has no variants. styles.test.ts checks every
+ * variant with every accent like the base themes.
+ */
+@layer tokens {
+  /* Light, the light side by default; also a preview tile of it inside another variant. */
+  :root,
+  [data-light="light"] {
+    --light-bg: oklch(97.8% 0.0015 286);
+    --light-bg-surface: oklch(95.8% 0.002 286);
+    --light-bg-raised: oklch(100% 0 0);
+    --light-bg-hover: oklch(94% 0.003 286);
+    --light-bg-active: oklch(91.5% 0.004 286);
+    --light-border: oklch(91% 0.004 286);
+    --light-border-strong: oklch(58% 0.01 286);
+    --light-text: oklch(20.5% 0.006 286);
+    --light-text-muted: oklch(46% 0.012 286);
+    --light-focus-ring: oklch(36% 0.008 286);
+    --light-chart-mono: oklch(24% 0.006 286);
+    --light-chart-mono-compare: oklch(55% 0.008 286);
+    --light-tone-warn: oklch(64% 0.14 74);
+  }
+
+  /* Dark, the dark side by default. */
+  :root,
+  [data-dark="dark"] {
+    --dark-bg: oklch(19.7% 0.004 286);
+    --dark-bg-surface: oklch(16.9% 0.003 286);
+    --dark-bg-raised: oklch(22.8% 0.006 286);
+    --dark-bg-hover: oklch(25.5% 0.006 286);
+    --dark-bg-active: oklch(28% 0.007 286);
+    --dark-border: oklch(30% 0.007 286);
+    --dark-border-strong: oklch(56% 0.008 286);
+    --dark-text: oklch(96% 0.002 286);
+    --dark-text-muted: oklch(72% 0.008 286);
+    --dark-focus-ring: oklch(85% 0.004 286);
+    --dark-chart-mono: oklch(92% 0.004 286);
+    --dark-chart-mono-compare: oklch(64% 0.006 286);
+    --dark-tone-warn: oklch(92% 0.13 95);
+  }
+
+  [data-light="paper"] {
+    --light-bg: oklch(96.6% 0.008 85);
+    --light-bg-surface: oklch(94.7% 0.01 85);
+    --light-bg-raised: oklch(99% 0.005 90);
+    --light-bg-hover: oklch(92.8% 0.012 85);
+    --light-bg-active: oklch(90.2% 0.014 85);
+    --light-border: oklch(88.8% 0.013 85);
+    --light-border-strong: oklch(56% 0.02 80);
+    --light-text: oklch(24% 0.015 70);
+    --light-text-muted: oklch(45% 0.02 75);
+    --light-focus-ring: oklch(36% 0.015 75);
+    --light-chart-mono: oklch(26% 0.012 70);
+    --light-chart-mono-compare: oklch(54% 0.016 75);
+    --light-tone-warn: oklch(63% 0.12 85);
+  }
+
+  [data-light="calcite"] {
+    --light-bg: oklch(97% 0.008 240);
+    --light-bg-surface: oklch(95% 0.011 240);
+    --light-bg-raised: oklch(99.6% 0.003 240);
+    --light-bg-hover: oklch(93% 0.013 240);
+    --light-bg-active: oklch(90.5% 0.016 240);
+    --light-border: oklch(89.5% 0.014 240);
+    --light-border-strong: oklch(57% 0.025 245);
+    --light-text: oklch(22% 0.025 250);
+    --light-text-muted: oklch(45.5% 0.03 248);
+    --light-focus-ring: oklch(36% 0.03 250);
+    --light-chart-mono: oklch(25% 0.025 250);
+    --light-chart-mono-compare: oklch(54.5% 0.03 248);
+    --light-tone-warn: oklch(63% 0.12 85);
+  }
+
+  [data-dark="graphite"] {
+    --dark-bg: oklch(15% 0 0);
+    --dark-bg-surface: oklch(11% 0 0);
+    --dark-bg-raised: oklch(19% 0 0);
+    --dark-bg-hover: oklch(22.5% 0 0);
+    --dark-bg-active: oklch(25.5% 0 0);
+    --dark-border: oklch(27.5% 0 0);
+    --dark-border-strong: oklch(56% 0 0);
+    --dark-text: oklch(92% 0 0);
+    --dark-text-muted: oklch(71% 0 0);
+    --dark-focus-ring: oklch(84% 0 0);
+    --dark-chart-mono: oklch(90% 0 0);
+    --dark-chart-mono-compare: oklch(62% 0 0);
+  }
+
+  [data-dark="night"] {
+    --dark-bg: oklch(20.5% 0.025 255);
+    --dark-bg-surface: oklch(17.5% 0.024 255);
+    --dark-bg-raised: oklch(24% 0.028 255);
+    --dark-bg-hover: oklch(27% 0.03 255);
+    --dark-bg-active: oklch(30% 0.032 255);
+    --dark-border: oklch(32% 0.03 255);
+    --dark-border-strong: oklch(59% 0.03 255);
+    --dark-text: oklch(95% 0.01 250);
+    --dark-text-muted: oklch(75% 0.025 250);
+    --dark-focus-ring: oklch(86% 0.015 250);
+    --dark-chart-mono: oklch(92% 0.01 250);
+    --dark-chart-mono-compare: oklch(66% 0.025 250);
+  }
+
+  /*
+   * A preview of a variant inside the page (the tiles of the appearance settings): the element
+   * composes the neutral tokens again from its own side and shows that side's scheme, so a
+   * preview is drawn with the real tokens and can never differ from the theme it names.
+   */
+  :root [data-light],
+  :root [data-dark] {
+    --bg: light-dark(var(--light-bg), var(--dark-bg));
+    --bg-surface: light-dark(var(--light-bg-surface), var(--dark-bg-surface));
+    --bg-raised: light-dark(var(--light-bg-raised), var(--dark-bg-raised));
+    --bg-hover: light-dark(var(--light-bg-hover), var(--dark-bg-hover));
+    --bg-active: light-dark(var(--light-bg-active), var(--dark-bg-active));
+    --border: light-dark(var(--light-border), var(--dark-border));
+    --border-strong: light-dark(var(--light-border-strong), var(--dark-border-strong));
+    --text: light-dark(var(--light-text), var(--dark-text));
+    --text-muted: light-dark(var(--light-text-muted), var(--dark-text-muted));
+    --focus-ring: light-dark(var(--light-focus-ring), var(--dark-focus-ring));
+    --chart-mono: light-dark(var(--light-chart-mono), var(--dark-chart-mono));
+    --chart-mono-compare: light-dark(
+      var(--light-chart-mono-compare),
+      var(--dark-chart-mono-compare)
+    );
+    --tone-warn: light-dark(var(--light-tone-warn), var(--dark-tone-warn));
+  }
+
+  :root [data-light] {
+    color-scheme: light;
+  }
+
+  :root [data-dark] {
+    color-scheme: dark;
+  }
+
+  /* The tiles of the variants on the profile page: a tile's least width and its picture. */
+  :root {
+    --size-variant-tile: 10rem;
+    --size-variant-tile-preview: 4.5rem;
+    --size-variant-tile-rail: 1.25rem;
+    --size-variant-tile-line: 0.375rem;
+    --size-variant-tile-button: 2rem;
   }
 }
 
@@ -504,6 +711,10 @@
 
     /* Line icons: a little lighter than before, close to the website's 1.4. */
     --icon-stroke: 1.5;
+    /* The 12 px drawings keep their weight with a wider stroke on the same grid. */
+    --icon-stroke-small: 2;
+    /* The lit facet of an icon with a surface (board Icons.dc.html): the text color at 20 %. */
+    --icon-facet-opacity: 0.2;
 
     /* Menus and the rail's flyout: wide enough for an email address, never a column. */
     --size-menu-min: 15rem;
@@ -528,6 +739,9 @@
     --info-text: light-dark(oklch(36% 0.1 250), oklch(87% 0.07 245));
     --info-bg: light-dark(oklch(94% 0.025 245), oklch(22% 0.04 245));
     --icon-stroke: 1.75;
+    --icon-stroke-small: 2.25;
+    /* No tints in high contrast: the line carries the icon alone. */
+    --icon-facet-opacity: 0;
   }
 
   /* After the pulse is declared, so this block wins. */
@@ -603,6 +817,17 @@
       var(--space-16)
     );
     --size-auth-step: 1.25rem;
+    /* Fields and main buttons of these pages, the least tap target, and 16 px text in fields on
+       phones (iOS zooms into smaller). */
+    --size-access-field: 2.625rem;
+    --size-access-target: 2.75rem;
+    /* Room at the end of a password field on the sign-in pages for its show/hide button. */
+    --space-access-reveal: calc(var(--space-10) + var(--size-access-target));
+    --radius-access-field: 10px;
+    --font-size-access-input: 1rem;
+    /* The tile of an end state and the facet cut from its corner. */
+    --size-access-end: 2.5rem;
+    --size-access-facet: 0.5rem;
     --size-access-tile: 1.875rem;
     --size-access-preview: 2.75rem;
     --size-access-cell: 4.5rem;
@@ -660,7 +885,7 @@
 @layer tokens {
   :root {
     --tone-ok: light-dark(oklch(47% 0.115 160), oklch(74% 0.13 160));
-    --tone-warn: light-dark(oklch(64% 0.14 74), oklch(92% 0.13 95));
+    --tone-warn: light-dark(var(--light-tone-warn), var(--dark-tone-warn));
     --tone-critical: light-dark(oklch(33% 0.14 27), oklch(60% 0.21 27));
 
     /* The status backgrounds, so tints follow every theme the status colors follow. */
@@ -687,7 +912,6 @@
     --heat-8: light-dark(oklch(34% 0.11 252), oklch(87% 0.08 238));
 
     --font-size-display: 2rem;
-    --size-gauge: 12rem;
     --size-picker-card: 7rem;
     --size-bar-gauge: 1.5rem;
   }
@@ -698,7 +922,13 @@
   :root {
     /* A span annotation's band: a light wash that keeps the series lines above it readable. */
     --annotation-fill: light-dark(oklch(47% 0.014 260 / 0.12), oklch(74% 0.01 260 / 0.16));
-    --annotation-handle: 0.625rem;
+    --annotation-handle: 0.5rem;
+    /* The marker's target around that dot (WCAG 2.5.8). */
+    --annotation-hit: 1.5rem;
+    /* A point annotation is a thin dashed line in its color at this strength, a span a band. */
+    --annotation-line-alpha: 0.7;
+    --annotation-band-alpha: 0.14;
+    --annotation-dash: 0.25rem;
     /* Kiosk mode's strip at the top for its way out: a control and a gap. */
     --space-kiosk-top: calc(var(--control-height) + var(--space-4));
   }
@@ -914,8 +1144,11 @@
  */
 @layer tokens {
   :root {
-    --chart-mono: light-dark(oklch(24% 0.006 286), oklch(92% 0.004 286));
-    --chart-mono-compare: light-dark(oklch(55% 0.008 286), oklch(64% 0.006 286));
+    --chart-mono: light-dark(var(--light-chart-mono), var(--dark-chart-mono));
+    --chart-mono-compare: light-dark(
+      var(--light-chart-mono-compare),
+      var(--dark-chart-mono-compare)
+    );
     --chart-hatch-alpha: 0.5;
     --chart-hatch-width: 1;
     /* Room between hatch lines in px (the reference's 9 px at 1.5x). */

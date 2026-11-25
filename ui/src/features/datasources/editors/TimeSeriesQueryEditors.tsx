@@ -25,6 +25,7 @@ import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 import { Select } from "../../../components/Select";
+import { editorHintKeys } from "./editorKeys";
 
 /**
  * InfluxDB: one language per query. Flux answers on 1.8 and 2.x, InfluxQL everywhere, SQL on 3.x;
@@ -84,7 +85,8 @@ export function InfluxQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t(`datasources.editor.influx.${language}Hint`)}
+        {t("datasources.editor.shortcuts", editorHintKeys())}{" "}
+        {t(`datasources.editor.influx.${language}Hint`)}
         {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       {language === "flux" ? (
@@ -104,6 +106,18 @@ export function InfluxQueryEditor({
 /** Seconds as typed; the query stores milliseconds. */
 function stepText(minStepMs: number | undefined): string {
   return minStepMs === undefined ? "" : String(minStepMs / 1000);
+}
+
+/** Lines a log query may ask for: 1,000 when not set, at most 5,000 (board Logs.dc.html). */
+export const MAX_LOG_LINES = 5_000;
+
+function lineLimit(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^[1-9]\d*$/.test(trimmed)) {
+    return null;
+  }
+  const lines = Number(trimmed);
+  return lines <= MAX_LOG_LINES ? lines : null;
 }
 
 /**
@@ -129,7 +143,7 @@ export function LokiQueryEditor({
   const value = parseLokiQuery(query);
   const [limit, setLimit] = useState(value.limit === undefined ? "" : String(value.limit));
   const [step, setStep] = useState(stepText(value.minStepMs));
-  const limitValid = limit.trim() === "" || /^[1-9]\d*$/.test(limit.trim());
+  const limitValid = limit.trim() === "" || lineLimit(limit) !== null;
   const stepValid = step.trim() === "" || /^\d+(\.\d+)?$/.test(step.trim());
 
   function update(patch: Partial<LokiQuery>) {
@@ -163,7 +177,7 @@ export function LokiQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.loki.hint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.loki.hint")}
         {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <div className="query-editor__options">
@@ -183,8 +197,11 @@ export function LokiQueryEditor({
               setLimit(text);
               if (text.trim() === "") {
                 update({ limit: 0 });
-              } else if (/^[1-9]\d*$/.test(text.trim())) {
-                update({ limit: Number(text.trim()) });
+              } else {
+                const lines = lineLimit(text);
+                if (lines !== null) {
+                  update({ limit: lines });
+                }
               }
             }}
           />

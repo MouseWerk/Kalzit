@@ -70,6 +70,30 @@ pub fn lost(detail: impl ToString) -> SourceError {
     SourceError::Failed(lost_detail(detail))
 }
 
+/// The driver and the database did not understand each other about a value or a message (a
+/// protocol or decoding error), worded for people; the driver's text stays in `detail`.
+pub fn protocol(detail: impl ToString) -> SourceError {
+    let detail = detail.to_string();
+    SourceError::Failed(
+        Detail::new(
+            "source.protocol_error",
+            concat!(
+                "the data source could not read a value of this query, often a variable whose value does not ",
+                "fit the type the query expects there"
+            ),
+        )
+        .with("detail", detail),
+    )
+}
+
+/// A sqlx error that is the driver's own protocol or decoding error rather than the database's.
+pub fn is_protocol_error(e: &sqlx::Error) -> bool {
+    matches!(
+        e,
+        sqlx::Error::Protocol(_) | sqlx::Error::Decode(_) | sqlx::Error::ColumnDecode { .. } | sqlx::Error::Encode(_)
+    )
+}
+
 /// `lost` as a detail.
 pub fn lost_detail(detail: impl ToString) -> Detail {
     let detail = detail.to_string();

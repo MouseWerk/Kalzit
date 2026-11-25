@@ -18,7 +18,9 @@ where it is more specific.
   the PR and runs a review agent on it.
 - PRs are squash-merged (PR title becomes the commit subject); the branch is deleted after merge.
   `main` is protected: no direct push, no force push, merge only with green CI on Windows and
-  Linux. The orchestrator merges once CI is green and the review agent has no open findings, and
+  Linux. CI runs on the owner's machine (`tools/local-ci`, Windows and WSL; owner decision
+  2026-11-23: GitHub's runners were too slow), not on GitHub; `main` requires the statuses
+  `local/windows` and `local/linux`. The orchestrator merges once CI is green and the review agent has no open findings, and
   sends the owner a short summary per PR.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets are encrypted in Kalzit's own database with a key from `KALZIT_SECRETS_KEY`, systemd
@@ -136,7 +138,10 @@ skip or weaken a test.
   "Performance und Tempo" (measured speed-ups, CI benchmarks) and the Grafana settings parity gaps
   and feature follow-ups deferred from M6 reviews.
 - M9: the community plugin store (registry repo `MouseWerk/kalzit-plugins`, website store pages
-  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set.
+  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set (pulled forward,
+  runs next to M8). M11: multi-model sources (ArangoDB mixed shapes, SurrealDB, PostgreSQL with
+  Apache AGE) and a built-in file data store on top of the file source (upload of CSV, JSON,
+  NDJSON, GraphML; offline; Kalzit's own data, queries read-only); no own database engine.
 - Owner goal across milestones: beginners grow into power users (tips, contextual help, guides,
   plain-language errors, the query behind no-code steps), calm and dismissible.
 
@@ -260,22 +265,50 @@ skip or weaken a test.
 ### How the work runs
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
-  (`gh pr diff`, `git show`, never a checkout in the main folder). Merge through the merge queue
-  (GraphQL `enqueuePullRequest`) with green CI on Windows and Linux; delete worktree and branch
-  after merge.
+  (`gh pr diff`, `git show`, never a checkout in the main folder). CI runs locally on the
+  owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed);
+  merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once `local/windows` and `local/linux`
+  passed for the merged tree and the review is clean; delete worktree and branch after merge.
+  `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners (owner decision 2026-11-23:
+  such a pass counts; green work may merge overnight). GitHub Actions CI otherwise runs only by
+  hand.
+- Working rules (owner decision 2026-11-24; they follow the AICodeGuidelines
+  `workflow/02-git.md`, `03-agents.md`, `05-ci.md`):
+  - Done means proven. A PR goes to review only after its checks ran for its area, the e2e
+    specs it adds or touches included; the PR body names the commands and the pass/fail counts.
+  - "Flaky" is not a root cause. Rerun a failed job at most once, and only to show that the
+    failure lies outside the change (it fails the same on main, or died before any test ran). A
+    second failure is real. The status stays red and the test gets a root-cause fix. Never skip,
+    quarantine, loosen or retry a test into green, and never push an empty commit to re-run CI.
+    Splitting a failed batch into smaller batches to find the culprit is not a rerun.
+  - Finish before starting: no new feature builders while reviewed PRs wait to merge. At most
+    three builders at a time (review and research agents not counted), and none builds or runs
+    tests while a local CI run holds `C:/Users/klein/kz-ci/run.lock` (a `gh-run.sh` run on
+    GitHub does not hold it).
+  - On a branch with an open PR: merge `origin/main` in; never rebase or force push pushed
+    commits unless the owner asks.
+  - Every PR gets a review agent before it merges, the orchestrator's own small fixes included.
+    PR review findings stay in the review report and go back to the builder.
+  - CI and merge logic run only from `run.sh`, `merge.sh` and `gh-run.sh` in `tools/local-ci`
+    (`--runner-from-pr` after review is the one exception); no local copies with changed limits,
+    and a running script is stopped before it is edited.
+  - Findings of audits and comparisons live in findings files in the repository
+    (`docs/quality/<topic>/<area>.md`), each with id, where, severity and proposed fix, and each
+    marked fixed (with the commit) or not fixed (with the reason or the release it moves to).
 - Owner decisions are asked as a selection menu with the recommended option first.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
   `docs/releases/v<version>.md`, bumps `server/Cargo.toml`, `Cargo.lock` and the README version.
-  0.7.x gate: release PR merged, 3 green CI runs on that commit (merge queue, push and one
-  manual run on a branch pointing at the commit), then the tag.
+  Release gate: release PR merged, one full local run on that commit
+  (`tools/local-ci/run.sh --ref origin/main --full`), then the tag.
 - After each milestone release: two independent security reviews, fixes as normal PRs.
 - Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
 - The process with roles, flow and places is described in `docs/process.md`.
 - Local load and storage (owner's machine): `CARGO_TARGET_DIR=C:/Users/klein/kz-target/<topic>`
   (E: and D: are blocked for build scripts, F: is a slow USB stick), `CARGO_BUILD_JOBS=2`,
   `cargo clean` and the folder deleted afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree
-  (no junctions to the main checkout's `node_modules`), targeted tests locally, full suites in CI.
+  (no junctions to the main checkout's `node_modules`), targeted tests locally, full suites in the local CI
+  (`tools/local-ci`).
   Port 3000 is reserved for the owner's demo.
 - The website never announces releases and describes only the published release; main-only
   features wait on branch `after-0.6.0`-style branches until their release is out.

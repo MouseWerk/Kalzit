@@ -129,18 +129,101 @@
 
   /* Keys */
 
+  /*
+   * A key cap (board Shortcuts, frame 5): a surface in a hairline, the top right corner cut off
+   * like the corners of the facet icons, a second line below as the key's edge. No accent, no
+   * shadow. The hairline is the cap's own background, the surface a layer inside it.
+   */
   .kbd {
-    display: inline-block;
-    min-width: var(--space-5);
-    padding: 0 var(--space-1);
-    border: var(--border-width) solid var(--border);
+    position: relative;
+    isolation: isolate;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--size-kbd);
+    height: var(--size-kbd);
+    padding: 0 var(--space-1) var(--space-px);
     border-radius: var(--radius-sm);
-    background: var(--bg-surface);
+    background: var(--border);
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--kbd-bevel)) 0,
+      100% var(--kbd-bevel),
+      100% 100%,
+      0 100%
+    );
     color: var(--text-muted);
     font-family: var(--font-sans);
     font-size: var(--font-size-xs);
-    line-height: var(--line-height);
-    text-align: center;
+    font-style: normal;
+    font-weight: var(--font-weight-medium);
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .kbd::before {
+    position: absolute;
+    z-index: var(--z-below);
+    inset: var(--space-px) var(--space-px) calc(2 * var(--space-px)) var(--space-px);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--kbd-bevel) + var(--space-px)) 0,
+      100% calc(var(--kbd-bevel) - var(--space-px)),
+      100% 100%,
+      0 100%
+    );
+    content: "";
+  }
+
+  .kbd__arrow {
+    width: 1em;
+    height: 1em;
+  }
+
+  /* Windows contrast themes: a plain frame in the text color, no cut corner, no tints. */
+  @media (forced-colors: active) {
+    .kbd {
+      border: var(--border-width) solid CanvasText;
+      background: Canvas;
+      clip-path: none;
+      color: CanvasText;
+    }
+
+    .kbd::before {
+      display: none;
+    }
+  }
+
+  /* A shortcut's keys: caps, joined quietly; alternatives with "or", sequences with "then". */
+  .keys,
+  .keys__caps {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+  }
+
+  .keys__group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-half);
+    white-space: nowrap;
+  }
+
+  .keys__plus {
+    padding-inline: var(--space-px);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .keys__word {
+    padding-inline: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
   }
 
   /*
@@ -254,6 +337,22 @@
   .shell__pins {
     display: grid;
     gap: var(--space-1);
+  }
+
+  /*
+   * A navigation row whose entry still waits for its data (AppShell.tsx, GrantedNavEntry): the
+   * height of a link, so nothing below it moves when the entry arrives.
+   */
+  .shell__nav-placeholder {
+    display: flex;
+    align-items: center;
+    min-height: var(--nav-row-height);
+    padding-inline: var(--space-2);
+  }
+
+  .shell__nav-placeholder > .skeleton {
+    flex: 1;
+    max-inline-size: var(--size-boot-bar);
   }
 
   /* A pinned dashboard: its link and the button of its menu. */
@@ -547,8 +646,17 @@
   }
 
   .palette__hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
     border-block-start: var(--border-width) solid var(--border);
     background: var(--bg-surface);
+  }
+
+  .palette__hint-part {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
   }
 
   @media (max-width: 48rem) {
@@ -572,58 +680,376 @@
 
     .palette__detail,
     .palette__kind,
-    .palette__field .kbd,
+    .palette__esc,
     .palette__hint {
       display: none;
     }
   }
 
-  /* Shortcuts help */
+  /*
+   * Shortcuts: the rows of an area, meaning left and keys right (the help and the settings
+   * page). An area is a section with a heading and a description list.
+   */
 
   .shortcuts {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-column), 100%), 1fr));
     gap: var(--space-5);
   }
 
+  .shortcuts__area {
+    display: grid;
+    gap: var(--space-1);
+  }
+
   .shortcuts__title {
-    margin-block-end: var(--space-2);
-    font-size: var(--font-size-md);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: 0;
+    padding-inline: var(--space-2);
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
+    scroll-margin-block-start: var(--space-3);
+  }
+
+  .shortcuts__detail {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /* "here": a quiet word in a neutral tint, never a color. */
+  .shortcuts__here {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
   }
 
   .shortcuts__list {
     display: grid;
-    gap: var(--space-2);
     margin: 0;
   }
 
   .shortcuts__row {
     display: grid;
-    gap: var(--space-1);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-4);
+    min-height: var(--control-height);
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--radius-sm);
   }
 
-  .shortcuts__keys {
+  .shortcuts__label {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-1);
+    align-items: baseline;
+    gap: 0 var(--space-2);
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
   }
 
-  .shortcuts__combo {
-    display: inline-flex;
-    gap: var(--space-1);
+  /* A search hit: full weight, no color. */
+  .shortcuts__label mark {
+    background: none;
+    color: inherit;
+    font-weight: var(--font-weight-semibold);
   }
 
-  .shortcuts__or {
+  .shortcuts__note {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
 
-  .shortcuts__label {
+  .shortcuts__keys {
     margin: 0;
+  }
+
+  /*
+   * The help dialog (board Shortcuts, frames 2, 3, 6, 8 and 10): a fixed head with the search
+   * and a fixed foot; only the list scrolls, never the whole dialog.
+   */
+
+  .shortcuts-help__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-dialog);
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
+    background: var(--shadow-color);
+  }
+
+  .shortcuts-help {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(50rem, 100%);
+    height: min(40rem, 100%);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .shortcuts-help__head {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-block-end: var(--border-width) solid var(--border);
+  }
+
+  .shortcuts-help__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .shortcuts-help__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .shortcuts-help__search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: calc(var(--control-height) + var(--space-1));
+    padding-inline: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text-muted);
+  }
+
+  .shortcuts-help__search:has(:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .shortcuts-help__input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    /* The ring is pushed out of the field and clipped by it; the field rings instead. */
+    outline: var(--focus-outline);
+    outline-offset: var(--space-16);
+  }
+
+  .shortcuts-help__input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .shortcuts-help__count {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .shortcuts-help__body {
+    display: grid;
+    grid-template-columns: 13rem minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .shortcuts-help__nav {
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-2);
+    border-inline-end: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .shortcuts-help__areas {
+    display: grid;
+    gap: var(--space-px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .shortcuts-help__area,
+  .shortcuts-help__all {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: var(--size-target-min);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    text-align: start;
+  }
+
+  .shortcuts-help__area:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  /* The area one is in: a neutral tint and weight, never a frame or a color. */
+  .shortcuts-help__area[aria-current="true"],
+  .shortcuts-help__all {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .shortcuts-help__area-count {
+    margin-inline-start: auto;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-regular);
+  }
+
+  .shortcuts-help__divider {
+    height: var(--border-width);
+    margin: var(--space-1) var(--space-2);
+    background: var(--border);
+  }
+
+  .shortcuts-help__pick {
+    display: none;
+  }
+
+  .shortcuts-help__list {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-3) var(--space-3) var(--space-4);
+  }
+
+  .shortcuts-help__empty {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-2);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  .shortcuts-help__empty p {
+    margin: 0;
+  }
+
+  .shortcuts-help__empty-title {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .shortcuts-help__empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-block-start: var(--space-2);
+  }
+
+  .shortcuts-help__empty-actions .keys {
+    margin-inline-start: var(--space-2);
+  }
+
+  .shortcuts-help__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    border-block-start: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .shortcuts-help__hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .shortcuts-help__settings {
+    margin-inline-start: auto;
+    color: var(--text);
+  }
+
+  /* Narrow windows: the help fills the window, the areas become a choice, keys go below. */
+  @media (width < 40rem) {
+    .shortcuts-help__backdrop {
+      padding: 0;
+    }
+
+    .shortcuts-help {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .shortcuts-help__body {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .shortcuts-help__nav {
+      border-inline-end: 0;
+      border-block-end: var(--border-width) solid var(--border);
+    }
+
+    .shortcuts-help__areas {
+      display: none;
+    }
+
+    .shortcuts-help__pick {
+      display: block;
+    }
+
+    .shortcuts-help__pick .select {
+      width: 100%;
+    }
+
+    .shortcuts__row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+      padding-block: var(--space-1);
+    }
+
+    .shortcuts__keys .keys,
+    .shortcuts__keys .keys__caps {
+      justify-content: flex-start;
+    }
+
+    .shortcuts-help__settings {
+      margin-inline-start: 0;
+    }
+  }
+
+  /*
+   * Windows contrast themes: the area one is in keeps its weight and gets the word "here" in the
+   * list as well; hover and focus are the system's.
+   */
+  @media (forced-colors: active) {
+    .shortcuts-help__area:hover {
+      color: Highlight;
+    }
+
+    .shortcuts__here {
+      border: var(--border-width) solid CanvasText;
+    }
   }
 
   /* Phones: the navigation's groups spread over the bar like one list. */
@@ -1395,5 +1821,208 @@
     letter-spacing: 0;
     line-height: 1;
     overflow: visible;
+  }
+
+  /*
+   * Sidebar motion (sidebarMotion.ts): while the root carries data-sidebar-motion, the sidebar
+   * and the page are snapshotted on their own. Their edges glide; the snapshots keep their
+   * size and stay anchored at the start, so text never stretches, and cross-fade inside the
+   * moving box (the page shows only its new layout, see below). The rest of the window stays still.
+   */
+  :root[data-sidebar-motion] .shell__sidebar {
+    view-transition-name: kz-sidebar;
+  }
+
+  :root[data-sidebar-motion] .shell__main {
+    view-transition-name: kz-main;
+  }
+
+  :root[data-sidebar-motion]::view-transition-group(root),
+  :root[data-sidebar-motion]::view-transition-old(root),
+  :root[data-sidebar-motion]::view-transition-new(root) {
+    animation: none;
+  }
+
+  :root[data-sidebar-motion]::view-transition-group(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-group(kz-main) {
+    animation-duration: var(--duration-sidebar);
+    animation-timing-function: var(--easing);
+  }
+
+  :root[data-sidebar-motion]::view-transition-image-pair(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-image-pair(kz-main) {
+    overflow: clip;
+  }
+
+  :root[data-sidebar-motion]::view-transition-old(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-new(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-old(kz-main),
+  :root[data-sidebar-motion]::view-transition-new(kz-main) {
+    inline-size: auto;
+    block-size: 100%;
+    object-fit: none;
+    object-position: left top;
+    animation-duration: var(--duration-sidebar);
+    animation-timing-function: var(--easing);
+  }
+
+  /*
+   * The page often changes its layout with the width (cards reflow, the first-steps card moves
+   * in from the sidebar): a cross-fade of two layouts would look busy, so the page shows its new
+   * layout at once and only its edge glides.
+   */
+  :root[data-sidebar-motion]::view-transition-old(kz-main) {
+    display: none;
+  }
+
+  :root[data-sidebar-motion]::view-transition-new(kz-main) {
+    animation: none;
+  }
+
+  /*
+   * Peek (useSidebarPeek.ts): from the rail or from focus mode the full sidebar slides out over
+   * the page, which keeps its place. Only clip and position move, never the layout: from the
+   * rail the full-width sidebar is revealed by its clip; in focus mode it slides in from the
+   * window's edge. A quiet neutral shadow lifts it off the page.
+   */
+  .shell[data-layout="hidden"] .shell__sidebar {
+    position: fixed;
+    z-index: var(--z-sidebar);
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: var(--sidebar-width);
+    visibility: hidden;
+    translate: -100% 0;
+    transition:
+      translate var(--duration-sidebar) var(--easing),
+      visibility var(--duration-sidebar);
+  }
+
+  .shell[data-peek="open"] .shell__sidebar {
+    box-shadow: var(--shadow-menu);
+  }
+
+  /* Dragged past a snap point, the sidebar's surface darkens a step: it will collapse or hide. */
+  .shell[data-snap="rail"] .shell__sidebar {
+    background: var(--bg-hover);
+  }
+
+  .shell[data-snap="hide"] .shell__sidebar {
+    background: var(--bg-active);
+  }
+
+  .shell[data-layout="rail"][data-peek] .shell__sidebar {
+    position: fixed;
+    z-index: var(--z-sidebar);
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: var(--sidebar-width);
+  }
+
+  .shell[data-layout="rail"][data-peek="open"] .shell__sidebar {
+    animation: kz-peek-in var(--duration-sidebar) var(--easing) both;
+  }
+
+  .shell[data-layout="rail"][data-peek="closing"] .shell__sidebar {
+    animation: kz-peek-out var(--duration-sidebar) var(--easing) both;
+  }
+
+  .shell[data-layout="hidden"][data-peek] .shell__sidebar {
+    visibility: visible;
+  }
+
+  .shell[data-layout="hidden"][data-peek="open"] .shell__sidebar {
+    translate: 0 0;
+  }
+
+  /* While it slides, the labels are clipped at the moving edge instead of wrapping. */
+  .shell[data-peek] .shell__sidebar .nav-link__label {
+    white-space: nowrap;
+  }
+
+  /* The open clip reaches past the edge, so the shadow shows. */
+  @keyframes kz-peek-in {
+    from {
+      clip-path: inset(0 calc(100% - var(--sidebar-rail-width)) 0 0);
+    }
+
+    to {
+      clip-path: inset(0 calc(-1 * var(--space-8)) 0 0);
+    }
+  }
+
+  @keyframes kz-peek-out {
+    from {
+      clip-path: inset(0 calc(-1 * var(--space-8)) 0 0);
+    }
+
+    to {
+      clip-path: inset(0 calc(100% - var(--sidebar-rail-width)) 0 0);
+    }
+  }
+
+  /* Focus mode's handle: a thin strip at the window's edge that brings the sidebar in. */
+  .shell__edge {
+    position: fixed;
+    z-index: var(--z-sidebar);
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: var(--space-2);
+  }
+
+  /*
+   * The column's edge as a handle (SidebarResizer.tsx). It shows a neutral line on hover and
+   * keyboard focus; dragged past a snap point the sidebar darkens a step (below).
+   */
+  .shell__resizer {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: calc(-1 * var(--space-1));
+    width: var(--space-2);
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .shell__resizer::after {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: calc(var(--space-1) - var(--border-width));
+    width: var(--border-width-strong);
+    background: transparent;
+    content: "";
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .shell__resizer:hover::after,
+  .shell[data-resizing] .shell__resizer::after {
+    background: var(--border-strong);
+  }
+
+  .shell__resizer:focus-visible {
+    outline: var(--focus-outline);
+  }
+
+  .shell[data-resizing] {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  /* Pins in the rail: a letter tile in the place of an icon. */
+  .rail-pin {
+    display: grid;
+    flex: none;
+    width: calc(var(--icon-size) + var(--space-1));
+    height: calc(var(--icon-size) + var(--space-1));
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+  }
+
+  .nav-link[aria-current="page"] .rail-pin {
+    color: var(--text);
   }
 }

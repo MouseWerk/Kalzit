@@ -28,12 +28,18 @@ export const START_PAGES = ["home", "dashboards", "explore"] as const;
 export type StartPage = (typeof START_PAGES)[number];
 
 /**
- * The surfaces an accent has the least contrast on, `--bg-surface` light and `--bg-raised` dark,
- * as WCAG luminance (pinned to the tokens by styles.test.ts): 3:1 against these holds on every
- * surface of both themes.
+ * The surfaces an accent has the least contrast on over every theme variant, `--bg-surface` of
+ * Paper and `--bg-raised` of Night, as WCAG luminance (pinned to the tokens by styles.test.ts):
+ * 3:1 against these holds on every surface of every light and dark variant.
  */
-export const LIGHT_SURFACE_LUMINANCE = 0.87896;
-export const DARK_SURFACE_LUMINANCE = 0.01181;
+export const LIGHT_SURFACE_LUMINANCE = 0.84929;
+export const DARK_SURFACE_LUMINANCE = 0.01386;
+/**
+ * The same surfaces of Light and Dark alone, which accents saved before the variants were checked
+ * against. Such an accent keeps showing (board Themes, decision 2: nothing changes by itself);
+ * only a new choice must hold on every variant.
+ */
+export const LIGHT_DARK_SURFACE_LUMINANCE = { light: 0.87896, dark: 0.01181 } as const;
 /** White, and `--on-accent` of the dark scheme. */
 export const LIGHT_LABEL_LUMINANCE = 1;
 export const DARK_LABEL_LUMINANCE = 0.00579;
@@ -75,7 +81,10 @@ export interface AccentCheck {
   label: number;
   /** The near-black label reads better than white. */
   darkLabel: boolean;
+  /** Holds on every variant: what a new choice needs. */
   passes: boolean;
+  /** Holds on Light and Dark: a stored accent this good still shows. */
+  shows: boolean;
 }
 
 export function checkAccent(value: string): AccentCheck | null {
@@ -94,5 +103,9 @@ export function checkAccent(value: string): AccentCheck | null {
     label,
     darkLabel: dark > light,
     passes: onLight >= MIN_UI_CONTRAST && onDark >= MIN_UI_CONTRAST && label >= MIN_TEXT_CONTRAST,
+    shows:
+      contrast(l, LIGHT_DARK_SURFACE_LUMINANCE.light) >= MIN_UI_CONTRAST &&
+      contrast(l, LIGHT_DARK_SURFACE_LUMINANCE.dark) >= MIN_UI_CONTRAST &&
+      label >= MIN_TEXT_CONTRAST,
   };
 }

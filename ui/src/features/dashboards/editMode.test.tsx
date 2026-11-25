@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
+import { shortcutsOf } from "../../shortcuts/registry";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
@@ -235,14 +235,13 @@ describe("panel shortcuts while editing", () => {
   });
 
   it("are listed in the shortcut help", () => {
-    const area = SHORTCUT_AREAS.find((a) => a.title === "shell.shortcuts.area.dashboards");
-    expect(area?.shortcuts.map((s) => s.label)).toEqual(
+    expect(shortcutsOf("dashboardEdit").map((s) => s.id)).toEqual(
       expect.arrayContaining([
-        "shell.shortcuts.panelEdit",
-        "shell.shortcuts.panelDuplicate",
-        "shell.shortcuts.panelCopy",
-        "shell.shortcuts.panelPaste",
-        "shell.shortcuts.panelRemove",
+        "panel.edit",
+        "panel.duplicate",
+        "panel.copy",
+        "panel.paste",
+        "panel.remove",
       ]),
     );
   });

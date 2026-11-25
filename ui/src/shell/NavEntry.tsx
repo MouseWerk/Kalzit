@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Icon } from "../components/Icon";
+import { Icon, type IconName } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
 import type { OrgPermissions } from "../org/useOrg";
@@ -54,7 +54,11 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
           title={rail || !wide ? label : undefined}
           activeOptions={{ exact: item.exact === true }}
         >
-          <Icon name={item.icon} />
+          {item.useAttention === undefined ? (
+            <Icon name={item.icon} />
+          ) : (
+            <AttentionIcon name={item.icon} useAttention={item.useAttention} />
+          )}
           <span className="nav-link__label">
             {item.badge === undefined ? (
               label
@@ -79,6 +83,15 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
       onFlyoutLayerChange={onFlyoutLayerChange}
     />
   );
+}
+
+/**
+ * An entry's icon that plays its motion once each time something new asks for attention: a new
+ * key mounts it again, so the motion starts over (components.css, `data-play`).
+ */
+function AttentionIcon({ name, useAttention }: { name: IconName; useAttention: () => number }) {
+  const rises = useAttention();
+  return <Icon key={rises} name={name} play={rises > 0} />;
 }
 
 /**
@@ -356,12 +369,10 @@ function useFlyout(rail: boolean, onLayerChange: (open: boolean) => void) {
     linkRef,
     panelRef,
     close,
-    onPointerEnter(event: { pointerType: string }) {
-      if (!rail || event.pointerType === "touch") {
-        return;
-      }
-      openAs("hover");
-    },
+    // A pointer resting on the rail opens the whole sidebar over the page (useSidebarPeek.ts),
+    // so the flyout is the keyboard's way to the sub-pages; the pointer leaving still closes
+    // one it left open.
+    onPointerEnter() {},
     onPointerLeave() {
       if (!rail) {
         return;

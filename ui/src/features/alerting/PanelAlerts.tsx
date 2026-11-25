@@ -229,6 +229,14 @@ export function PanelAlertBadge({ rules, title }: { rules: readonly BadgeRule[];
   const [open, setOpen] = useState(false);
   const state = badgeState(rules);
   const until = useSilencedUntil(state === "silenced" ? rules : NO_RULES);
+  // The bell rings once when the panel starts firing while it is open, not for a state it
+  // already had when its rules loaded (board Icons.dc.html, "new alert"); a new key plays the
+  // motion again.
+  const [seen, setSeen] = useState({ state, rises: 0 });
+  if (state !== seen.state) {
+    const rose = seen.state !== null && state === "firing";
+    setSeen({ state, rises: seen.rises + (rose ? 1 : 0) });
+  }
   if (rules.length === 0) {
     return null;
   }
@@ -256,7 +264,11 @@ export function PanelAlertBadge({ rules, title }: { rules: readonly BadgeRule[];
         onPointerDown={(event) => event.stopPropagation()}
         onClick={() => setOpen(true)}
       >
-        <Icon name={state === "silenced" || state === "paused" ? "bellOff" : "bell"} />
+        <Icon
+          key={seen.rises}
+          name={state === "silenced" || state === "paused" ? "bellOff" : "bell"}
+          play={seen.rises > 0 && state === "firing"}
+        />
         {quiet ? null : <span aria-hidden="true">{stateText}</span>}
       </button>
       <Dialog

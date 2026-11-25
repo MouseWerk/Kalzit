@@ -13,7 +13,7 @@ import { readGrafana, suggestSource, withTitle } from "./grafana";
 import { itemTitle, noteText } from "./ImportReport";
 import { noticeKey, parseNotice } from "./importNotice";
 import { isLocked } from "./Managed";
-import { driftOf } from "./ProvisioningPage";
+import { driftOf, PATH_TAIL, splitPath } from "./ProvisioningPage";
 import { FAKE_REPORT, fakeProvisioned } from "./test/fakeProvisioning";
 
 const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -432,6 +432,68 @@ describe("Verwaltung > Provisioning", () => {
     expect(within(resources).getByRole("link", { name: "Main" }).getAttribute("href")).toBe(
       "/dashboards/d-main",
     );
+  });
+
+  it("counts the sets and names the last one, and keeps each file path on one line", async () => {
+    const path = "dashboards/regionen/regionen-aus-dateien-mit-langem-namen.json";
+    await openAdmin("/admin/provisioning", {
+      permissions: ADMIN,
+      setupServer: (server) => {
+        server.areas.provisioning.resources.push(
+          fakeProvisioned(),
+          fakeProvisioned({
+            set: "regionen",
+            uid: "regionen",
+            resourceId: "d-regionen",
+            name: "Regionen",
+            path,
+            appliedAt: Date.UTC(2026, 10, 15, 9, 0),
+          }),
+        );
+      },
+    });
+    const sets = (await screen.findByText("Sets")).closest("li");
+    expect(sets?.querySelector(".figure-tile__value")?.textContent).toBe("2");
+    expect(sets?.querySelector(".figure-tile__note")?.textContent).toBe("last: regionen");
+    // Cut short in a narrow tile, the sentence is whole in its title.
+    expect(within(sets as HTMLElement).getByTitle("last: regionen")).toBeTruthy();
+    // The names are in the filter of the list, not in the tile.
+    expect(sets?.textContent).not.toContain("kalzit-config");
+    const resources = screen.getByRole("region", { name: "Managed resources" });
+    const chip = within(resources).getByTitle(path);
+    // Cut in the middle: the start can shrink, the file name stays; the text reads whole.
+    expect(chip.textContent).toBe(path);
+    expect(chip.querySelector(".prov-path__tail")?.textContent).toBe(
+      "regionen-aus-dateien-mit-langem-namen.json".slice(-PATH_TAIL),
+    );
+  });
+
+  it("splits a path before its file name, or before its last characters", () => {
+    expect(splitPath("dashboards/vertrieb/main.yaml")).toEqual([
+      "dashboards/vertrieb/",
+      "main.yaml",
+    ]);
+    expect(splitPath("main.yaml")).toEqual(["", "main.yaml"]);
+    const long = "a/ein-sehr-langer-dateiname-ohne-ende.json";
+    const [head, tail] = splitPath(long);
+    expect(head + tail).toBe(long);
+    expect(tail).toHaveLength(PATH_TAIL);
+  });
+
+  it("keeps no more of a file name than fits the narrowest chip", () => {
+    // 24 characters: longer than the chip at 1024 px holds, so only its end stays whole.
+    expect(splitPath("dashboards/vertrieb-uebersicht.yaml")).toEqual([
+      "dashboards/vertrieb",
+      "-uebersicht.yaml",
+    ]);
+    // 17 characters, one too many; 16 still stay whole.
+    expect(splitPath("d/abcdefghijkl.yaml")).toEqual(["d/a", "bcdefghijkl.yaml"]);
+    expect(splitPath("d/bcdefghijkl.yaml")).toEqual(["d/", "bcdefghijkl.yaml"]);
+    // Counted in characters, not UTF-16 units: none is cut in half.
+    const [head, tail] = splitPath("d/\u{1F4C8}\u{1F4C8}umsatz-ost.yaml");
+    expect(head).toBe("d/\u{1F4C8}");
+    expect(Array.from(tail)).toHaveLength(PATH_TAIL);
+    expect(tail.startsWith("\u{1F4C8}")).toBe(true);
   });
 
   it("shows how to start while nothing comes from files", async () => {

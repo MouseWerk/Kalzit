@@ -55,7 +55,8 @@ import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
-import { keyLabel, modShortcut } from "../../shell/sidebarState";
+import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
+import { shortcutAria, shortcutText } from "../../shortcuts/registry";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
 import type { Analysis } from "../analyses/api";
 import {
@@ -84,7 +85,13 @@ import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { queryStats } from "./queryStats";
 import { documentsOf, type TargetOutcome } from "./results";
-import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
+import { usePanelPages } from "./usePanelPages";
+import {
+  firstLoad,
+  type PanelQueryInput,
+  panelDistribution,
+  usePanelResults,
+} from "./usePanelResults";
 import "./panelEditor.css";
 import { isInsideSelectPopup, Select } from "../../components/Select";
 
@@ -112,6 +119,11 @@ interface PanelEditorProps {
   refresh?: number;
   /** The dashboard's time range and refresh controls, shown in the editor's bar. */
   toolbar?: ReactNode;
+  /**
+   * The dashboard's variable bar, above the preview: a value chosen here is the dashboard's
+   * value too, and the preview runs with it.
+   */
+  variablesBar?: ReactNode;
   range: TimeRange;
   variables: VariableValues;
   /** The panel as saved, absent for a new one; unchanged targets preview through its route. */
@@ -171,6 +183,7 @@ export function PanelEditor({
   original,
   refresh = 0,
   toolbar,
+  variablesBar,
   range,
   variables,
   stored,
@@ -290,7 +303,7 @@ export function PanelEditor({
     }),
     [id, type, tableView, grid, preview.targets, deferredSteps, options, fieldConfig],
   );
-  const results = usePanelResults({
+  const previewQuery: PanelQueryInput = {
     orgId,
     dashboardId,
     panel: previewPanel,
@@ -299,8 +312,12 @@ export function PanelEditor({
     saved: savedVariables,
     source: unchanged ? "stored" : "draft",
     run: preview.run + refresh,
-  });
-  const outcomes = useMemo(() => results.data ?? [], [results.data]);
+  };
+  const results = usePanelResults(previewQuery);
+  // Pages loaded after the answer, as on the dashboard: the stored panel continues through the
+  // panel route, a draft through the free route.
+  const paged = usePanelPages(previewQuery, results);
+  const outcomes = paged.outcomes;
   const calendar = useAnalysisCalendar();
   const stepsRun = useMemo(
     () => runPanelSteps(deferredSteps, outcomes, calendar),
@@ -779,7 +796,8 @@ export function PanelEditor({
         notice={filterError}
         tableView={tableView}
         onTableView={setTableView}
-        revision={results.dataUpdatedAt}
+        revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+        more={paged.more}
         onFilter={filterable ? filterBy : undefined}
         panel={previewPanel}
         title={look.title}
@@ -842,7 +860,7 @@ export function PanelEditor({
           type="button"
           className="button button--secondary panel-editor__back"
           onClick={back}
-          title={t("dashboards.editor.backHint")}
+          title={t("dashboards.editor.backHint", { keys: shortcutText("panelEditor.back") })}
         >
           <Icon name="chevron" className="panel-editor__back-icon" />
           <span className="panel-editor__back-label">{t("dashboards.editor.back")}</span>
@@ -876,6 +894,9 @@ export function PanelEditor({
           </button>
         </div>
       </div>
+      {variablesBar === undefined || variablesBar === null ? null : (
+        <div className="panel-editor__variables">{variablesBar}</div>
+      )}
       {blocked ? (
         <p className="field__error" id={`${titleId}-blocked`}>
           {t("documents.projection.blocked")}
@@ -1844,7 +1865,10 @@ const TargetEditor = memo(function TargetEditor({
         ) : null}
         <div className="target__footer">
           <span className="target__shortcut">
-            {t("dashboards.editor.runShortcut", { keys: modShortcut(keyLabel("Enter")).label })}
+            <KeysInText
+              text={t("dashboards.editor.runShortcut", { keys: KEYS_SLOT })}
+              id="panelEditor.run"
+            />
           </span>
           {stats === null ? null : <span className="target__stats">{stats}</span>}
           <button
@@ -1852,7 +1876,7 @@ const TargetEditor = memo(function TargetEditor({
             className="button button--secondary button--small"
             onClick={onRun}
             disabled={runBlocked}
-            aria-keyshortcuts={modShortcut("Enter").aria}
+            aria-keyshortcuts={shortcutAria("panelEditor.run")}
             aria-label={t("dashboards.editor.runAll")}
             title={t("dashboards.editor.runAll")}
           >

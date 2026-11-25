@@ -329,6 +329,10 @@ pub struct Variable {
     /// Several values may be picked at once (custom and query variables); repeats need it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub multi: bool,
+    /// Without a stored value, a multi-value variable starts with every one of its options
+    /// picked instead of the first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_by_default: bool,
     /// How a query variable reads its options from a `graph` or `documents` result. Without it
     /// the result must be a frame (first field values, second labels): a result keeps its shape,
     /// and this is the explicit, visible projection to a list of values.
@@ -645,6 +649,9 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         }
         if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
             return Err(format!("{at}.multi is only for custom and query variables"));
+        }
+        if v.all_by_default && !v.multi {
+            return Err(format!("{at}.allByDefault needs multi"));
         }
         if let Some(from) = &v.values_from {
             if v.kind != VariableType::Query {
@@ -1476,6 +1483,8 @@ b" }),
             (vec!["annotations", "0", "color"], json!(9), "color"),
             (vec!["annotations", "0", "name"], json!(""), "annotations[0].name"),
             (vec!["variables", "0", "multi"], json!(true), "ok"),
+            (vec!["variables", "1", "allByDefault"], json!(true), "ok"),
+            (vec!["variables", "0", "allByDefault"], json!(true), "allByDefault needs multi"),
             (vec!["variables", "1", "type"], json!("textbox"), "multi is only"),
             (
                 vec!["panels", "1", "targets"],

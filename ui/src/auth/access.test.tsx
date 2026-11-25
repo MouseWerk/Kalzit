@@ -104,9 +104,7 @@ describe("sign-in page", () => {
     const alert = await screen.findByText("Email address or password is not correct.");
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
-      screen.getByText(
-        "Check what you entered. After 10 failed attempts you have to wait up to 15 minutes.",
-      ),
+      screen.getByText("After 10 failed attempts a pause of up to 15 minutes is needed."),
     ).toBeTruthy();
     expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe(
       TEST_USER.email,
@@ -134,11 +132,15 @@ describe("sign-in page", () => {
     const { user } = renderApp("/login");
     await signIn(user);
 
-    const alert = await screen.findByText("Too many failed sign-ins from this device.");
+    const alert = await screen.findByText("Too many failed attempts from this device.");
     expect(alert.closest('[role="alert"]')).toBeTruthy();
+    // A pause, not a lock: the text says so.
     expect(
-      screen.getByText("Try again in about 4 minutes. The button counts down the time."),
+      screen.getByText(
+        "You can try again after a pause of about 4 minutes; the button counts down the time. This is a pause, not a lock.",
+      ),
     ).toBeTruthy();
+    expect(screen.queryByText(/locked until/i)).toBeNull();
     const button = screen.getByRole("button", { name: /^Possible again in 3:5\d$/ });
     expect(button.getAttribute("aria-disabled")).toBe("true");
     expect(button.classList.contains("button--primary")).toBe(false);
@@ -164,19 +166,19 @@ describe("sign-in page", () => {
     const { user } = renderApp("/login");
     await signIn(user);
     const alert = await screen.findByText(
-      /^Sign-in for this address is locked, possible again at the latest by \d/,
+      /^This address needs a pause\. Signing in works again by \d/,
     );
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText(
-        "After 10 failed attempts, from whatever device. You can sign in again then.",
+        "After 10 failed attempts, from whatever device. This is a pause, not a lock.",
       ),
     ).toBeTruthy();
     const button = screen.getByRole("button", { name: "Sign in" });
     expect(button.getAttribute("aria-disabled")).toBe("true");
     // Another address is not locked: typing one clears the lock at once.
     await user.type(screen.getByLabelText("Email address"), "x");
-    expect(screen.queryByText(/^Sign-in for this address is locked/)).toBeNull();
+    expect(screen.queryByText(/^This address needs a pause/)).toBeNull();
     expect(screen.getByRole("button", { name: "Sign in" }).getAttribute("aria-disabled")).toBe(
       "false",
     );
@@ -206,7 +208,7 @@ describe("sign-in page", () => {
     renderApp("/login?redirect=%2Fexplore&expired=true");
     const notice = await screen.findByText("Your session has expired.");
     expect(notice.closest('[role="status"]')).toBeTruthy();
-    expect(screen.getByText("Sign in again to continue where you left off.")).toBeTruthy();
+    expect(screen.getByText("After signing in you continue where you left off.")).toBeTruthy();
   });
 
   it("shows the admin's welcome text and notice", async () => {
@@ -223,10 +225,12 @@ describe("sign-in page", () => {
     expect(screen.queryByText("With your account at Kalzit.")).toBeNull();
     const notice = screen.getByText("Maintenance on Saturday.");
     expect(notice.closest('[role="note"]')).toBeTruthy();
-    // The notice takes the panel: it stands before the form and replaces the line on the product.
+    // The notice takes the panel and replaces the line on the product. The form comes first in
+    // the source, so the keyboard and screen readers reach it before the panel (board Auth.dc.html,
+    // frame 14); on screen the panel stands beside it.
     const note = notice.closest(".access__panel") as HTMLElement;
     const form = screen.getByRole("form", { name: "Sign in" });
-    expect(note.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(form.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText("Tables, documents and graphs, each in its own shape.")).toBeNull();
     // The panel is a landmark of its own, named after what it carries.
     expect(screen.getByRole("complementary", { name: "Sign-in notice" })).toBe(note);
@@ -421,7 +425,7 @@ describe("setup, step 1: the setup code", () => {
     const code = screen.getByLabelText("Setup code");
     await waitFor(() => expect(code.getAttribute("aria-invalid")).toBe("true"));
     expect(describedText(code)).toContain(
-      "The code is not correct. Copy it again from “setup-token.txt”; after several failed attempts you have to wait a while.",
+      "The code is not correct. Copy it again from “setup-token.txt”; after several failed attempts a short pause is needed.",
     );
     expect(document.activeElement).toBe(code);
     expect(server.calls.find((call) => call.path === "/api/setup/check")?.body).toEqual({
@@ -435,7 +439,7 @@ describe("setup, step 1: the setup code", () => {
     await passCode(user, "wrong-code");
     expect(
       await screen.findByText(
-        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after several failed attempts you have to wait a while.",
+        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after several failed attempts a short pause is needed.",
       ),
     ).toBeTruthy();
   });
@@ -600,19 +604,23 @@ describe("setup, step 3 and the finish", () => {
       theme: "contrast",
     });
     expect(typeof body.timeZone).toBe("string");
+    // The finish stays in the column: one sentence, the next steps as a list, Start as the action.
     expect(
-      screen.getByText("Müller & Söhne ist eingerichtet und du bist angemeldet."),
+      screen.getByText("Kalzit ist eingerichtet. Der Einrichtungscode ist gelöscht."),
     ).toBeTruthy();
-    expect(screen.getByText("Zoë Ångström · zoe@example.com")).toBeTruthy();
-    expect(screen.getByText(/Deutsch · Darstellung Hoher Kontrast/)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Datenquelle hinzufügen/ }).getAttribute("href")).toBe(
       "/data-sources/new",
     );
     expect(
-      screen.getByText(
-        "Der Einrichtungscode ist gelöscht; die Einrichtungsseite ist ab jetzt geschlossen.",
-      ),
-    ).toBeTruthy();
+      screen.getAllByRole("listitem").filter((item) => item.closest(".next-list")),
+    ).toHaveLength(3);
+    // What was set up stays named until the board's finish list takes it over.
+    expect(screen.getByText("Müller & Söhne")).toBeTruthy();
+    expect(screen.getByText("Zoë Ångström · zoe@example.com")).toBeTruthy();
+    expect(screen.getByText(/Deutsch · Darstellung Hoher Kontrast/)).toBeTruthy();
+    const toStart = screen.getByRole("link", { name: "Zu Start" });
+    expect(toStart.getAttribute("href")).toBe("/");
+    expect(toStart.classList.contains("button--primary")).toBe(true);
     expect(
       within(screen.getByRole("navigation", { name: "Schritte der Einrichtung" })).getByRole(
         "listitem",
@@ -725,7 +733,8 @@ describe("setup, step 3 and the finish", () => {
     await toOrgStep(user);
     await user.click(screen.getByRole("radio", { name: /Light/ }));
     await user.click(screen.getByRole("button", { name: "Theme: Light" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    // The menu names Dark as a mode and as a variant; the mode comes first.
+    await user.click(screen.getAllByRole("menuitemradio", { name: "Dark" })[0] as HTMLElement);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(true);
   });
@@ -766,7 +775,7 @@ describe("setup, step 3 and the finish", () => {
     const wait = await screen.findByRole("button", { name: /^Possible again in 1:1\d$/ });
     expect(wait.getAttribute("aria-disabled")).toBe("true");
     const notice = screen.getByText(
-      "Too many failed attempts from this device. Wait a moment; the button counts down the time.",
+      "Too many failed attempts from this device. You can go on after a short pause; the button counts down the time.",
     );
     expect(notice.closest('[role="alert"]')).toBeTruthy();
     expect(screen.queryByText(/Too many attempts/)).toBeNull();

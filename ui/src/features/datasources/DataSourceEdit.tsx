@@ -335,6 +335,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
               className="button button--secondary"
               disabled={test.isPending || dirty}
               title={dirty ? t("datasources.edit.saveFirst") : undefined}
+              aria-busy={test.isPending || undefined}
               onClick={() => test.mutate()}
             >
               <Icon name="refresh" />
@@ -392,6 +393,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
                   warnings={draft !== null}
                   error={testForm.error ?? test.error}
                   empty={canTest ? <UntestedNote /> : null}
+                  play={test.isSuccess || testForm.isSuccess}
                 />
               </>
             }

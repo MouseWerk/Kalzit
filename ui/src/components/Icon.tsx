@@ -1,113 +1,130 @@
+import { useEffect, useRef, useState } from "react";
+
 /**
- * Line icons drawn on a 24 px grid with the current text color. Decorative by default: the text
- * next to an icon carries the meaning, so screen readers skip it.
+ * Kalzit's own icons, in the facet language of board Icons.dc.html: line drawings on a 24 px grid
+ * in the current text color, with the geometry of the calcite mark (octagons instead of circles,
+ * corners cut at 45 degrees, rhombi for nodes and knobs). Where an icon has a surface, one facet
+ * is tinted with the text color at --icon-facet-opacity; controls stay pure line. Decorative by
+ * default: the text next to an icon carries the meaning, so screen readers skip it.
  */
 const PATHS = {
   // The Kalzit mark from the website: a calcite rhombohedron, three visible faces.
   logo: "M3.1 8.25 7.6 3.95l11.5-2 1.8 13.6-4 4.4L5.6 22.05ZM3.1 8.25 14.6 6.35l2.3 13.6M14.6 6.35l4.5-4.4",
+  // Start: a house, its door the lit facet.
   home: "M3.5 10.5 12 3.5l8.5 7M5.5 9v11h13V9M10 20v-6h4v6",
-  dashboards: "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z",
-  // A compass: Explore is finding your way through data, not a search box.
-  explore: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM15.25 8.75l-1.9 4.6-4.6 1.9 1.9-4.6z",
-  search: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20",
-  dataSources:
-    "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
+  // Tiles with one cut corner; the small tile catches the light.
+  dashboards: "M4 4h5l2 2v7H4zM13 4h5l2 2v3h-7zM13 11h5l2 2v7h-7zM4 15h5l2 2v3H4z",
+  // A compass in an octagon: Explore is finding your way through data, not a search box.
+  explore:
+    "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM15.75 8.25 13.2 13.2 8.25 15.75 10.8 10.8z",
+  // An octagonal lens, its handle and a glint of light on the glass.
+  search: "M13 4.5 16.5 8v5L13 16.5H8L4.5 13V8L8 4.5zM15.5 15.5 20 20",
+  // A hexagonal column of stacked layers; its top face is the facet.
+  dataSources: "M4.5 6.5 12 3.5l7.5 3-7.5 3zM4.5 6.5v11l7.5 3 7.5-3v-11M4.5 12 12 15l7.5-3",
   check: "M5 12.5 10 17.5 19 7",
-  alert: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 8v5M12 16.25v.25",
-  signOut:
-    "M9.5 20H5.5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5.5 4h4M15 16.5 19.5 12 15 7.5M19.5 12H9.5",
-  lock: "M6.5 10.5h11v9.5h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5",
+  alert:
+    "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 8v5M12 16.25v.25",
+  signOut: "M9.5 20h-4L4 18.5v-13L5.5 4h4M15 16.5 19.5 12 15 7.5M19.5 12h-10",
+  lock: "M8 10.5L16 10.5L17.5 12L17.5 18.5L16 20L8 20L6.5 18.5L6.5 12zM8.5 10.5v-3L10.5 5h3l2 2.5v3",
   // A person with a key: a passkey (the second factor).
   passkey:
-    "M9.75 3.75a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM3.75 19.25c0-3.3 2.7-6 6-6 1.2 0 2.3.3 3.2.9M17.75 11.25a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM17.75 16.25v4M17.75 18.75h1.6",
+    "M9.75 3.75L12.78 5.5L12.78 9L9.75 10.75L6.72 9L6.72 5.5zM3.75 19.25 5.25 15 7.5 13.25h4.5l1 .75M17.75 11.25L20.25 13.75L17.75 16.25L15.25 13.75zM17.75 16.25v4M17.75 18.75h1.6",
   // A phone: the authenticator app.
-  phone: "M9 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM11 18h2",
+  phone: "M8.5 3L15.5 3L17 4.5L17 19.5L15.5 21L8.5 21L7 19.5L7 4.5zM11 18h2",
   chevron: "M9 6.5 14.5 12 9 17.5",
   back: "M15 6.5 9.5 12l5.5 5.5",
-  sidebar: "M4.5 4.5h15v15h-15zM9.5 4.5v15",
+  sidebar: "M6 4.5L18 4.5L19.5 6L19.5 18L18 19.5L6 19.5L4.5 18L4.5 6zM9.5 4.5v15",
   star: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
   starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
-  plus: "M12 5v14M5 12h14",
+  // Shafts on pixel centers at 16 px (11.25 units), so they stay crisp.
+  plus: "M11.25 5v14M5 11.25h14",
   // A push pin: the head, the collar and the needle.
   pin: "M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7",
   arrowUp: "M12 19V5M6 11l6-6 6 6",
   arrowDown: "M12 5v14M6 13l6 6 6-6",
-  keyboard: "M3.5 6.5h17v11h-17zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
-  // Themes and languages: sun, moon, a circle split in two shades, a globe.
-  sun: "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM12 3.5V5M12 19v1.5M3.5 12H5M19 12h1.5M6 6l1 1M17 17l1 1M18 6l-1 1M7 17l-1 1",
-  moon: "M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z",
-  contrast: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z",
+  keyboard:
+    "M5 6.5L19 6.5L20.5 8L20.5 16L19 17.5L5 17.5L3.5 16L3.5 8zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
+  // Themes and languages: sun, moon, an octagon split in two shades, a globe.
+  sun: "M13.63 8.07L15.93 10.37L15.93 13.63L13.63 15.93L10.37 15.93L8.07 13.63L8.07 10.37L10.37 8.07zM12 3.5V5M12 19v1.5M3.5 12H5M19 12h1.5M6 6l1 1M17 17l1 1M18 6l-1 1M7 17l-1 1",
+  moon: "M8.94 4.61 4.61 8.94v6.12l4.33 4.33h6.12l4.33-4.33L13.75 14 11 11.25 9.75 7z",
+  contrast:
+    "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15z",
   globe:
-    "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5C9.7 18.1 8.6 15.3 8.6 12s1.1-6.1 3.4-8.5z",
+    "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM4.15 12h15.7M12 4.15 15.25 8v8L12 19.85 8.75 16V8z",
   // Opens a menu that lists choices above and below: two chevrons, one up, one down.
   chevronUpDown: "M8.5 9.5 12 6l3.5 3.5M8.5 14.5 12 18l3.5-3.5",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
-  // A menu of more actions: three dots in a row.
-  more: "M5 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M17 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0",
-  edit: "M5 19h3.5L18.5 9a2.47 2.47 0 0 0-3.5-3.5L5 15.5zM13.5 7l3.5 3.5",
+  // A menu of more actions: three small rhombi in a row.
+  more: "M6 10.75L7.25 12L6 13.25L4.75 12zM12 10.75L13.25 12L12 13.25L10.75 12zM18 10.75L19.25 12L18 13.25L16.75 12z",
+  edit: "M5 19h3.5L19 8.5 15.5 5 5 15.5zM13.5 7l3.5 3.5",
   members:
-    "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3.5 20a5.5 5.5 0 0 1 11 0M15.5 4.5a3.5 3.5 0 0 1 0 6.5M17.5 14.5a5.5 5.5 0 0 1 3 5.5",
+    "M9 4L12.03 5.75L12.03 9.25L9 11L5.97 9.25L5.97 5.75zM3.5 20l1.25-4L7 14.5h4l2.25 1.5L14.5 20M15.5 4.5 18 6v3.5l-2.5 1.5M17.5 14.5l2 1.5.75 4",
   activity: "M3.5 12h4l2.5-6 4 12 2.5-6h4",
   checklist: "M10 6.5h9.5M10 12h9.5M10 17.5h9.5M4.5 6.5l1.25 1.25L8 5.5M4.5 12l1.25 1.25L8 11",
-  folder:
-    "M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z",
+  folder: "M3.5 7 5 5.5h4l2 2h8l1.5 1.5v8.5L19 19H5l-1.5-1.5zM3.5 9.5h17",
   // Show and hide a password; the caps-lock warning next to a password field.
-  eye: "M3 12s3.25-6.5 9-6.5 9 6.5 9 6.5-3.25 6.5-9 6.5S3 12 3 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
-  eyeOff:
-    "M4 4l16 16M10.2 5.7A9 9 0 0 1 12 5.5c5.75 0 9 6.5 9 6.5a16 16 0 0 1-2.9 3.7M6.6 6.9C4.2 8.6 3 12 3 12s3.25 6.5 9 6.5a9 9 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2",
+  eye: "M3 12l4.5-5h9l4.5 5-4.5 5h-9zM12 9L15 12L12 15L9 12z",
+  eyeOff: "M3 12l4.5-5h9l4.5 5-4.5 5h-9zM12 9L15 12L12 15L9 12zM4 4l16 16",
   capsLock: "M12 4.5 4.5 12H8.5v3.5h7V12h4zM8.5 19.5h7",
   chevronDown: "M6.5 9.5 12 15l5.5-5.5",
-  zoomIn: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20M7.5 10.5h6M10.5 7.5v6",
-  zoomOut: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20M7.5 10.5h6",
+  zoomIn: "M13 4.5 16.5 8v5L13 16.5H8L4.5 13V8L8 4.5zM15.5 15.5 20 20M7.5 10.5h6M10.5 7.5v6",
+  zoomOut: "M13 4.5 16.5 8v5L13 16.5H8L4.5 13V8L8 4.5zM15.5 15.5 20 20M7.5 10.5h6",
   share:
-    "M8.25 10.75 15.75 6.75M8.25 13.25l7.5 4M6 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM18 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM18 15.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z",
-  screen: "M3.5 5h17v11h-17zM8.5 20h7M12 16v4",
+    "M6 9.5L8.5 12L6 14.5L3.5 12zM18 3.5L20.5 6L18 8.5L15.5 6zM18 15.5L20.5 18L18 20.5L15.5 18zM8.5 12l7-6M8.5 12l7 6",
+  screen: "M5 5L19 5L20.5 6.5L20.5 14.5L19 16L5 16L3.5 14.5L3.5 6.5zM8.5 20h7M12 16v4",
   expand: "M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15",
-  history: "M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4M12 8v4l2.5 2",
+  history:
+    "M4.61 15.06 8.94 19.39h6.12l4.33-4.33V8.94L15.06 4.61H8.94L4.61 8.94M9.1 8.94H4.61V4.45M12 8v4l2.5 2",
   // A bell: alerting. Struck through, a silence.
-  bell: "M6 14.25v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 18.75a2 2 0 0 0 4 0",
-  bellOff: "M6 14.25v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 18.75a2 2 0 0 0 4 0M4.5 4.5l15 15",
+  bell: "M6.5 16v-5l2-4.5 3.5-2 3.5 2 2 4.5v5l2 2h-15zM10.5 20.5h3",
+  bellOff: "M6.5 16v-5l2-4.5 3.5-2 3.5 2 2 4.5v5l2 2h-15zM10.5 20.5h3M4.5 4.5l15 15",
   trash: "M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5M10 10.5v6M14 10.5v6",
-  copy: "M8.5 8.5h11v11h-11zM15.5 8.5v-4h-11v11h4",
-  paste: "M8 5H5.5v15h13V5H16M9 3.5h6v3H9z",
-  calendar: "M4.5 6h15v14h-15zM4.5 10h15M8.5 3.5v4M15.5 3.5v4",
+  copy: "M10 8.5L18 8.5L19.5 10L19.5 18L18 19.5L10 19.5L8.5 18L8.5 10zM15.5 8.5V6L14 4.5H6L4.5 6v8L6 15.5h2.5",
+  paste: "M8 5H5.5v13.5L7 20h10l1.5-1.5V5H16M9 3.5h6v3H9z",
+  calendar:
+    "M6 6L18 6L19.5 7.5L19.5 18.5L18 20L6 20L4.5 18.5L4.5 7.5zM4.5 10h15M8.5 3.5v4M15.5 3.5v4",
   code: "M9 7 4.5 12 9 17M15 7l4.5 5-4.5 5",
   rows: "M4.5 5h15v4h-15zM4.5 11.5h15M4.5 15.5h15M4.5 19.5h15",
   library: "M3.25 4.5h4v15h-4zM9.25 4.5h4v15h-4zM14.75 5.4l3.4-.9 2.6 14-3.4.9z",
   outline: "M4.5 6h2M9.5 6h10M6.5 12h2M11.5 12h8M6.5 18h2M11.5 18h8",
-  plusSquare: "M4.5 4.5h15v15h-15zM12 8.5v7M8.5 12h7",
+  plusSquare: "M6 4.5L18 4.5L19.5 6L19.5 18L18 19.5L6 19.5L4.5 18L4.5 6zM12 8.5v7M8.5 12h7",
   barChart: "M5.5 19.5V11M10 19.5V5.5M14.5 19.5V9M19 19.5V13",
-  table: "M4.5 5h15v14h-15zM4.5 10h15M4.5 14.5h15M10 10v9",
-  gauge: "M4 16a8 8 0 1 1 16 0M12 16l3.5-4",
-  pie: "M12 3.5v8.5h8.5A8.5 8.5 0 1 1 12 3.5z",
+  table: "M6 5L18 5L19.5 6.5L19.5 17.5L18 19L6 19L4.5 17.5L4.5 6.5zM4.5 10h15M4.5 14.5h15M10 10v9",
+  gauge: "M4 17v-4.5L8.5 8h7l4.5 4.5V17M12 17l4.5-6",
+  pie: "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 4.15V12h7.85",
   network:
-    "M3.75 7a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M15.75 6a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M9.75 18a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M8.25 6.8l7.5-.6M7.1 9l3.8 7M16.9 8l-3.8 8",
+    "M8.5 7 15.5 6M6 9.5 12 15.5M18 8.5 12 15.5M6 4.5L8.5 7L6 9.5L3.5 7zM18 3.5L20.5 6L18 8.5L15.5 6zM12 15.5L14.5 18L12 20.5L9.5 18z",
   stat: "M5 17.5h14M7 13.5v-7l-1.5 1M11 6.5h4l-3.5 7",
   text: "M5 7.5h14M5 12h14M5 16.5h9",
   filter: "M4.5 5h15l-6 7.5v6l-3 1.5v-7.5z",
   flag: "M6 20.5V4M6 4.5h11l-2.5 4 2.5 4H6",
-  link: "M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1",
-  help: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM9.75 9.5a2.25 2.25 0 1 1 3.4 1.95c-.7.4-1.15.9-1.15 1.8v.25M12 16.25v.25",
-  // Settings: three sliders with their knobs.
-  settings: "M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4",
+  // Two links of a chain on a diagonal, their round ends cut into facets.
+  link: "M10 14l1.3.87h3.06l1.3-.87 3-3 .87-1.3V6.64L17.36 4.47H14.3L13 5.34l-1 1M14 10l-1.3-.87H9.64L8.34 10l-3 3-.87 1.3v3.06l2.17 2.17H9.7l1.3-.87 1-1",
+  help: "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM9.75 9.75V9L11 7.75h2L14.25 9v1.25L12 12v1.25M12 16.25v.25",
+  // Settings: three continuous tracks with filled rhombic knobs (FILLS).
+  settings: "M4 7h16M4 12h16M4 17h16",
   // Updates: download and upload a package, look again, plan for later, a verified signature.
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
   // A floppy disk: saving, as in every editor.
   save: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
   upload: "M12 15V4M7 9l5-5 5 5M5 20h14",
-  refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
-  clock: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM12 8v4l3 2",
-  shieldCheck:
-    "M12 3 19.5 6v5.5c0 4.5-3.2 8.2-7.5 9.5-4.3-1.3-7.5-5-7.5-9.5V6zM9 12l2.25 2.25L15.5 10",
+  refresh:
+    "M19.39 15.06 15.06 19.39H8.94L4.61 15.06V8.94L8.94 4.61h6.12l4.33 4.33M14.9 8.94h4.49V4.45",
+  clock:
+    "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 8v4l3 2",
+  shieldCheck: "M12 3 19.5 6v6l-2.5 5.25L12 21l-5-3.75L4.5 12V6zM9 12l2.25 2.25L15.5 10",
   external: "M6.5 17.5l11-11M8.5 6.5h9v9",
-  // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code is).
+  // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code
+  // is).
   arrowRight: "M5 12h14M13 6l6 6-6 6",
+  // The left arrow key on a key cap.
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
   file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h6",
-  terminal: "M3.5 4.5h17v15h-17zM7 9.5l3 2.5-3 2.5M12 15h5",
+  terminal: "M5 4.5L19 4.5L20.5 6L20.5 18L19 19.5L5 19.5L3.5 18L3.5 6zM7 9.5l3 2.5-3 2.5M12 15h5",
   log: "M4.5 6h15M4.5 12h15M4.5 18h10",
-  /** AI entry points (neutral, never in the accent color). */
-  /** "Fragen": a speech bubble with the AI spark inside. */
-  ask: "M20 11.5a7.5 7.5 0 0 1-11 6.6L4 19l1-4.2A7.5 7.5 0 1 1 20 11.5zM12 8l.9 2.1 2.1.9-2.1.9L12 14l-.9-2.1-2.1-.9 2.1-.9z",
+  // AI entry points (neutral, never in the accent color). "Fragen": a speech bubble with the AI
+  // spark inside.
+  ask: "M8 4.5h8l4 4v5l-4 4h-5.5L5 20l.75-3.75L4 13.5v-5zM12 8l.9 2.1 2.1.9-2.1.9L12 14l-.9-2.1-2.1-.9 2.1-.9z",
   sparkle:
     "M10.25 4l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6zM16.75 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z",
   // Controls that were text characters before: a minus, a sort direction and a drag handle.
@@ -117,22 +134,59 @@ const PATHS = {
   chevronsLeft: "M11.5 6.5 6 12l5.5 5.5M18 6.5 12.5 12l5.5 5.5",
   chevronsRight: "M6 6.5 11.5 12 6 17.5M12.5 6.5 18 12l-5.5 5.5",
   // About this item: the dashboard's details (board Main), not help.
-  info: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 11v5.25M12 7.75V8",
-  grip: "M8 6a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 6a1 1 0 1 0 2 0 1 1 0 1 0-2 0M8 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M8 18a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 18a1 1 0 1 0 2 0 1 1 0 1 0-2 0",
-  // Families of data sources without a logo (features/datasources/kindMarks.tsx).
-  // Braces: documents with nested fields.
-  documents:
-    "M9 4.5c-1.75 0-2.5.75-2.5 2.5v2.25c0 1.25-.75 2.25-2 2.75 1.25.5 2 1.5 2 2.75V17c0 1.75.75 2.5 2.5 2.5M15 4.5c1.75 0 2.5.75 2.5 2.5v2.25c0 1.25.75 2.25 2 2.75-1.25.5-2 1.5-2 2.75V17c0 1.75-.75 2.5-2.5 2.5",
-  // Lines of text and a magnifier: an index to search.
+  info: "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 11v5.25M12 7.75V8",
+  grip: "M9 4.9L10.1 6L9 7.1L7.9 6zM15 4.9L16.1 6L15 7.1L13.9 6zM9 10.9L10.1 12L9 13.1L7.9 12zM15 10.9L16.1 12L15 13.1L13.9 12zM9 16.9L10.1 18L9 19.1L7.9 18zM15 16.9L16.1 18L15 19.1L13.9 18z",
+  // Families of data sources without a logo (features/datasources/kindMarks.tsx). Braces: documents
+  // with nested fields.
+  documents: "M9 4.5H7.5l-1 1V10l-2 2 2 2v4.5l1 1H9M15 4.5h1.5l1 1V10l2 2-2 2v4.5l-1 1H15",
+  // Lines of text and a lens: an index to search.
   searchIndex:
-    "M3.75 5.5h10M3.75 9.5h6M3.75 13.5h4M15.25 9.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM17.75 16l2.5 2.5",
+    "M3.75 5.5h10M3.75 9.5h6M3.75 13.5h4M16.59 9.77L18.48 11.66L18.48 14.34L16.59 16.23L13.91 16.23L12.02 14.34L12.02 11.66L13.91 9.77zM17.75 15.5l2.5 2.5",
   // A file holding a table: a database in one file.
   fileTable: "M6.5 3.5h7l4 4v13h-11zM13.5 3.5v4h4M9 12h6v5.5H9zM9 14.75h6M12 12v5.5",
   // A puzzle piece: what a plugin adds.
-  plugin: "M4.5 6.5H9a2 2 0 1 1 4 0h4.5V11a2 2 0 1 1 0 4v4.5h-13z",
-  /** A service account: a small robot. */
+  plugin: "M4.5 6.5H9V5l1.5-1.5h1L13 5v1.5h4.5V11H19l1.5 1.5v1L19 15h-1.5v4.5h-13z",
+  // A service account: a small robot.
   robot:
-    "M7.5 8h9a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-6A2.5 2.5 0 0 1 7.5 8zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",
+    "M6.5 8L17.5 8L19 9.5L19 17.5L17.5 19L6.5 19L5 17.5L5 9.5zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",
+  // The tools on a graph's canvas: the pointer, a rectangle and a lasso to select with, and the two
+  // arrows of its history.
+  pointer: "M6.5 4l11 6.5-4.75 1.5 2.75 6-2.5 1.2-2.75-6L7 16.5z",
+  selectRect:
+    "M4.5 5.5h3M10.5 5.5h3M16.5 5.5h3v3M19.5 11v3M19.5 16.5v2h-3M13.5 18.5h-3M7.5 18.5h-3v-2M4.5 14v-3M4.5 8.5v-3",
+  // A rope: a tilted loop, dashed like the rectangle, and the rope with its knot.
+  lasso:
+    "M19.3 7.88 17.52 10.23M15.82 11.53 12.49 13.08M10.41 13.55 7.47 13.4M6.21 12.76 5.39 10.99M5.7 9.62 7.48 7.27M9.18 5.97 12.51 4.42M14.59 3.95 17.53 4.1M18.79 4.74 19.61 6.51M7.5 13.9 8 17.5M8 17.5L9.5 19L8 20.5L6.5 19z",
+  undo: "M9 5 5 9l4 4M5 9h10.5l3 3v3.5l-3 3h-5",
+  redo: "M15 5l4 4-4 4M19 9H8.5l-3 3v3.5l3 3h5",
+  // A painter's palette: the style rules of a graph panel.
+  palette:
+    "M8.75 4.15h6.5l4.6 4.6v3.75H16L14.5 14v2l1 1.5-2 2.35H8.75l-4.6-4.6v-6.5zM7.5 11.5h.01M9.5 7.5h.01M14.5 7.5h.01",
+  // One person: a faceted head and shoulders.
+  user: "M12 4.25L15.25 6.12L15.25 9.88L12 11.75L8.75 9.88L8.75 6.12zM5 20.5l1.75-5h10.5l1.75 5",
+  mail: "M5 5.5L19 5.5L20.5 7L20.5 17L19 18.5L5 18.5L3.5 17L3.5 7zM3.5 7.5 12 13l8.5-5.5",
+  cloud: "M6.5 17.5h11l2.5-2.5v-2l-1.5-1.5H17V9l-2.5-2.5H11L8.5 9v1h-2L4 12.5V15z",
+  folderOpen: "M3.5 18V7L5 5.5h4l2 2h6.5L19 9v2M3.5 18 6 11h15l-2.5 7z",
+  key: "M8.5 6.5L14 12L8.5 17.5L3 12zM14 12h7M18 12v3M21 12v2.5",
+  server:
+    "M5.5 4.5L18.5 4.5L20 6L20 9L18.5 10.5L5.5 10.5L4 9L4 6zM5.5 13.5L18.5 13.5L20 15L20 18L18.5 19.5L5.5 19.5L4 18L4 15zM7.5 7.5h.01M7.5 16.5h.01",
+  // A calendar with a clock: something that runs on a schedule.
+  schedule:
+    "M10.5 19H6l-1.5-1.5v-11L6 5h12l1.5 1.5V10M4.5 9.5h15M8.5 3.5v3M15.5 3.5v3M18.03 12.8L20.2 14.97L20.2 18.03L18.03 20.2L14.97 20.2L12.8 18.03L12.8 14.97L14.97 12.8zM16.5 16.5V14.5",
+  // A call that goes out: from the source rhombus along a hook into its target.
+  webhook:
+    "M6.5 4.25L8.75 6.5L6.5 8.75L4.25 6.5zM8.75 6.5H14l3.5 3.5v3.25M15.5 11.25l2 2 2-2M17.5 15.25L19.75 17.5L17.5 19.75L15.25 17.5z",
+  // A conversation in a chat tool (Slack, Teams): a bubble with lines.
+  channel: "M5 5h14l1.5 1.5v8L19 16h-7l-4 3.5V16H5l-1.5-1.5v-8zM8 9h8M8 12h5",
+  report: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 17v-3M12 17v-5M15 17v-2",
+  mapPin: "M12 21 6.5 13.5V9l2-3.5 3.5-2 3.5 2 2 3.5v4.5zM12 7L14 9L12 11L10 9z",
+  layers: "M12 4l8 4-8 4-8-4zM4 12l8 4 8-4M4 16l8 4 8-4",
+  // A series that goes on as a dashed guess.
+  forecast: "M4 16l4-4.5 3 2.5 2.5-3.5M15.25 8.75l1.25-1.25M18.25 5.75l1.25-1.25M4 19h16",
+  // Points along a baseline and one far above them.
+  outlier: "M6 16h.01M9 14h.01M12 15h.01M15 12.5h.01M18 4.5L20.5 7L18 9.5L15.5 7zM4 19.5h16",
+  // Tabs: the raised current tab is lit, a lower one beside it, an open body below the baseline.
+  tab: "M3.5 9.5h17M4.5 9.5V18L6 19.5h12l1.5-1.5V9.5M5 9.5v-3L6.5 5h4L12 6.5v3M13 9.5V8.5l1-1h3.5l1 1v1",
 } as const;
 
 export type IconName = keyof typeof PATHS;
@@ -153,33 +207,322 @@ const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);
 
 /**
  * Parts drawn filled on top of the outline, in the same color: the dark half of the contrast
- * circle. The outline keeps its stroke, so the filled part lines up with the rest of the icon.
+ * octagon, the knobs of the settings sliders. The outline keeps its stroke, so the filled parts
+ * line up with the rest of the icon.
  */
-const FILLS: Partial<Record<IconName, string>> = {
-  contrast: "M12 3.5a8.5 8.5 0 0 1 0 17z",
+const FILLS: Partial<Record<IconName, readonly string[]>> = {
+  contrast: ["M12 4.15h3.25l4.6 4.6v6.5l-4.6 4.6H12z"],
+  settings: [
+    "M15 4.75 17.25 7 15 9.25 12.75 7z",
+    "M9 9.75 11.25 12 9 14.25 6.75 12z",
+    "M13 14.75 15.25 17 13 19.25 10.75 17z",
+  ],
 };
 
 /**
- * One style for every icon: the 24 px grid, the stroke of `--icon-stroke` (components.css; the
- * attribute holds the same value for drawings without the stylesheet), round caps and joins, the
- * current text color, and the drawing inside 3 to 21 and centered on 12,12 (Icon.test.tsx).
+ * The lit facet of an icon with a surface: one face, tinted with the text color (components.css,
+ * --icon-facet-opacity). It is gone in the contrast theme and with forced colors, so no meaning
+ * rests on it.
  */
-export function Icon({ name, className }: { name: IconName; className?: string }) {
-  const fill = FILLS[name];
+const FACETS: Partial<Record<IconName, string>> = {
+  home: "M10 14h4v6h-4z",
+  dashboards: "M13 4h5l2 2v3h-7z",
+  explore: "M15.75 8.25 13.2 13.2 10.8 10.8z",
+  search: "M7.5 9 9 7.5h2L7.5 11z",
+  dataSources: "M4.5 6.5 12 3.5l7.5 3-7.5 3z",
+  lock: "M8 10.5L16 10.5L17.5 12L17.5 18.5L16 20L8 20L6.5 18.5L6.5 12z",
+  passkey: "M9.75 3.75L6.72 5.5L6.72 9L9.75 10.75z",
+  phone: "M8.5 3h7L17 4.5V6H7V4.5z",
+  sidebar: "M6 4.5h3.5v15H6l-1.5-1.5V6z",
+  pin: "M10 9.5 7 13h10l-3-3.5z",
+  keyboard: "M5 6.5h14L20.5 8v.5h-17V8z",
+  edit: "M5 15.5 8.5 19H5z",
+  members: "M9 4L5.97 5.75L5.97 9.25L9 11z",
+  folder: "M3.5 7 5 5.5h4l2 2h8l1.5 1.5v.5h-17z",
+  eye: "M12 9L15 12L12 15L9 12z",
+  share: "M6 9.5L8.5 12L6 14.5L3.5 12z",
+  screen: "M5 5h6l-7.5 7.5v-6z",
+  bell: "M6.5 11l2-4.5 3.5-2L10 11z",
+  calendar: "M6 6h12l1.5 1.5V10h-15V7.5z",
+  library: "M3.25 4.5h4v15h-4z",
+  table: "M6 5h12l1.5 1.5V10h-15V6.5z",
+  pie: "M12 4.15L15.25 4.15L19.85 8.75L19.85 12L12 12z",
+  network: "M12 15.5L14.5 18L12 20.5L9.5 18z",
+  flag: "M6 4.5h11l-2.5 4 2.5 4H6z",
+  save: "M8 4h7v5H8z",
+  shieldCheck: "M12 3 4.5 6v6L7 17.25 12 21z",
+  file: "M14 3.5l4 4h-4z",
+  terminal: "M5 4.5h14l1.5 1.5v1h-17V6z",
+  fileTable: "M13.5 3.5l4 4h-4z",
+  plugin: "M4.5 12.5v7h7z",
+  robot: "M6.5 8h11L19 9.5v1H5v-1z",
+  palette: "M4.15 15.25v-6.5l4.6-4.6H12z",
+  user: "M12 4.25L8.75 6.12L8.75 9.88L12 11.75z",
+  mail: "M5 5.5h14l1.5 1.5v.5L12 13 3.5 7.5V7z",
+  cloud: "M6.5 17.5h11l2.5-2.5V14H4v1z",
+  folderOpen: "M3.5 18 6 11h15l-2.5 7z",
+  key: "M8.5 10.25L10.25 12L8.5 13.75L6.75 12z",
+  server: "M5.5 4.5L18.5 4.5L20 6L20 9L18.5 10.5L5.5 10.5L4 9L4 6z",
+  schedule: "M6 5h12l1.5 1.5v3h-15v-3z",
+  webhook: "M17.5 15.25L19.75 17.5L17.5 19.75L15.25 17.5z",
+  channel: "M8 16h4l-4 3.5z",
+  report: "M14 3.5l4 4h-4z",
+  mapPin: "M12 7L14 9L12 11L10 9z",
+  layers: "M12 4l8 4-8 4-8-4z",
+  outlier: "M18 4.5L20.5 7L18 9.5L15.5 7z",
+  tab: "M5 9.5v-3L6.5 5h4L12 6.5v3z",
+};
+
+/** Simpler drawings for 12 px (`size="small"`), drawn with a wider stroke (--icon-stroke-small). */
+const SMALL: Partial<Record<IconName, string>> = {
+  chevron: "M9.5 6 15.5 12l-6 6",
+  back: "M14.5 6 8.5 12l6 6",
+  chevronDown: "M6 9.5l6 6 6-6",
+  chevronUp: "M6 14.5l6-6 6 6",
+  close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
+  plus: "M11 5v14M5 11h14",
+  minus: "M5 12h14",
+  arrowUp: "M12 19V5M6 11l6-6 6 6",
+  arrowDown: "M12 5v14M6 13l6 6 6-6",
+  arrowRight: "M5 12h14M13 6l6 6-6 6",
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
+};
+
+/** The filled parts of an icon (for the tests). */
+export function iconFills(name: IconName): readonly string[] {
+  return FILLS[name] ?? [];
+}
+
+/** The lit facet of an icon, if it has one (for the tests). */
+export function iconFacet(name: IconName): string | undefined {
+  return FACETS[name];
+}
+
+/** The 12 px drawing of an icon, if it has one (for the tests). */
+export function iconSmallPath(name: IconName): string | undefined {
+  return SMALL[name];
+}
+
+/**
+ * The motions of the icon language (board Icons.dc.html, frame 9; keyframes in components.css):
+ * a facet lifts, a needle turns, a bell rings, knobs slide, light glints over glass, a head nods,
+ * nodes tilt like crystals, a layer drops into place, a control turns a quarter, refresh turns,
+ * a check draws itself, a star fills.
+ */
+export type IconMotion =
+  | "lift"
+  | "turn"
+  | "ring"
+  | "slide"
+  | "glint"
+  | "nod"
+  | "tilt"
+  | "drop"
+  | "quarter"
+  | "spin"
+  | "draw"
+  | "fill";
+
+/** A piece of a moving part that is the icon's lit facet. */
+export const FACET = "facet";
+
+interface MotionSpec {
+  motion: IconMotion;
+  /**
+   * The parts that move, each a list of pieces: whole subpaths of the outline, the facet (FACET)
+   * or filled parts. Several parts move one after the other. Without parts the whole drawing
+   * moves; only one part of an icon moves otherwise (the rest stays).
+   */
+  parts?: readonly (readonly string[])[];
+}
+
+const MOTIONS: Partial<Record<IconName, MotionSpec>> = {
+  dashboards: { motion: "lift", parts: [[FACET, "M13 4h5l2 2v3h-7z"]] },
+  explore: { motion: "turn", parts: [[FACET, "M15.75 8.25 13.2 13.2 8.25 15.75 10.8 10.8z"]] },
+  bell: { motion: "ring" },
+  settings: { motion: "slide", parts: (FILLS.settings ?? []).map((knob) => [knob]) },
+  search: { motion: "glint", parts: [[FACET]] },
+  user: {
+    motion: "nod",
+    parts: [[FACET, "M12 4.25L15.25 6.12L15.25 9.88L12 11.75L8.75 9.88L8.75 6.12z"]],
+  },
+  network: {
+    motion: "tilt",
+    parts: [
+      ["M6 4.5L8.5 7L6 9.5L3.5 7z"],
+      ["M18 3.5L20.5 6L18 8.5L15.5 6z"],
+      [FACET, "M12 15.5L14.5 18L12 20.5L9.5 18z"],
+    ],
+  },
+  dataSources: { motion: "drop", parts: [[FACET, "M4.5 6.5 12 3.5l7.5 3-7.5 3z"]] },
+  // The other entries of the navigation, from the same vocabulary: the door lifts, the folded
+  // corner of a report lifts, the check on the shield lifts, the front person nods, the spark
+  // of "Fragen" tilts.
+  home: { motion: "lift", parts: [[FACET, "M10 20v-6h4v6"]] },
+  file: { motion: "lift", parts: [[FACET, "M14 3.5v4h4"]] },
+  shieldCheck: { motion: "lift", parts: [["M9 12l2.25 2.25L15.5 10"]] },
+  members: {
+    motion: "nod",
+    parts: [[FACET, "M9 4L12.03 5.75L12.03 9.25L9 11L5.97 9.25L5.97 5.75z"]],
+  },
+  ask: { motion: "tilt", parts: [["M12 8l.9 2.1 2.1.9-2.1.9L12 14l-.9-2.1-2.1-.9 2.1-.9z"]] },
+  plus: { motion: "quarter" },
+  close: { motion: "quarter" },
+  refresh: { motion: "spin" },
+  check: { motion: "draw" },
+  starFilled: { motion: "fill" },
+};
+
+/** How an icon moves, if it does (for the tests). */
+export function iconMotion(name: IconName): MotionSpec | undefined {
+  return MOTIONS[name];
+}
+
+/** The subpaths of an outline, each starting at an absolute move. */
+export function subpaths(d: string): string[] {
+  return d.split(/(?=M)/);
+}
+
+/**
+ * One style for every icon: the 24 px grid, the stroke of `--icon-stroke` (components.css; the
+ * attribute holds the same value for drawings without the stylesheet), round caps, mitered joins
+ * that turn into bevels at sharp angles, the current text color, and the drawing inside 3 to 21
+ * and centered on 12,12 (Icon.test.tsx). 16 and 20 px use the same drawing; `size="small"` (12
+ * px) uses the simpler one where there is one.
+ *
+ * The drawing sits in one group (`icon__body`, which a press scales) and its moving parts in
+ * groups of their own (`icon__part`); `data-motion` names the motion. The stylesheet decides
+ * when it plays; `play` asks for it once, on a change of state the person caused (a check after
+ * a test, a star after a click). Icons render with it only after such a change, never on load,
+ * and drop it when the motion has ended, so a later render or hover never replays it by itself;
+ * it plays again when `play` turns off and on, or the icon mounts anew.
+ */
+export function Icon({
+  name,
+  className,
+  size,
+  play = false,
+}: {
+  name: IconName;
+  className?: string;
+  size?: "small";
+  play?: boolean;
+}) {
+  const small = size === "small";
+  const classes = ["icon", small ? "icon--small" : null, className ?? null]
+    .filter(Boolean)
+    .join(" ");
+  const smallPath = small ? SMALL[name] : undefined;
+  const outline = smallPath ?? PATHS[name];
+  const fills = FILLS[name] ?? [];
+  const facet = FACETS[name];
+  const declared = MOTIONS[name];
+  // A simpler 12 px drawing has no pieces to move one by one.
+  const spec = smallPath !== undefined && declared?.parts !== undefined ? undefined : declared;
+  const parts = spec?.parts;
+  const moving = new Set(parts?.flat() ?? []);
+  const rest =
+    parts === undefined
+      ? outline
+      : subpaths(outline)
+          .filter((d) => !moving.has(d))
+          .join("");
+  // The check draws itself along its length.
+  const length = spec?.motion === "draw" ? 1 : undefined;
+
+  // `play` holds until every moving part has finished once.
+  const [ended, setEnded] = useState(false);
+  const [wasPlay, setWasPlay] = useState(play);
+  if (play !== wasPlay) {
+    setWasPlay(play);
+    if (play) {
+      setEnded(false);
+    }
+  }
+  const playing = play && !ended && spec !== undefined;
+  const partCount = parts?.length ?? 1;
+  // A native listener on the drawing: `animationend` bubbles up from each moving part, and it is
+  // the standard event name everywhere (React would pick a prefixed name where the environment
+  // lacks `AnimationEvent`).
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!playing || svg === null) {
+      return;
+    }
+    let endedParts = 0;
+    function onAnimationEnd() {
+      endedParts += 1;
+      if (endedParts >= partCount) {
+        setEnded(true);
+      }
+    }
+    svg.addEventListener("animationend", onAnimationEnd);
+    return () => svg.removeEventListener("animationend", onAnimationEnd);
+  }, [playing, partCount]);
+
+  const facetPath =
+    facet === undefined ? null : (
+      // The attribute holds the tint for drawings without the stylesheet; the token wins.
+      <path key={FACET} className="icon__facet" d={facet} fill="currentColor" fillOpacity="0.2" />
+    );
+
+  function piece(d: string) {
+    if (d === FACET) {
+      return facetPath;
+    }
+    return fills.includes(d) ? (
+      <path key={d} d={d} fill="currentColor" />
+    ) : (
+      <path key={d} d={d} pathLength={length} />
+    );
+  }
+
+  const still = (
+    <>
+      {moving.has(FACET) ? null : facetPath}
+      {rest === "" ? null : <path d={rest} pathLength={length} />}
+      {fills
+        .filter((d) => !moving.has(d))
+        .map((d) => (
+          <path key={d} d={d} fill="currentColor" />
+        ))}
+    </>
+  );
+
+  let body = still;
+  if (spec !== undefined && parts === undefined) {
+    body = <g className="icon__part">{still}</g>;
+  } else if (parts !== undefined) {
+    body = (
+      <>
+        {still}
+        {parts.map((part) => (
+          <g key={part.join(" ")} className="icon__part">
+            {part.map(piece)}
+          </g>
+        ))}
+      </>
+    );
+  }
+
   return (
     <svg
-      className={className === undefined ? "icon" : `icon ${className}`}
+      className={classes}
       viewBox="0 0 24 24"
       fill={FILLED.has(name) ? "currentColor" : "none"}
       stroke="currentColor"
-      strokeWidth="1.5"
+      strokeWidth={small ? "2" : "1.5"}
       strokeLinecap="round"
-      strokeLinejoin="round"
+      strokeLinejoin="miter"
+      strokeMiterlimit="2"
       aria-hidden="true"
       focusable="false"
+      data-motion={spec?.motion}
+      data-play={playing ? "" : undefined}
+      ref={svgRef}
     >
-      <path d={PATHS[name]} />
-      {fill === undefined ? null : <path d={fill} fill="currentColor" />}
+      <g className="icon__body">{body}</g>
     </svg>
   );
 }

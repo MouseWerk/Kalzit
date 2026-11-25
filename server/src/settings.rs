@@ -631,6 +631,20 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Theme of the UI for users who have not chosen one.",
     },
     SettingDef {
+        key: "appearance.default_theme_light",
+        scope: Scope::Server,
+        default: || json!("light"),
+        ui_editable: true,
+        description: "Light variant of the theme (System and Light) for users who have not chosen one.",
+    },
+    SettingDef {
+        key: "appearance.default_theme_dark",
+        scope: Scope::Server,
+        default: || json!("dark"),
+        ui_editable: true,
+        description: "Dark variant of the theme (System and Dark) for users who have not chosen one.",
+    },
+    SettingDef {
         key: "sessions.lifetime_hours",
         scope: Scope::Server,
         default: || json!(30 * 24),
@@ -799,6 +813,14 @@ pub const REGISTRY: &[SettingDef] = &[
         default: || json!("monday"),
         ui_editable: true,
         description: "First day of the week for users who have not chosen one.",
+    },
+    // Mails (docs/api/mail.md, "Look").
+    SettingDef {
+        key: "mail.mark_image",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Mails show the mark or logo as an image inside the mail next to the name; off: the name alone.",
     },
     // Single sign-on and the local password sign-in (docs/api/sso.md). The server's values could
     // lock everyone out, so they change only through `PUT /admin/sign-in/local` and
@@ -1414,13 +1436,16 @@ fn rule(key: &str) -> Option<Rule> {
         "usage.enabled" => Rule::Bool,
         "usage.retention_days" => Rule::Int { min: 1, max: crate::usage::MAX_RETENTION_DAYS },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
-        "appearance.default_theme" => Rule::OneOf(&["system", "light", "dark", "contrast"]),
+        "appearance.default_theme" => Rule::OneOf(crate::routes::preferences::THEMES),
+        "appearance.default_theme_light" => Rule::OneOf(crate::routes::preferences::LIGHT_VARIANTS),
+        "appearance.default_theme_dark" => Rule::OneOf(crate::routes::preferences::DARK_VARIANTS),
         // The same bounds as `config.rs`, which checks the file and environment at startup.
         "sessions.lifetime_hours" => Rule::Int { min: 1, max: 10 * 365 * 24 },
         "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },
         "dashboards.version_retention" => Rule::Int { min: 0, max: 100_000 },
         "dashboards.default_time_range" => Rule::TimeRange,
         "dashboards.new_in_team_space" => Rule::Bool,
+        "mail.mark_image" => Rule::Bool,
         "appearance.product_name" => Rule::Text { max_chars: 40, multiline: false, required: true },
         "appearance.accent" => Rule::Accent,
         "appearance.density" => Rule::OneOf(crate::appearance::DENSITIES),
@@ -1476,20 +1501,36 @@ fn rule(key: &str) -> Option<Rule> {
     })
 }
 
-/// Checks a value against the setting's rule; the message is for the `validation` error.
+/// Checks a new value against the setting's rule; the message is for the `validation` error.
 pub fn validate(def: &SettingDef, value: &Value) -> Result<(), String> {
-    let key = def.key;
-    let Some(rule) = rule_for(key, def.scope) else { return Err(format!("{key} has no validation rule")) };
-    check_rule(key, &rule, value)
+    validate_as(def, value, false)
 }
 
-fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
+/// Checks a value already in place: stored, from the environment or the file, or saved again
+/// unchanged. The same rules, except that a custom accent keeps the check it was chosen under
+/// (`appearance::validate_kept_accent`), so a rule tightened for new values never drops it.
+pub fn validate_kept(def: &SettingDef, value: &Value) -> Result<(), String> {
+    validate_as(def, value, true)
+}
+
+/// `validate_kept` when `value` is the one in effect now, else `validate`.
+pub fn validate_change(def: &SettingDef, value: &Value, current: &Value) -> Result<(), String> {
+    validate_as(def, value, value == current)
+}
+
+fn validate_as(def: &SettingDef, value: &Value, kept: bool) -> Result<(), String> {
+    let key = def.key;
+    let Some(rule) = rule_for(key, def.scope) else { return Err(format!("{key} has no validation rule")) };
+    check_rule(key, &rule, value, kept)
+}
+
+fn check_rule(key: &str, rule: &Rule, value: &Value, kept: bool) -> Result<(), String> {
     match rule {
         Rule::Inherit(inner) => {
             if value.as_str() == Some(INHERIT) {
                 Ok(())
             } else {
-                check_rule(key, inner, value).map_err(|e| format!("{e} (or {INHERIT})"))
+                check_rule(key, inner, value, kept).map_err(|e| format!("{e} (or {INHERIT})"))
             }
         }
         Rule::Configuration => Err(format!("{key} is set in kalzit.toml or the environment")),
@@ -1507,6 +1548,7 @@ fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
             None => Err(format!("{key} must be a text")),
         },
         Rule::Accent => match value.as_str() {
+            Some(s) if kept => crate::appearance::validate_kept_accent(s).map_err(|e| format!("{key}: {e}")),
             Some(s) => crate::appearance::validate_accent(s).map_err(|e| format!("{key}: {e}")),
             None => Err(format!("{key} must be a text")),
         },
@@ -1668,7 +1710,7 @@ fn check_environment_with(
         else {
             return Err(format!("unknown variable {name}: there is no such server setting"));
         };
-        validate(def, &parse_env_value(&raw)).map_err(|e| format!("{name}: {e}"))?;
+        validate_kept(def, &parse_env_value(&raw)).map_err(|e| format!("{name}: {e}"))?;
     }
     Ok(())
 }
@@ -1678,7 +1720,7 @@ fn check_environment_with(
 pub fn check_file_values(config: &Config) -> Result<(), String> {
     for def in REGISTRY.iter().filter(|d| d.scope == Scope::Server) {
         if let Some(value) = config.cors.value(def.key) {
-            validate(def, &value)?;
+            validate_kept(def, &value)?;
         }
     }
     let wildcard = config.cors.allowed_origins.iter().flatten().any(|o| o.contains('*'));
@@ -1740,7 +1782,7 @@ pub fn resolve(
         let name = env_var_name(def.key);
         if let Some(raw) = env(&name) {
             let value = parse_env_value(&raw);
-            validate(def, &value).map_err(|e| format!("{name}: {e}"))?;
+            validate_kept(def, &value).map_err(|e| format!("{name}: {e}"))?;
             return Ok(row(value, Source::Env));
         }
         // Sections of `kalzit.toml` that set runtime settings (`[cors]`): checked at start.
@@ -1750,7 +1792,7 @@ pub fn resolve(
     }
     // A reset leaves `null` behind with its version (`RESET_VALUE`): the default applies.
     if let Some(stored) = stored.filter(|s| !s.value.is_null()) {
-        match validate(def, &stored.value) {
+        match validate_kept(def, &stored.value) {
             Ok(()) => return Ok(row(stored.value.clone(), Source::Database)),
             // A rule tightened by an update must not break the server; the default applies until
             // an admin saves a valid value.
@@ -2242,6 +2284,35 @@ mod tests {
         assert_eq!(resolve(theme, &env("\"light\""), &|_: &str| false, &config, None).unwrap().value, json!("light"));
         let err = resolve(theme, &env("pink"), &|_: &str| false, &config, None).unwrap_err();
         assert!(err.contains("KALZIT_SETTING_APPEARANCE_DEFAULT_THEME"), "{err}");
+    }
+
+    #[test]
+    fn an_accent_chosen_before_the_theme_variants_keeps_applying() {
+        // Holds 3:1 on Light and Dark, the rule it was chosen under, not on Paper.
+        let kept = json!(crate::appearance::tests::KEPT_ACCENT);
+        let config = Config::default();
+        let def = server_def("appearance.accent");
+        let no_env = |_: &str| None;
+        // Stored: still in effect, not replaced by the default.
+        let db = resolve(def, &no_env, &|_: &str| false, &config, Some(&stored(kept.clone()))).unwrap();
+        assert_eq!((&db.value, db.source), (&kept, Source::Database));
+        // From the environment: in effect at start and on every read, never an error.
+        let env = |name: &str| (name == "KALZIT_SETTING_APPEARANCE_ACCENT").then(|| "#8a8a8a".to_string());
+        let e = resolve(def, &env, &|_: &str| false, &config, None).unwrap();
+        assert_eq!((&e.value, e.source), (&kept, Source::Env));
+        check_environment_with([("KALZIT_SETTING_APPEARANCE_ACCENT".to_string(), "#8a8a8a".to_string())], false)
+            .unwrap();
+        // Saved again unchanged: accepted; as a new choice: refused, in both scopes.
+        assert!(validate_change(def, &kept, &kept).is_ok());
+        assert!(validate_change(def, &kept, &json!("copper")).is_err());
+        assert!(validate(def, &kept).is_err());
+        let org = find("appearance.accent", Scope::Org).unwrap();
+        assert!(validate_change(org, &kept, &kept).is_ok());
+        assert!(validate_change(org, &kept, &json!("inherit")).is_err());
+        // A value that never held stays refused everywhere.
+        let bad = stored(json!("#ffffff"));
+        assert_eq!(resolve(def, &no_env, &|_: &str| false, &config, Some(&bad)).unwrap().source, Source::Default);
+        assert!(validate_kept(def, &json!("#ffffff")).is_err());
     }
 
     #[test]

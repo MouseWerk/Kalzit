@@ -98,6 +98,8 @@ describe("catalogs", () => {
       "HSTS",
       "Updates",
       "Online",
+      // Between keys read out: "Steuerung plus K".
+      "plus",
       "Offline",
       "Version",
       "Trend",
@@ -267,6 +269,11 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // Logs keep the names the sources use, as do the level words (board Logs.dc.html).
+      "Logs",
+      "Level",
+      "Info",
+      "Debug",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

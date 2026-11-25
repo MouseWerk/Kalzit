@@ -6,9 +6,9 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 import { DOCS_URL } from "../help/docs";
 import { useI18n } from "../i18n/i18n";
 import { useOrgPermissions } from "../org/useOrg";
+import { Keys } from "../shortcuts/Keys";
+import { shortcutAria, shortcutText } from "../shortcuts/registry";
 import { setOverlay } from "./overlay";
-import { paletteShortcut } from "./ShortcutsHelp";
-import { sidebarShortcut } from "./sidebarState";
 import { useHeightVar } from "./useHeightVar";
 import "./shellUx.css";
 
@@ -31,8 +31,6 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   const { t } = useI18n();
   const navigate = useNavigate();
   const permissions = useOrgPermissions();
-  const palette = paletteShortcut();
-  const toggle = sidebarShortcut();
   // The bar stays at the top while the page scrolls; what sticks below it starts at its height.
   const barRef = useRef<HTMLDivElement>(null);
   useHeightVar(barRef, "--top-bar-height");
@@ -76,7 +74,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
       key: "shortcuts",
       label: t("shell.top.shortcuts"),
       icon: "keyboard",
-      shortcut: "?",
+      shortcut: "help.toggle",
       onSelect: () => setOverlay("shortcuts"),
     },
     {
@@ -98,8 +96,11 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
           aria-label={t("nav.sidebar")}
           aria-expanded={!rail}
           aria-controls={sidebarId}
-          aria-keyshortcuts={toggle.aria}
-          title={t("nav.sidebarHint", { shortcut: toggle.label })}
+          aria-keyshortcuts={shortcutAria("sidebar.toggle")}
+          title={t("nav.sidebarHint", {
+            shortcut: shortcutText("sidebar.toggle"),
+            focus: shortcutText("sidebar.focus"),
+          })}
           onClick={onToggleSidebar}
         >
           <Icon name="sidebar" />
@@ -107,17 +108,17 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
       ) : null}
       <div ref={crumbSlot} className="shell__crumbs" />
       <div className="top-bar__tools">
-        <WithTooltip label={t("shell.search.hint", { shortcut: palette.label })}>
+        <WithTooltip label={t("shell.top.searchPlaceholder")} shortcut="palette.open">
           <button
             type="button"
             className="top-bar__search"
-            aria-keyshortcuts={`/ ${palette.aria}`}
+            aria-keyshortcuts={shortcutAria("palette.open")}
             onClick={() => setOverlay("palette")}
           >
             <Icon name="search" />
             <span className="top-bar__search-label">{t("shell.top.searchPlaceholder")}</span>
             <span className="top-bar__search-key" aria-hidden="true">
-              <kbd className="kbd">{palette.label}</kbd>
+              <Keys id="palette.key" />
             </span>
           </button>
         </WithTooltip>
