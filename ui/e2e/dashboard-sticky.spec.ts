@@ -146,8 +146,14 @@ for (const { viewport, editing } of [
     await signIn(page, OWNER_CONTRAST.email, OWNER_CONTRAST.password, "en");
     await page.goto(`/dashboards/${id}`);
     await expect(page.getByRole("group", { name: "Sales 1", exact: true })).toBeVisible();
-    if (editing) await startEditing(page);
-    await page.getByRole("button", { name: t("toolbar.rail.outline") }).click();
+    const outline = page.getByRole("button", { name: t("toolbar.rail.outline") });
+    if (editing) {
+      // Edit mode starts with the outline open (its room is taken as editing starts).
+      await startEditing(page);
+      await expect(outline).toHaveAttribute("aria-expanded", "true");
+    } else {
+      await outline.click();
+    }
     await expect(page.locator(".dash-pane")).toBeVisible();
 
     const samples = await scrollInSteps(page);
