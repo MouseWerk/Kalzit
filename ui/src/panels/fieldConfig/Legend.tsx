@@ -1,7 +1,6 @@
 import { type ReactNode, useRef, useState } from "react";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { type Calc, percentileOf } from "../calcs";
-import { rootRem } from "../measure";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import type { LegendOptions } from "./legendOptions";

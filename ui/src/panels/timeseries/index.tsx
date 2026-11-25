@@ -1,4 +1,4 @@
-import { lazy, type ReactNode, Suspense } from "react";
+import { lazy, type ReactNode, Suspense, useMemo } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
 import { usePanelAlertMarks } from "../alertMarks";
@@ -97,21 +97,26 @@ function TimeSeriesPanel({
   const series = buildSeries(frames, options.seriesName, config);
   // An alert rule's limits are dashed lines, unless the panel draws thresholds of its own.
   const styles = withAlertLimits(resolveStyles(series), alert?.limits ?? []);
-  // No rows in the range is one muted line, not an empty chart with axes and a legend.
-  const reason = emptyReason(frames, "noTimeSeries");
-  if (series.length === 0 || reason === "noData") {
-    return <EmptyPanel reason={reason} />;
-  }
-  // Each value axis follows the unit and decimals of its first series (`axes.ts`).
-  const { axes, axisOf } = planAxes(series, styles, config.defaults);
-  const skipped = skippedPoints(chartData(series, styles).stacked.ys, axes, axisOf);
-  // Each value axis writes its ticks in the unit and decimals of its first series.
+  // Each value axis follows the unit and decimals of its first series (`axes.ts`). The plan is
+  // memoized on its own: worked out next to the drawing, the compiler would tie the series to
+  // everything the drawing takes, the time range included, so an equal range in a new object
+  // (every drop of a dragged panel) would build new series and draw the chart again.
+  const { axes, axisOf, skipped } = useMemo(() => {
+    const plan = planAxes(series, styles, config.defaults);
+    const skipped = skippedPoints(chartData(series, styles).stacked.ys, plan.axes, plan.axisOf);
+    return { ...plan, skipped };
+  }, [series, styles, config.defaults]);
   const left = axes.find((a) => a.key === "y");
   const right = axes.find((a) => a.key === "y2");
   const leftUnit = left?.unit;
   const leftDecimals = left?.decimals;
   const rightUnit = right?.unit;
   const rightDecimals = right?.decimals;
+  // No rows in the range is one muted line, not an empty chart with axes and a legend.
+  const reason = emptyReason(frames, "noTimeSeries");
+  if (series.length === 0 || reason === "noData") {
+    return <EmptyPanel reason={reason} />;
+  }
   return (
     <TimeSeriesChart
       series={series}
