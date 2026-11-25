@@ -44,8 +44,6 @@
   "shell.palette.action.explore": "Open Explore",
   "shell.palette.action.newDatasource": "Add data source",
   "shell.palette.action.theme": "Theme: {theme}",
-  "shell.palette.action.lightVariant": "Light variant: {variant}",
-  "shell.palette.action.darkVariant": "Dark variant: {variant}",
   "shell.palette.action.language": "Language: {language}",
   "shell.palette.action.shortcuts": "Keyboard shortcuts",
   "shell.palette.action.focusOn": "Focus mode: hide the sidebar completely",

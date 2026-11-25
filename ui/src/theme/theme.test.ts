@@ -32,16 +32,18 @@ describe("theme variants", () => {
     expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("night");
   });
 
-  it("applies the server's default variants only where this browser chose none", () => {
+  it("applies the server's default variants before sign-in, over a variant an account stored", () => {
     window.localStorage.clear();
     setDarkVariant("graphite");
     window.localStorage.removeItem(LIGHT_VARIANT_STORAGE_KEY);
     applyDefaultTheme("system", "calcite", "night");
     expect(getLightVariant()).toBe("calcite");
-    // The stored choice wins over the default.
-    expect(getDarkVariant()).toBe("graphite");
-    // A default is applied, never remembered, so a later default still reaches the visitor.
+    // Variants are chosen only in the account settings, so the default wins before sign-in.
+    expect(getDarkVariant()).toBe("night");
+    // A default is applied, never remembered: the account's stored variant stays for its next
+    // visit, and a later default still reaches the visitor.
     expect(window.localStorage.getItem(LIGHT_VARIANT_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("graphite");
   });
 
   it("ignores values that are no variant of that side", () => {

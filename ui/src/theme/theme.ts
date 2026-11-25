@@ -127,18 +127,21 @@ export function previewTheme(theme: Theme | null): void {
 }
 
 /**
- * The server's default theme and variants for a visitor who never chose them in this browser
- * (the sign-in page). Each applies without being remembered, so a later default reaches them too.
+ * The server's default theme and variants on the pages before sign-in. The mode applies only for a
+ * visitor who never chose one in this browser. The variants always apply there: they are chosen
+ * only in the account settings (board Themes, frame 7), and a variant an account stored in this
+ * browser stays stored for its next visit. Nothing is remembered, so a later default reaches the
+ * visitor too.
  */
 export function applyDefaultTheme(theme: unknown, light?: unknown, dark?: unknown): void {
   change(() => {
     if (isTheme(theme) && readPreference(THEME_STORAGE_KEY) === null) {
       current = theme;
     }
-    if (isLightVariant(light) && readPreference(LIGHT_VARIANT_STORAGE_KEY) === null) {
+    if (isLightVariant(light)) {
       lightVariant = light;
     }
-    if (isDarkVariant(dark) && readPreference(DARK_VARIANT_STORAGE_KEY) === null) {
+    if (isDarkVariant(dark)) {
       darkVariant = dark;
     }
   });

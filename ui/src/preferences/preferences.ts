@@ -140,8 +140,9 @@ export function preferencesQuery(userId: string) {
 }
 /**
  * Applies what the preferences decide in the browser. Language, theme and its variants: the
- * account's preference; where there is none, an explicit choice made in this browser before signing in
- * (`choice`, until it is adopted), else the server's default (docs/api/shell.md).
+ * account's preference; where there is none, for language and mode an explicit choice made in this
+ * browser before signing in (`choice`, until it is adopted), else the server's default
+ * (docs/api/shell.md).
  */
 export function applyPreferences(preferences: Preferences, choice: LocalChoice = {}): void {
   const language =
@@ -155,17 +156,11 @@ export function applyPreferences(preferences: Preferences, choice: LocalChoice =
   if (theme !== null && theme !== getTheme()) {
     setTheme(theme);
   }
-  const light =
-    preferences.themeLight ??
-    choice.themeLight ??
-    oneOf(LIGHT_VARIANTS, preferences.defaults.themeLight);
+  const light = preferences.themeLight ?? oneOf(LIGHT_VARIANTS, preferences.defaults.themeLight);
   if (light !== null && light !== getLightVariant()) {
     setLightVariant(light);
   }
-  const dark =
-    preferences.themeDark ??
-    choice.themeDark ??
-    oneOf(DARK_VARIANTS, preferences.defaults.themeDark);
+  const dark = preferences.themeDark ?? oneOf(DARK_VARIANTS, preferences.defaults.themeDark);
   if (dark !== null && dark !== getDarkVariant()) {
     setDarkVariant(dark);
   }
@@ -184,12 +179,6 @@ export function adoptionPatch(
   }
   if (preferences.theme === null && choice.theme !== undefined) {
     patch.theme = choice.theme;
-  }
-  if (preferences.themeLight === null && choice.themeLight !== undefined) {
-    patch.themeLight = choice.themeLight;
-  }
-  if (preferences.themeDark === null && choice.themeDark !== undefined) {
-    patch.themeDark = choice.themeDark;
   }
   return Object.keys(patch).length === 0 ? null : patch;
 }

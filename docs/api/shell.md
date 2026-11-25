@@ -156,8 +156,9 @@ sets all three from the browser's storage before the first paint.
 and each variant alike:
 
 1. the user's preference, when the server holds one;
-2. otherwise an explicit choice made in this browser on the sign-in or setup page, before
-   signing in;
+2. otherwise, for the language and the mode only, an explicit choice made in this browser on the
+   sign-in or setup page, before signing in (the variants are chosen only in the account
+   settings; the pages before sign-in show the server's default variants);
 3. otherwise the server's default (`defaults`), so `appearance.default_language`,
    `appearance.default_theme`, `appearance.default_theme_light` and
    `appearance.default_theme_dark` apply to everyone who has chosen nothing.

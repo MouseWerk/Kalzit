@@ -44,8 +44,6 @@
   "shell.palette.action.explore": "Explore öffnen",
   "shell.palette.action.newDatasource": "Datenquelle hinzufügen",
   "shell.palette.action.theme": "Darstellung: {theme}",
-  "shell.palette.action.lightVariant": "Helle Variante: {variant}",
-  "shell.palette.action.darkVariant": "Dunkle Variante: {variant}",
   "shell.palette.action.language": "Sprache: {language}",
   "shell.palette.action.shortcuts": "Tastenkürzel",
   "shell.palette.action.focusOn": "Fokusmodus: Seitenleiste ganz ausblenden",
