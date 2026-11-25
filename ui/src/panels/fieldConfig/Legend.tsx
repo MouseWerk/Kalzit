@@ -256,8 +256,10 @@ export function WithLegend({
   children: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const { width, height } = useElementSize(boxRef);
-  const fit = legendFit(width, height, placement, rootRem());
+  // The root font size comes with the measured size: read while rendering, it would restyle the
+  // whole dashboard at once in the render after a dragged panel is dropped.
+  const { width, height, rem } = useElementSize(boxRef);
+  const fit = legendFit(width, height, placement, rem);
   useStyleVars(boxRef, fit.room === null ? {} : { "--legend-room": `${fit.room}px` });
   const classes = [
     "viz-layout",

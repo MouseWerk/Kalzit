@@ -16,7 +16,7 @@ import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { chartData } from "./align";
-import { type AxisKey, type AxisPlan, planAxes, skippedPoints } from "./axes";
+import { planAxes, skippedPoints } from "./axes";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
@@ -105,6 +105,13 @@ function TimeSeriesPanel({
   // Each value axis follows the unit and decimals of its first series (`axes.ts`).
   const { axes, axisOf } = planAxes(series, styles, config.defaults);
   const skipped = skippedPoints(chartData(series, styles).stacked.ys, axes, axisOf);
+  // Each value axis writes its ticks in the unit and decimals of its first series.
+  const left = axes.find((a) => a.key === "y");
+  const right = axes.find((a) => a.key === "y2");
+  const leftUnit = left?.unit;
+  const leftDecimals = left?.decimals;
+  const rightUnit = right?.unit;
+  const rightDecimals = right?.decimals;
   return (
     <TimeSeriesChart
       series={series}
@@ -118,7 +125,15 @@ function TimeSeriesPanel({
       }
       axes={axes}
       axisOf={axisOf}
-      axisFormat={tickFormatter(axes, language)}
+      // An arrow over plain values, which the compiler keeps while units, decimals and language
+      // stay. A formatter made by a call here was made again with everything else the panel
+      // works out, also for a new time range object (every drop of a dragged panel), and a new
+      // formatter has uPlot draw the chart again (a long task per drop at 4x CPU throttling).
+      axisFormat={(value, key, ticks) =>
+        key === "y2"
+          ? formatTick(value, ticks, rightUnit, rightDecimals, language)
+          : formatTick(value, ticks, leftUnit, leftDecimals, language)
+      }
       note={
         skipped === 0
           ? undefined
@@ -130,28 +145,29 @@ function TimeSeriesPanel({
   );
 }
 
-/**
- * Value axis ticks as text in the unit and decimals of their axis, formatted once per axis and
- * set of ticks (the chart asks tick by tick).
- */
-function tickFormatter(
-  axes: readonly AxisPlan[],
+/** Tick formats by unit, decimals, language and set of ticks: the chart asks tick by tick. */
+const tickFormats = new Map<string, (value: number) => string>();
+/** Enough for the charts on a dashboard; past it the cache starts over. */
+const MAX_TICK_FORMATS = 256;
+
+/** A value axis tick as text; the axis' other ticks decide how many digits it takes. */
+function formatTick(
+  value: number,
+  ticks: readonly number[],
+  unit: string | undefined,
+  decimals: number | undefined,
   language: string,
-): (value: number, key: AxisKey, ticks: readonly number[]) => string {
-  const last = new Map<AxisKey, { ticks: string; format: (value: number) => string }>();
-  return (value, key, ticks) => {
-    const joined = ticks.join(",");
-    let cached = last.get(key);
-    if (cached === undefined || cached.ticks !== joined) {
-      const axis = axes.find((a) => a.key === key);
-      cached = {
-        ticks: joined,
-        format: axisTickFormat(ticks, axis?.unit, axis?.decimals, language),
-      };
-      last.set(key, cached);
+): string {
+  const key = `${unit ?? ""}\u0000${decimals ?? ""}\u0000${language}\u0000${ticks.join(",")}`;
+  let format = tickFormats.get(key);
+  if (format === undefined) {
+    if (tickFormats.size >= MAX_TICK_FORMATS) {
+      tickFormats.clear();
     }
-    return cached.format(value);
-  };
+    format = axisTickFormat(ticks, unit, decimals, language);
+    tickFormats.set(key, format);
+  }
+  return format(value);
 }
 
 function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOptions>) {
