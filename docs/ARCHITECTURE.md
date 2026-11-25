@@ -1137,15 +1137,16 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   (owner `mail`, field `smtp_password`), AES-256-GCM with the secrets key like data source
   secrets; `kalzit secrets rotate` re-encrypts it. A stored password is only used again while
   host, port and user stay the same. `[smtp]` in `kalzit.toml` / `KALZIT_SMTP_*` wins over the
-  stored setting and makes the page read-only; `security = "none"` exists only there, for a relay
-  on loopback, and is checked at start.
+  stored setting and makes the page read-only, and is checked at start. `security = "none"`
+  (file or page) is plain SMTP to any host and port for a relay in the own network.
 - **SMTP client** (`mail::smtp`): one connection per mail, written for Kalzit rather than taken
   from a library, so the connection goes through the target rules: the host is resolved and
   checked once (`TargetPolicy::resolve_all`: allowed targets, metadata addresses) and each address
   against Kalzit's own listeners and database (`OwnEndpoints`), then that address is connected to.
   TLS (rustls, platform roots) from the first byte or after `STARTTLS`; data the server sent
-  before the TLS handshake is refused (STARTTLS command injection). `AUTH PLAIN` or `LOGIN` only
-  over TLS or to loopback. Step timeout 20 s, whole mail 60 s. Nothing of the dialogue is logged.
+  before the TLS handshake is refused (STARTTLS command injection). With STARTTLS or TLS,
+  `AUTH PLAIN` or `LOGIN` only after the handshake; `none` never sends STARTTLS and signs in in
+  plain text when a user is set (the admin's choice, warned about on the page). Step timeout 20 s, whole mail 60 s. Nothing of the dialogue is logged.
 - **Messages** (`mail::message`, `mail::templates`): `multipart/alternative` with plain text and a
   simple HTML part (every value escaped, no remote images, no tracking), base64 bodies, RFC 2047
   headers with control characters removed (no header injection), `Auto-Submitted:
@@ -2153,8 +2154,11 @@ through `settings::get`; new registry entries are requested from the orchestrato
   on a clock fixed to it; times the server records (sessions, member since, last saved) are
   moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
   UI reruns `npm run screenshots` and commits the changed images.**
-- CI (`.github/workflows/ci.yml`) runs on pull requests, on pushes to `main`, in the GitHub
-  merge queue (`merge_group`) and when started by hand (`workflow_dispatch`). Its first job, `changes`, compares a pull request's merge commit
+- CI runs on the owner's machine (`tools/local-ci`, Windows and WSL; see its README and
+  `docs/process.md`, "CI"), which posts the statuses `local/windows` and `local/linux` that
+  `main` requires. `.github/workflows/ci.yml` is the reference it mirrors and runs only by hand
+  (`workflow_dispatch`); what follows describes its jobs and area rules, which the local legs
+  apply the same way. Its first job, `changes`, compares a pull request's merge commit
   with its first parent (`main`) and sets flags through `.github/scripts/changes.sh` (tested by
   `changes.test.sh` in the same job). Renames count with both paths, so moving a file out of
   `server/` is a server change:
@@ -2178,8 +2182,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
   runs the same cases, and the generated types for the server, whose test compares them. A
   path in no listed area turns every flag on, so a new top-level file runs the full check until
-  the script knows it. On pushes to `main` and `release/**`, in the merge queue and in a manual
-  run every job runs regardless of the flags (each job's condition lets these events through
+  the script knows it. (The rest of this paragraph describes `ci.yml` as it ran on GitHub's
+  events until the local CI replaced it: today only its manual run applies, and `main`
+  requires `local/windows` and `local/linux` instead of the checks named here.) On pushes to
+  `main` and `release/**`, in the merge queue and in a manual run every job runs regardless of the flags (each job's condition lets these events through
   first): the queue tests each pull request fully on top of `main`, so `main` stays gated by the
   full matrix on Windows and Linux. A docs-only pull request runs `changes` and `roadmap` when
   it touches the progress bars, nothing else.

@@ -1,5 +1,11 @@
 name: CI
 
+# CI runs on the owner's machine: tools/local-ci (Windows in Git Bash, Linux in WSL) runs these
+# jobs and posts the statuses local/windows and local/linux, which main requires. This workflow
+# is the reference those scripts mirror (a change to a job here belongs there too) and runs only
+# by hand, as a full check on GitHub's runners. The notes below describe the events it used to
+# run on and still hold for a manual run.
+#
 # Which jobs run, per event (also docs/process.md, "CI", and docs/ARCHITECTURE.md, "CI"):
 #
 # - Merge queue (`merge_group`), pushes to main and release/**, manual runs (`workflow_dispatch`):
@@ -22,15 +28,6 @@ name: CI
 #   of a release gate.
 
 on:
-  push:
-    # main and the protected patch branches release/<version>, whose commits are tagged too.
-    branches: [main, 'release/**']
-  pull_request:
-    # ready_for_review starts the jobs a draft held back.
-    types: [opened, synchronize, reopened, ready_for_review]
-  # The merge queue tests each queued pull request on top of main before it merges.
-  merge_group:
-    types: [checks_requested]
   # A manual run (Actions tab or `gh workflow run ci.yml --ref <branch>`) checks everything.
   workflow_dispatch:
 
@@ -134,6 +131,9 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x64
+            exe: ""
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
             exe: ""
           - os: windows-latest
             platform: windows-x64
@@ -772,7 +772,7 @@ jobs:
         run: npm test
       - working-directory: sdk/typescript
         run: npm run build
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: sdk/go/go.mod
           cache: false
@@ -1304,7 +1304,7 @@ jobs:
           ref: v2.10.1
           path: pebble-src
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: pebble-src/go.mod
           cache: false
@@ -1367,7 +1367,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-audit
       # The advisory database is fetched with retries, so a network failure does not read as a

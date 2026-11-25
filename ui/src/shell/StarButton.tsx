@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { IconButton } from "../components/IconButton";
 import { useI18n } from "../i18n/i18n";
@@ -26,6 +26,8 @@ export function StarButton({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  // Starred here, by a click: only then does the star fill with its motion, never on load.
+  const [clicked, setClicked] = useState(false);
   const starred = useQuery(starredQuery(orgId, dashboardId));
   const toggle = useMutation({
     mutationFn: (next: boolean) => setStarred(orgId, dashboardId, next),
@@ -42,6 +44,11 @@ export function StarButton({
     return null;
   }
   const on = starred.data;
+  const play = clicked && on;
+  function click() {
+    setClicked(true);
+    toggle.mutate(!on);
+  }
   if (compact) {
     return (
       <IconButton
@@ -50,7 +57,8 @@ export function StarButton({
         tipAlign="start"
         className="star-button"
         aria-pressed={on}
-        onClick={() => toggle.mutate(!on)}
+        playIcon={play}
+        onClick={click}
       />
     );
   }
@@ -59,9 +67,9 @@ export function StarButton({
       type="button"
       className="button button--secondary star-button"
       aria-pressed={on}
-      onClick={() => toggle.mutate(!on)}
+      onClick={click}
     >
-      <Icon name={on ? "starFilled" : "star"} />
+      <Icon name={on ? "starFilled" : "star"} play={play} />
       {t("shell.start.starToggle")}
     </button>
   );

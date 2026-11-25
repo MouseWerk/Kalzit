@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { openAdmin } from "../features/admin/test/openAdmin";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
@@ -58,7 +58,8 @@ describe("email confirmation", () => {
 
   it("says nothing about confirmation for a confirmed account", async () => {
     await openAdmin("/settings/profile", { user: { ...TEST_USER, emailConfirmed: true } });
-    expect(await screen.findByText("ada@example.com")).toBeTruthy();
+    // On the profile page; the account menu in the sidebar shows the address too.
+    expect(await within(screen.getByRole("main")).findByText("ada@example.com")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Send confirmation link" })).toBeNull();
   });
 });

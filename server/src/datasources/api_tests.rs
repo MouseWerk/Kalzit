@@ -3745,5 +3745,45 @@ async fn document_cursors_continue_only_their_caller_and_query() {
     // Nor does the viewer's cursor open a free query: viewers may not run one at all.
     let r = t.query(&viewer, item(&ids[0], Some(&mine))).await;
     assert!(r.status != StatusCode::OK || r.body["results"]["A"]["result"].is_null(), "{}", r.text);
+
+    // A saved analysis pages the same way through its own route, for whoever may read it.
+    let r = t
+        .post(
+            "/analyses",
+            json!({ "model": {
+                "schemaVersion": 1, "title": "Log", "timeRange": null,
+                "targets": [
+                    { "refId": "A", "datasourceId": ids[0], "query": {} },
+                    { "refId": "B", "datasourceId": ids[1], "query": {} }
+                ],
+                "steps": [], "visualization": { "type": "documents", "options": {} }
+            } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let analysis = r.body["id"].as_str().unwrap().to_string();
+    let path = t.path(&format!("/analyses/{analysis}/query"));
+    let body = |cursor: Option<&str>| {
+        let cursors = cursor.map(|c| json!({ "A": c })).unwrap_or_else(|| json!({}));
+        json!({ "timeRange": range(), "limit": 2, "cursors": cursors })
+    };
+    let r = t.send(Method::POST, &path, Some(body(None)), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let set = &r.body["results"]["A"]["result"]["documents"];
+    assert_eq!(set["documents"], json!([{ "n": 1 }, { "n": 2 }]), "{}", r.text);
+    let page = set["nextCursor"].as_str().unwrap().to_string();
+    let r = t.send(Method::POST, &path, Some(body(Some(&page))), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["result"]["documents"]["documents"], json!([{ "n": 3 }]), "{}", r.text);
+    assert!(r.body["results"].get("B").is_none(), "only the continued target runs: {}", r.text);
+    // Cursors of another caller, or of the dashboard's same query, do not continue it.
+    let r = t.send(Method::POST, &path, Some(body(Some(&cursor))), Some(&viewer)).await;
+    assert_eq!(reason(&r), "query.cursor_invalid", "{}", r.text);
+    let r = t.send(Method::POST, &path, Some(body(Some(&page))), Some(&editor)).await;
+    assert_eq!(reason(&r), "query.cursor_invalid", "{}", r.text);
+    // An analysis has no variables: a page asked for with some is refused like the first.
+    let body = json!({ "timeRange": range(), "variables": { "x": "1" }, "cursors": { "A": mine } });
+    let r = t.send(Method::POST, &path, Some(body), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text);
     t.finish().await;
 }

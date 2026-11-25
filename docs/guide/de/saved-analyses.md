@@ -72,7 +72,9 @@ Ohne dieses Recht (Betrachter, oder eine Quelle, die nicht für dich freigegeben
 Zeitraum (den mitgespeicherten, oder wähle einen anderen), führt die gespeicherten Abfragen so aus,
 wie sie gespeichert sind, und zeichnet das Ergebnis mit seinen Schritten und seiner
 Visualisierung; **Erneut ausführen** führt sie noch einmal aus, **Versionen und Verlauf** listet
-ihre Speicherstände. Nur wer die Quelle abfragen darf, sieht **In Explore bearbeiten**. Betrachter
+ihre Speicherstände. Hat die Quelle mehr Dokumente, als das Ergebnis zeigt, hängt **Weitere
+Dokumente laden** die nächsten der gespeicherten Abfrage an, wie auf einem Dashboard; erneutes
+Ausführen beginnt wieder mit der ersten Seite. Nur wer die Quelle abfragen darf, sieht **In Explore bearbeiten**. Betrachter
 finden die Liste als **Auswertungen** in der Seitenleiste, da sie kein Explore haben.
 
 ![Eine Auswertung, von einem Betrachter zum Ansehen und Ausführen geöffnet: Beschreibung, Ablage, Zeitraum und Ergebnis](../../screenshots/analysis-view.png)

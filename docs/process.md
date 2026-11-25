@@ -9,9 +9,9 @@ gives the overview, and `CLAUDE.md` wins where the two differ.
 | Role | Does | Never does |
 |---|---|---|
 | Owner | Decides direction and design questions, approves boards, changes repository and machine settings, installs releases on the demo system | - |
-| Orchestrator | Plans the work, writes the briefs, starts and steers the agents, integrates branches, resolves conflicts, enqueues pull requests, runs the release gate, reports to the owner | Pushes to `main`, force-pushes, changes settings without the owner |
+| Orchestrator | Plans the work, writes the briefs, starts and steers the agents, integrates branches, resolves conflicts, runs the local CI and merges pull requests, runs the release gate, reports to the owner | Pushes to `main`, force-pushes, changes settings without the owner |
 | Design director | Draws the boards in `docs/design/blueprint/`, reviews the look and wording of UI pull requests against the approved board, advises on product questions at milestone starts | Implements code, merges, or runs in parallel with a second design director |
-| Builders | Implement one scoped part each, in their own worktree and branch, with tests, docs and a release fragment; open the pull request | Merge, enqueue, or touch another builder's files |
+| Builders | Implement one scoped part each, in their own worktree and branch, with tests, docs and a release fragment; open the pull request | Merge, or touch another builder's files |
 | Reviewers | Read a pull request (diff, files on the branch, the board, `CLAUDE.md`) and report findings with severity and a concrete fix | Check out branches in the main folder, edit, commit or push |
 | Research agents | Surveys, audits and code searches that end in a report | Change code |
 
@@ -28,11 +28,11 @@ flowchart TD
   W --> P[Pull request<br/>feature branch, release fragment]
   P --> R[Review agent<br/>read-only findings]
   R -- findings --> W
-  R -- clean --> C[CI on Linux and Windows<br/>all required checks]
+  R -- clean --> C[Local CI on this machine<br/>Windows and WSL, PR merged onto main]
   C -- red --> W
-  C -- green --> Q[Merge queue<br/>up to 4 tested together, squash]
+  C -- green --> Q[Merge by the orchestrator<br/>squash, only on the main it was tested on]
   Q --> M[main<br/>branch and worktree deleted]
-  M --> G["Release<br/>fragments assembled, 3 green runs, tag"]
+  M --> G["Release<br/>fragments assembled, one full local run, tag"]
   G --> S[Two independent security reviews<br/>fixes as normal pull requests]
 ```
 
@@ -48,16 +48,20 @@ flowchart TD
    `docs/releases/unreleased/`. Commits are authored as the owner and carry no trailers.
 5. **Review.** Every pull request gets a read-only review. Its findings go back to the builder.
    The pull request moves on only when the review has no open findings.
-6. **CI.** Required checks on `main`: server, UI and end-to-end tests on Linux and Windows, plus
-   PostgreSQL, data sources and audit. A red check goes back to the builder. Tests are never
-   weakened or skipped to get green.
-7. **Merge queue.** Pull requests merge only through the queue. It builds up to four at once on
-   top of each other and squash-merges them. `main` takes no direct or force pushes.
+6. **CI.** The local CI (`tools/local-ci`) tests the pull request merged onto the current
+   `main`, on Windows and in WSL, and posts the statuses `local/windows` and `local/linux`;
+   `main` requires both. A red status goes back to the builder. Tests are never weakened or
+   skipped to get green.
+7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
+   both statuses passed for exactly the content the merge makes (the merged tree; otherwise it
+   runs the CI first). Several pull requests can be tested and merged as one batch, and
+   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners, for example overnight.
+   `main` takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
    folders.
 9. **Release.** The release pull request assembles the fragments into
-   `docs/releases/v<version>.md` and bumps the version. The tag follows three green CI runs on
-   the release commit (merge queue, push, and a manual run on a branch pointing at it). Releases
+   `docs/releases/v<version>.md` and bumps the version. The tag follows one full local CI run
+   on the release commit (`tools/local-ci/run.sh --ref origin/main --full`). Releases
    are published on GitHub only.
 10. **Security.** After each milestone release, two independent security reviews take place.
     Their fixes are normal pull requests.
@@ -71,18 +75,17 @@ flowchart LR
     WT["Agent worktrees<br/>.claude/worktrees"]
     BD["Rust build folders<br/>one per topic, cleaned afterwards"]
     LX[Linux environment<br/>WSL]
-    WS["Watcher scripts<br/>enqueue once CI is green"]
+    CI["Local CI<br/>Windows and WSL"]
   end
   subgraph GH["GitHub: MouseWerk/Kalzit"]
     PR[Pull requests]
-    CI[CI: Linux and Windows]
-    MQ[Merge queue]
     MN[Protected main]
     RL["Releases: tag, assets, images"]
   end
   WT -- push --> PR
-  PR --> CI --> MQ --> MN --> RL
-  WS -- status, enqueue --> MQ
+  PR --> CI
+  CI -- statuses, squash merge --> MN
+  MN --> RL
 ```
 
 - **Machine:**
@@ -92,47 +95,32 @@ flowchart LR
   - Targeted tests run locally. The full suites run in CI.
   - Port 3000 is reserved for the owner's demo. Nothing else starts or updates the demo.
 - **GitHub:**
-  - `main` is protected: merge queue only, no force push.
+  - `main` is protected: pull requests only, the statuses `local/windows` and `local/linux`
+    required, linear history, no force push.
   - Releases are built by the release workflow from a tag.
   - Signing keys and CI secrets live only in GitHub environments.
 
 ## CI
 
-CI runs on GitHub-hosted runners (`.github/workflows/ci.yml`; the area rules are in
-`docs/ARCHITECTURE.md`, "CI"). The free runner pool takes about 20 jobs at once and a full run
-has about 30, so pull requests run only what they need, and the gate before `main` stays full.
+CI runs on the owner's machine (`tools/local-ci`, details in its README): the Windows leg in Git
+Bash and the Linux leg in WSL, at the same time, with build folders kept between runs. GitHub's
+shared runner pool was too slow for the queue. `.github/workflows/ci.yml` stays as the reference
+the scripts mirror and runs only by hand; a change to a job there belongs in the scripts too.
 
-| Event | What runs | Cancelled by a newer run |
-|---|---|---|
-| Merge queue (`merge_group`) | Everything, on Windows and Linux | Never |
-| Push to `main` or `release/**` | Everything, on Windows and Linux | Never |
-| Manual run (`workflow_dispatch`, release gate) | Everything, on Windows and Linux | Never |
-| Pull request | Only the jobs for the areas it changes | Yes, by a newer push |
-| Draft pull request | As a pull request, without e2e, the data source jobs, `msi`, `docker` and `packages` | Yes, by a newer push |
+| Run | What runs |
+|---|---|
+| `run.sh <pr>` | The jobs for the areas the pull request changes (`.github/scripts/changes.sh`), on the PR merged onto the current `main` |
+| `run.sh <pr> --full` | Everything |
+| `run.sh --ref origin/main --full` | Everything, on that commit: the release gate |
 
-- **Areas.** The `changes` job reads the pull request's changed paths. Docs and boards run
-  nothing but `changes` (and `roadmap` for the README's progress bars). A UI change skips
-  `server`, `postgres`, `ldap`, the data source jobs, `plugins` and the other server-only jobs.
-  A server change skips `ui`. A change under `.github/`, a path no area knows, or a failed
-  `changes` job runs everything.
-- **No idle runners.** A job without work is skipped through its job-level condition and boots
-  no runner. GitHub counts a skipped job as passed, also for a required check.
-- **Required checks.** `server (<os>)`, `ui (<os>)` and `e2e (<os>)` are small jobs at the end
-  of `ci.yml` that follow the matrix jobs `server tests`, `ui checks` and `e2e tests`. A
-  matrix job skipped as a whole reports no check per system, so it cannot carry the required
-  name itself. On a pull request these jobs start only to fail when the jobs they follow
-  failed. In the queue, on `main` and in a manual run they always run and pass only when the
-  jobs they follow passed. `postgres`, `datasources` and `audit` are plain jobs and report
-  their own checks.
-- **Drafts.** A draft holds back the heavy jobs. Marking it ready for review starts a new run
-  with them.
-- **Concurrency.** A newer push to a pull request cancels its running CI. Every queue entry,
-  every push to `main` and every manual run has its own group and always finishes, so the
-  three green runs of a release gate (queue, push, manual run) can run side by side.
-- **Caches.** Merge queue runs restore caches but never save them. One Rust debug cache per
-  system is saved by `server tests` and read by the PostgreSQL, LDAP, update rights, data
-  source and ACME jobs. One e2e-profile cache per system is saved by `e2e tests` and read by
-  `msi` and `packages`.
+- **Areas.** Docs and boards run only the change detection test (and `roadmap` for the
+  README's progress bars). A change under `.github/` or `tools/local-ci/`, or a path no area
+  knows, runs everything.
+- **Statuses.** Each leg posts one status to the PR's head commit, naming the `main` commit it
+  ran on. `merge.sh` merges only when that is still the current `main`.
+- **Not covered locally.** `packages (arm64)`; the release workflow still builds and checks
+  arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
+  when asked, for example before a release.
 
 ## Keeping things clean
 

@@ -18,12 +18,14 @@ function unloadGerman(): void {
 const PREFERENCES: Preferences = {
   language: "en",
   theme: null,
+  themeLight: null,
+  themeDark: null,
   timeZone: null,
   weekStart: null,
   startDashboard: null,
   showTips: true,
   seenTips: [],
-  defaults: { language: "en", theme: "system" },
+  defaults: { language: "en", theme: "system", themeLight: "light", themeDark: "dark" },
 };
 
 afterEach(async () => {

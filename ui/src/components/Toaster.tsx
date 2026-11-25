@@ -102,7 +102,7 @@ function ToastBody({ toast }: { toast: Toast }) {
         }
       }}
     >
-      <Icon name={toast.error === true ? "alert" : "check"} />
+      <Icon name={toast.error === true ? "alert" : "check"} play />
       <div className="toast__text">{toast.message}</div>
       {toast.undo === undefined ? null : (
         <span className="visually-hidden">{t("shell.toast.undoHint")}</span>

@@ -67,6 +67,7 @@ export function RulePreview({
             type="button"
             className="button button--secondary button--small"
             aria-disabled={!canRun || run.isPending || undefined}
+            aria-busy={run.isPending || undefined}
             onClick={() => canRun && !run.isPending && run.mutate()}
           >
             <Icon name="refresh" />

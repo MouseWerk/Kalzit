@@ -21,6 +21,8 @@ function setup() {
 }
 
 const KEY = `kalzit.folderTree.${TEST_USER.id}`;
+/** A folder's tree item: its name, then how many dashboards it holds once the counts are in. */
+const item = (name: string) => new RegExp(`^${name}( \\d+)?$`);
 const tree = () => screen.findByRole("tree", { name: "Folders" });
 
 afterEach(() => window.localStorage.clear());
@@ -30,12 +32,14 @@ describe("the folder tree", () => {
     setup();
     renderApp("/dashboards?folder=f-regions");
     const nav = await tree();
-    const regions = await within(nav).findByRole("treeitem", { name: "Regions" });
+    const regions = await within(nav).findByRole("treeitem", { name: item("Regions") });
     expect(regions.getAttribute("aria-level")).toBe("2");
     expect(regions.getAttribute("aria-selected")).toBe("true");
-    expect(within(nav).getByRole("treeitem", { name: "North" }).getAttribute("aria-level")).toBe(
-      "3",
-    );
+    expect(
+      within(nav)
+        .getByRole("treeitem", { name: item("North") })
+        .getAttribute("aria-level"),
+    ).toBe("3");
     expect(within(nav).getAllByRole("group").length).toBeGreaterThan(0);
     // Only the current entry is in the tab order.
     const stops = within(nav)
@@ -52,23 +56,27 @@ describe("the folder tree", () => {
     setup();
     const { user } = renderApp("/dashboards");
     const nav = await tree();
-    const sales = await within(nav).findByRole("treeitem", { name: "Sales" });
+    const sales = await within(nav).findByRole("treeitem", { name: item("Sales") });
     expect(sales.getAttribute("aria-expanded")).toBe("true");
     expect(
-      within(nav).getByRole("treeitem", { name: "Operations" }).hasAttribute("aria-expanded"),
+      within(nav)
+        .getByRole("treeitem", { name: item("Operations") })
+        .hasAttribute("aria-expanded"),
     ).toBe(false);
     sales.focus();
     await user.keyboard("{ArrowLeft}");
     expect(sales.getAttribute("aria-expanded")).toBe("false");
-    expect(within(nav).queryByRole("treeitem", { name: "Regions" })).toBeNull();
+    expect(within(nav).queryByRole("treeitem", { name: item("Regions") })).toBeNull();
     // Down skips what is folded.
     await user.keyboard("{ArrowDown}");
-    expect(document.activeElement).toBe(within(nav).getByRole("treeitem", { name: "Zeta" }));
+    expect(document.activeElement).toBe(within(nav).getByRole("treeitem", { name: item("Zeta") }));
     await user.keyboard("{ArrowUp}{ArrowRight}");
     expect(sales.getAttribute("aria-expanded")).toBe("true");
     // Right on an open folder moves into it; Left on a child moves back to its parent.
     await user.keyboard("{ArrowRight}");
-    expect(document.activeElement).toBe(within(nav).getByRole("treeitem", { name: "Regions" }));
+    expect(document.activeElement).toBe(
+      within(nav).getByRole("treeitem", { name: item("Regions") }),
+    );
     await user.keyboard("{ArrowLeft}{ArrowLeft}");
     expect(document.activeElement).toBe(sales);
     // Enter opens the folder.
@@ -80,8 +88,8 @@ describe("the folder tree", () => {
     setup();
     const { user } = renderApp("/dashboards");
     const nav = await tree();
-    const regions = await within(nav).findByRole("treeitem", { name: "Regions" });
-    const north = within(nav).getByRole("treeitem", { name: "North" });
+    const regions = await within(nav).findByRole("treeitem", { name: item("Regions") });
+    const north = within(nav).getByRole("treeitem", { name: item("North") });
     north.focus();
     // Folding the section that holds the focus moves it to the folder that was folded.
     await user.keyboard("{ArrowLeft}{ArrowLeft}");
@@ -89,22 +97,24 @@ describe("the folder tree", () => {
     north.focus();
     await user.click(screen.getByRole("button", { name: "Fold all" }));
     // Fold all keeps the focus on its button; the tree's tab stop moves to the top folder.
-    const sales = within(nav).getByRole("treeitem", { name: "Sales" });
+    const sales = within(nav).getByRole("treeitem", { name: item("Sales") });
     await waitFor(() => expect(sales.tabIndex).toBe(0));
   });
   it("remembers what is folded for this account and folds all at once", async () => {
     setup();
     const { user } = renderApp("/dashboards");
     const nav = await tree();
-    await within(nav).findByRole("treeitem", { name: "North" });
+    await within(nav).findByRole("treeitem", { name: item("North") });
     await user.click(screen.getByRole("button", { name: "Fold all" }));
-    expect(within(nav).queryByRole("treeitem", { name: "Regions" })).toBeNull();
+    expect(within(nav).queryByRole("treeitem", { name: item("Regions") })).toBeNull();
     expect(screen.getByRole("button", { name: "Fold all" })).toHaveProperty("disabled", true);
     cleanup();
     renderApp("/dashboards");
     const again = await tree();
     expect(
-      (await within(again).findByRole("treeitem", { name: "Sales" })).getAttribute("aria-expanded"),
+      (await within(again).findByRole("treeitem", { name: item("Sales") })).getAttribute(
+        "aria-expanded",
+      ),
     ).toBe("false");
     expect(window.localStorage.getItem(KEY)).toContain("f-sales");
   });
@@ -114,11 +124,13 @@ describe("the folder tree", () => {
     window.localStorage.setItem(KEY, JSON.stringify(["f-sales", "f-regions", "f-deleted"]));
     renderApp("/dashboards?folder=f-north");
     const nav = await tree();
-    const north = await within(nav).findByRole("treeitem", { name: "North" });
+    const north = await within(nav).findByRole("treeitem", { name: item("North") });
     expect(north.getAttribute("aria-selected")).toBe("true");
-    expect(within(nav).getByRole("treeitem", { name: "Sales" }).getAttribute("aria-expanded")).toBe(
-      "true",
-    );
+    expect(
+      within(nav)
+        .getByRole("treeitem", { name: item("Sales") })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
     await waitFor(() =>
       expect(JSON.parse(window.localStorage.getItem(KEY) ?? "[]")).toEqual([
         "f-sales",
