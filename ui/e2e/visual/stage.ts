@@ -226,15 +226,26 @@ export async function settle(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
 }
 
-/* The places that show such text, found with KALZIT_VISUAL_DISCOVER=1 (steadyRules). */
-const NOWHERE = ":not(*)";
-const RUN_FOLDER = NOWHERE;
-const IDS = NOWHERE;
-const ADDRESSES = NOWHERE;
-const HOSTS = NOWHERE;
-const DURATIONS = NOWHERE;
-const DISK = NOWHERE;
-const BUILD = NOWHERE;
+/*
+ * The places that show such text, as KALZIT_VISUAL_DISCOVER=1 listed them (steadyRules). Text of
+ * the same form elsewhere stays: the trace durations and the AI gateway's address come from the
+ * fixtures and are the same in every run.
+ */
+/** Paths in the run folder: locked folder settings, a source's address, file and form. */
+const RUN_FOLDER =
+  ".settings-locked .input, .ds-table__address, .source-query__summary dd, .ds-section .field .input";
+/** Ids of this run: the audit details, a link's address, a service account's example. */
+const IDS = ".admin-row__meta, .share-address .input, .admin-sa-secret__text";
+/** The server's own address with its free port: a link's address, a service account's example. */
+const ADDRESSES = ".share-address .input, .admin-sa-secret__text";
+/** The machine's name: the instances and the updates page. */
+const HOSTS = ".instances__server .updates-strong, .updates-strip__value .updates-strong";
+/** How long a query took: Explore's result bar, the panel editor's query stats. */
+const DURATIONS = ".explore__size, .target__stats";
+/** Free space in the data folder: the update checks. */
+const DISK = ".updates-checks__item .updates-muted";
+/** The instance id, commit and build date: the instances table and About. */
+const BUILD = ".updates-mono, .about-facts dd";
 
 /** Text that differs by machine or run, in the places of the UI that show it. */
 interface SteadyRule {
