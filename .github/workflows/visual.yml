@@ -1,0 +1,145 @@
+name: Visual
+
+# The visual comparison alone (ui/e2e/visual.config.ts), by hand on a branch:
+#
+#   gh workflow run visual.yml --ref <branch>                   compare with the baselines
+#   gh workflow run visual.yml --ref <branch> -f update=true    write the baselines that changed
+#
+# The comparison also runs in ci.yml's Linux e2e job and in tools/local-ci/linux.sh. This
+# workflow is for writing baselines on Linux without a Linux machine at hand: with `update` the
+# artifact `visual-baselines` holds the whole baselines folder, to unpack into
+# ui/e2e/visual/baselines, look at and commit (docs/process.md, "Visual comparison"). It never
+# commits anything itself.
+
+on:
+  workflow_dispatch:
+    inputs:
+      update:
+        description: Write the baselines of the screens that changed (npm run visual:update)
+        type: boolean
+        default: false
+  # TEMPORARY while the first baselines are made (a dispatch needs the file on main); removed
+  # before review. A commit message with [visual-update] writes baselines.
+  push:
+    branches: [ci/visual-regression]
+
+concurrency:
+  group: visual-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  visual:
+    name: visual comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+      VISUAL_UPDATE: ${{ inputs.update == true || contains(github.event.head_commit.message, '[visual-update]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      # Reads the e2e profile cache ci.yml's e2e job saves; saves none of its own.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: e2e-profile
+          save-if: false
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo build --profile e2e --locked -p kalzit
+      - name: Playwright version
+        id: playwright
+        working-directory: ui
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Restore Playwright browsers
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .playwright-browsers
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        working-directory: ui
+        run: |
+          for attempt in 1 2 3; do
+            npx playwright install chromium && exit 0
+            echo "::warning::installing the browser failed (attempt $attempt of 3)"
+          done
+          exit 1
+      - name: Runner image
+        id: image
+        run: echo "name=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore browser system packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/kalzit-browser-debs
+          key: browser-debs-${{ steps.image.outputs.name }}-playwright-${{ steps.playwright.outputs.version }}
+          restore-keys: browser-debs-
+      - name: Install browser system packages
+        timeout-minutes: 12
+        working-directory: ui
+        run: |
+          DEPS_CACHE="$HOME/.cache/kalzit-browser-debs" ../.github/scripts/browser-deps.sh \
+            node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Visual comparison
+        if: ${{ env.VISUAL_UPDATE != 'true' }}
+        run: npm run visual
+        timeout-minutes: 40
+        working-directory: ui
+        env:
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
+      - name: Write the baselines that changed
+        if: ${{ env.VISUAL_UPDATE == 'true' }}
+        run: npm run visual:update
+        timeout-minutes: 40
+        working-directory: ui
+        env:
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
+      - name: Size of the baselines
+        if: ${{ !cancelled() && env.VISUAL_UPDATE == 'true' }}
+        run: |
+          echo "$(find ui/e2e/visual/baselines -name '*.png' | wc -l) pictures, $(du -sh ui/e2e/visual/baselines | cut -f1)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && env.VISUAL_UPDATE == 'true' }}
+        with:
+          name: visual-baselines
+          path: ui/e2e/visual/baselines
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: visual-diffs
+          path: ui/e2e/.output/visual-diffs
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: visual-output
+          path: |
+            ui/e2e/.output/visual-report
+            ui/e2e/.output/visual-server.log
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14

@@ -26,7 +26,7 @@ const JOBS = {
     ['roadmap', ['roadmap']], ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['audit', ['audit']],
     ['update-rights', ['server']], ['postgres', ['server']], ['ldap', ['server']], ['datasources', ['server']],
     ['datasources-sql-kv', ['server']], ['datasources-more', ['server']], ['acme', ['server']], ['e2e', ['e2e']],
-    ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
+    ['visual', ['e2e']], ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
   ],
 }
 

@@ -355,6 +355,30 @@ e2e() {
   return "$status"
 }
 
+# The visual comparison (ui/e2e/visual.config.ts; ci.yml runs it in the Linux e2e job): every
+# screen against its baseline, with the e2e binary. It starts its own server on a free port and
+# needs no services. The pictures of the screens that differ go to the run's log folder.
+visual() {
+  e2e_build
+  local attempt
+  for attempt in 1 2 3; do
+    (cd ui && npx playwright install --with-deps chromium) && break
+    echo "installing the browser failed (attempt $attempt of 3)" >&2
+    [ "$attempt" -lt 3 ] || return 1
+  done
+  local run_dir="$KALZIT_CI_CACHE/visual-run"
+  rm -rf "$run_dir"
+  local status=0
+  (cd ui && KALZIT_E2E_BINARY="$T/e2e/kalzit" KALZIT_E2E_RUN_DIR="$run_dir" npm run visual) || status=$?
+  local kept
+  for kept in visual-diffs visual-report visual-server.log; do
+    if [ "$status" -ne 0 ] && [ -e "ui/e2e/.output/$kept" ]; then
+      cp -r "ui/e2e/.output/$kept" "$LOGS/linux-$kept" || true
+    fi
+  done
+  return "$status"
+}
+
 docker_image() {
   docker build --build-arg CARGO_PROFILE=e2e --build-arg "KALZIT_BUILD_COMMIT=$(git rev-parse --short=9 HEAD)" \
     -t kalzit:ci .
@@ -465,6 +489,7 @@ job datasources-sql-kv server -- datasources_sql_kv
 job datasources-more server -- datasources_more
 job acme server -- acme
 job e2e e2e -- e2e
+job visual e2e -- visual
 job packages docker -- packages
 job docker docker -- docker_image
 job devgen-proof devgen_proof -- devgen_proof

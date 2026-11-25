@@ -79,7 +79,7 @@ under `.github/` or `tools/local-ci/` runs everything.
 
 | Leg | Jobs |
 |---|---|
-| Linux (`linux.sh`) | changes test, server (fmt, clippy, tests), plugins, ui (with a DST zone), sdk, roadmap, devkit, devgen, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e, packages (x64), docker, devgen proof |
+| Linux (`linux.sh`) | changes test, server (fmt, clippy, tests), plugins, ui (with a DST zone), sdk, roadmap, devkit, devgen, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e, visual (the visual comparison; the pictures of a failed run in `linux-visual-diffs/`), packages (x64), docker, devgen proof |
 | Windows (`windows.sh`) | server, plugins, ui, sdk, devkit, devgen, e2e, msi (only with `--msi`) |
 
 Differences from `ci.yml`:
