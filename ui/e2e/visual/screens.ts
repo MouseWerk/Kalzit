@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { FAKE_GRAPH_SCHEMA, graphOutcome } from "../../src/features/datasources/test/fakeGraph";
 import { type Language, t } from "../support/i18n";
 import { expect } from "../support/test";
@@ -18,6 +18,8 @@ export interface Screen {
   signedOut: boolean;
   prepare?: (page: Page) => Promise<void>;
   ready: (page: Page, seed: Seed, language: Language) => Promise<void>;
+  /** Parts of the page that change while it is shown (a countdown), masked in the picture. */
+  masks?: (page: Page) => Locator[];
 }
 
 const fromSweep = (page: SweepPage): Screen => ({
@@ -35,6 +37,10 @@ const fromSweep = (page: SweepPage): Screen => ({
  */
 const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
   "public dashboard": { path: (seed) => `/public/dashboards/${seed.publicToken}` },
+  // "Send again in 59 s" counts down once a second from the moment the link was sent.
+  "register: inbox": {
+    masks: (page) => [page.getByRole("button", { name: /^Send again in \d+ s$/ })],
+  },
   reports: {
     ready: async (page, _seed, language) => {
       await expect(

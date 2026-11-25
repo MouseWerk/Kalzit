@@ -58,7 +58,7 @@ async function shoot(screen: Screen, page: Page, seed: Seed) {
     await screen.ready(tab, seed, "en");
     await settle(tab);
     await expect(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
-      mask: await dynamicRegions(tab, seed.dynamic),
+      mask: [...(await dynamicRegions(tab, seed.dynamic)), ...(screen.masks?.(tab) ?? [])],
     });
   }
 }
