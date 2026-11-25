@@ -43,6 +43,17 @@ function Late({ shown }: { shown: boolean }) {
   );
 }
 
+/** Shows the root font size the hook handed out with the last measurement. */
+function Rem() {
+  const ref = useRef<HTMLDivElement>(null);
+  const { rem } = useElementSize(ref);
+  return (
+    <div ref={ref} data-probe="rem">
+      <output aria-label="rem">{rem}</output>
+    </div>
+  );
+}
+
 type Entry = { target: Element; contentRect: { width: number; height: number } };
 type Callback = (entries: Entry[]) => void;
 
@@ -145,6 +156,20 @@ describe("useElementSize", () => {
       expect(seen.unobserved.filter((element) => element === box)).toHaveLength(1);
     },
   );
+
+  it("hands out the root font size read with each measurement, not while rendering", () => {
+    const root = document.documentElement;
+    const { container } = render(<Rem />);
+    const box = container.querySelector('[data-probe="rem"]') as HTMLElement;
+    // A denser or roomier look sets another root font size, which resizes the boxes.
+    root.style.fontSize = "20px";
+    try {
+      act(() => deliver([{ target: box, contentRect: { width: 300, height: 150 } }]));
+      expect(screen.getByRole("status", { name: "rem" }).textContent).toBe("20");
+    } finally {
+      root.style.removeProperty("font-size");
+    }
+  });
 
   it("measures a box that appears after the hook mounted, and lets go of one that leaves", () => {
     const { container, rerender } = render(<Late shown={false} />);
