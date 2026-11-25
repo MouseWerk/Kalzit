@@ -1507,7 +1507,8 @@ describe("JSON, import and export", () => {
     const shop = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
     expect(shop).toBeDefined();
     const { user, location } = renderApp("/dashboards");
-    await user.click(await screen.findByRole("button", { name: "Import…" }));
+    await user.click(await screen.findByRole("button", { name: "Import" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Import…" }));
     const dialog = screen.getByRole("dialog", { name: "Import dashboard" });
     await fill(
       user,

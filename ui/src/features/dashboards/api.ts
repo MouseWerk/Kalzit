@@ -70,12 +70,38 @@ export interface Folder {
   access?: Access;
 }
 
+/** One box of a dashboard's layout preview, on the 24-column grid; `type` "row" is a row's band. */
+export interface LayoutItem {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  type: string;
+}
+
+/** Where a dashboard's panels sit, for a schematic preview; no content, no data. */
+export interface DashboardLayout {
+  items: LayoutItem[];
+  /** The dashboard holds more than `items` shows. */
+  more: boolean;
+}
+
 export interface DashboardSummary {
   id: string;
   folderId: string | null;
   title: string;
   version: number;
   updatedAt: number;
+  /** Who saved last; `null` when unknown. */
+  updatedBy?: string | null;
+  /** Their name now; `null` once the account is gone. */
+  updatedByName?: string | null;
+  /** Lists only: whether the caller starred it. */
+  starred?: boolean;
+  /** Lists only: when the caller last opened it. */
+  openedAt?: number;
+  /** Lists with `layout` only. */
+  layout?: DashboardLayout;
   deletedAt: number | null;
   access?: Access;
   /** The current version's tags; absent when it has none. */
@@ -257,7 +283,32 @@ function parseSummary(value: unknown): DashboardSummary | null {
   if (tags.length > 0) {
     summary.tags = tags;
   }
+  if ("updatedBy" in value) summary.updatedBy = nullableId(value.updatedBy);
+  if ("updatedByName" in value) summary.updatedByName = nullableId(value.updatedByName);
+  if (typeof value.starred === "boolean") summary.starred = value.starred;
+  if (typeof value.openedAt === "number") summary.openedAt = value.openedAt;
+  const layout = parseLayout(value.layout);
+  if (layout !== undefined) summary.layout = layout;
   return summary;
+}
+
+function parseLayout(value: unknown): DashboardLayout | undefined {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return undefined;
+  }
+  const items: LayoutItem[] = [];
+  for (const item of value.items) {
+    if (isRecord(item)) {
+      items.push({
+        x: num(item.x),
+        y: num(item.y),
+        w: num(item.w, 1),
+        h: num(item.h, 1),
+        type: str(item.type),
+      });
+    }
+  }
+  return { items, more: value.more === true };
 }
 
 function parseDashboard(value: unknown): Dashboard {
@@ -382,7 +433,63 @@ export interface DashboardFilter {
   tag?: string | undefined;
   /** A team context: only dashboards outside other teams' spaces, or shared with the team. */
   team?: string | undefined;
+  /** Only the caller's starred dashboards. */
+  starred?: boolean | undefined;
+  /** Only the dashboards the caller opened recently. */
+  opened?: boolean | undefined;
+  /** Each summary carries its panel layout (pages of at most 50). */
+  layout?: boolean | undefined;
+  /** By title (the server's default), newest change first, or last opened by the caller first. */
+  sort?: DashboardSort | undefined;
   cursor?: string | undefined;
+}
+
+export type DashboardSort = "title" | "updated" | "opened";
+
+/** What the dashboard list shows, counted (docs/api/settings-dashboards.md). */
+export interface DashboardCounts {
+  total: number;
+  /** Per visible folder, `null` for the top level. */
+  folders: Map<string | null, number>;
+  starred: number;
+  opened: number;
+  /** The tags in use, most used first. */
+  tags: { tag: string; count: number }[];
+}
+
+export async function fetchDashboardCounts(
+  orgId: string,
+  team: string | undefined,
+  signal?: AbortSignal,
+): Promise<DashboardCounts> {
+  const query = team === undefined ? "" : `?team=${encodeURIComponent(team)}`;
+  const value = await send(
+    "GET",
+    orgPath(orgId, "dashboards", "counts") + query,
+    undefined,
+    signal,
+  );
+  if (!isRecord(value) || !Array.isArray(value.folders)) {
+    return invalid("dashboard counts");
+  }
+  const folders = new Map<string | null, number>();
+  for (const item of value.folders) {
+    if (isRecord(item)) folders.set(nullableId(item.folderId), num(item.count));
+  }
+  const tags = Array.isArray(value.tags)
+    ? value.tags.flatMap((item) =>
+        isRecord(item) && typeof item.tag === "string"
+          ? [{ tag: item.tag, count: num(item.count) }]
+          : [],
+      )
+    : [];
+  return {
+    total: num(value.total),
+    folders,
+    starred: num(value.starred),
+    opened: num(value.opened),
+    tags,
+  };
 }
 
 export async function fetchDashboards(
@@ -396,6 +503,10 @@ export async function fetchDashboards(
   if (filter.trashed === true) params.set("trashed", "true");
   if (filter.tag !== undefined && filter.tag !== "") params.set("tag", filter.tag);
   if (filter.team !== undefined) params.set("team", filter.team);
+  if (filter.starred === true) params.set("starred", "true");
+  if (filter.opened === true) params.set("opened", "true");
+  if (filter.layout === true) params.set("layout", "true");
+  if (filter.sort !== undefined && filter.sort !== "title") params.set("sort", filter.sort);
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);

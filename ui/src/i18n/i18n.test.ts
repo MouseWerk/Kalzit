@@ -257,6 +257,7 @@ describe("catalogs", () => {
       "TraceQL",
       "Operation",
       "Tag",
+      "Tags",
       // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
       "CORS",
       "Apps",
@@ -271,6 +272,11 @@ describe("catalogs", () => {
       "Variable",
       // The variable editor of the parity wave: "Regex" is the German word too (board ParityEditors).
       "Regex (optional)",
+      // Logs keep the names the sources use, as do the level words (board Logs.dc.html).
+      "Logs",
+      "Level",
+      "Info",
+      "Debug",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

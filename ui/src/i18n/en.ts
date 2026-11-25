@@ -17,6 +17,7 @@ import enGraph from "./en/graph.json";
 import enHelp from "./en/help.json";
 import enLibraryPanels from "./en/libraryPanels.json";
 import enLive from "./en/live.json";
+import enLogs from "./en/logs.json";
 import enPanelPlugins from "./en/panelPlugins.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
@@ -61,6 +62,7 @@ export const en = {
   ...enPanelPlugins,
   ...enSecurity,
   ...enUsage,
+  ...enLogs,
   ...enSso,
   ...enHelp,
 };
