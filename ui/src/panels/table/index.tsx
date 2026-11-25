@@ -1,7 +1,7 @@
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
-import { useI18n } from "../../i18n/i18n";
+import { type Translate, useI18n } from "../../i18n/i18n";
 import {
   cellLink,
   type DisplayValue,
@@ -35,6 +35,18 @@ import {
 import "../viz.css";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
+import { FooterEditor } from "./FooterEditor";
+import {
+  type CalcResult,
+  calcFor,
+  calcResultKind,
+  calculate,
+  type FooterCalc,
+  type NamedFooterCalc,
+  parseFooter,
+  percentileOf,
+  type TableFooter,
+} from "./footer";
 
 export interface TableOptions {
   /** A filter field under every column header. */
@@ -46,6 +58,8 @@ export interface TableOptions {
   variable: string;
   /** Column (its shown name or field name) the variable takes; empty takes the first. */
   variableColumn: string;
+  /** A calculation per column at the bottom (ParityEditors board, frame 12). */
+  footer: TableFooter;
 }
 
 export const MIN_PAGE_SIZE = 5;
@@ -62,6 +76,7 @@ export function parseTableOptions(stored: unknown): TableOptions {
     pageSize: Math.min(Math.max(size, MIN_PAGE_SIZE), MAX_PAGE_SIZE),
     variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
     variableColumn: clickOption(value.variableColumn, MAX_COLUMN_CHARS),
+    footer: parseFooter(value.footer),
   };
 }
 
@@ -454,6 +469,70 @@ function PickCell({
   );
 }
 
+/** A calculation's name as the footer shows it before its value. */
+export function calcLabel(t: Translate, calc: FooterCalc): string {
+  const p = percentileOf(calc);
+  return p === null
+    ? t(`panels.calc.${calc as NamedFooterCalc}`)
+    : t("panels.calc.percentile", { p });
+}
+
+/**
+ * One column's footer result as text: sums, means and percentiles in the column's unit, counts as
+ * plain numbers ("4 von 2.000 Zeilen" for a count), a change in percent, and first or last as the
+ * cell shows it. A dash when there is nothing to calculate.
+ */
+export function footerText(
+  t: Translate,
+  calc: FooterCalc,
+  result: CalcResult,
+  column: { field: Field; options: FieldOptions; range: { min: number; max: number } | undefined },
+  total: number,
+  language: string,
+  timeZone: string | null,
+): string {
+  if (result.kind === "cell") {
+    if (result.raw === null || result.raw === undefined) return "–";
+    return Object.keys(column.options).length === 0
+      ? formatValue(column.field.type, result.raw, language, timeZone)
+      : displayText(
+          displayValue(
+            result.raw,
+            column.field.type,
+            column.options,
+            language,
+            column.range,
+            timeZone,
+          ),
+        );
+  }
+  const { value } = result;
+  if (!Number.isFinite(value)) return "–";
+  switch (calcResultKind(calc)) {
+    case "count":
+      return calc === "count"
+        ? t("panels.table.footer.countOf", {
+            count: value.toLocaleString(language),
+            total: total.toLocaleString(language),
+          })
+        : value.toLocaleString(language);
+    case "plain":
+      return value.toLocaleString(language, {
+        maximumFractionDigits: column.options.decimals ?? 2,
+      });
+    case "percent":
+      return new Intl.NumberFormat(language, {
+        style: "percent",
+        maximumFractionDigits: 1,
+        signDisplay: "exceptZero",
+      }).format(value / 100);
+    default:
+      return displayText(
+        displayValue(value, "number", column.options, language, column.range, timeZone),
+      );
+  }
+}
+
 function FrameTable({
   frame,
   title,
@@ -488,6 +567,37 @@ function FrameTable({
   const order = filterRows(frame, sortedRows(frame, sort), filters);
   const total = order.length;
   const headerRows = options.columnFilters ? 2 : 1;
+  const footer = options.footer;
+  const allRows = rowCount(frame);
+  // The footer reads the rows in the answer's order: all of them, or those the filters keep.
+  // With no filter typed, "only filtered rows" are all rows, and the note says so.
+  const filtering = footer.over === "filtered" && filters.some((f) => f !== null);
+  const footerRows = !footer.show
+    ? null
+    : filtering
+      ? filterRows(frame, sortedRows(frame, null), filters)
+      : sortedRows(frame, null);
+  const footerTexts =
+    footerRows === null
+      ? []
+      : columns.map((column) => {
+          const calc = calcFor(footer, column.field, column.name);
+          if (calc === undefined) return null;
+          const result = calculate(calc, column.field, footerRows);
+          const text = footerText(t, calc, result, column, footerRows.length, language, timeZone);
+          return { label: calcLabel(t, calc), text };
+        });
+  const footerScope =
+    footerRows === null
+      ? null
+      : frame.meta?.rowsTruncated === true
+        ? t("panels.table.footer.overLoaded", { count: allRows.toLocaleString(language) })
+        : filtering
+          ? t("panels.table.footer.overFiltered", {
+              count: footerRows.length.toLocaleString(language),
+              total: allRows.toLocaleString(language),
+            })
+          : t("panels.table.footer.overAll", { count: allRows.toLocaleString(language) });
 
   let start: number;
   let end: number;
@@ -610,7 +720,7 @@ function FrameTable({
         <table
           ref={tableRef}
           className={view === null ? "vt__table" : "vt__table vt__table--columns"}
-          aria-rowcount={total + headerRows}
+          aria-rowcount={total + headerRows + (footerRows === null ? 0 : 1)}
           aria-colcount={view === null ? undefined : columns.length}
         >
           <colgroup>
@@ -707,8 +817,40 @@ function FrameTable({
               <td colSpan={view === null ? columns.length : shown.length + gaps.size} />
             </tr>
           </tbody>
+          {footerRows === null ? null : (
+            <tfoot>
+              <tr aria-rowindex={total + headerRows + 1}>
+                {spaced(
+                  shown.map((index) => {
+                    const column = columns[index] as Column;
+                    const cell = footerTexts[index];
+                    return (
+                      <td
+                        key={index}
+                        className={`vt__foot vt__cell--${column.field.type}`}
+                        aria-colindex={colIndex(index)}
+                        title={
+                          cell === null || cell === undefined
+                            ? undefined
+                            : `${cell.label}: ${cell.text}`
+                        }
+                      >
+                        {cell === null || cell === undefined ? null : (
+                          <>
+                            <span className="vt__foot-label">{cell.label}</span>
+                            {cell.text}
+                          </>
+                        )}
+                      </td>
+                    );
+                  }),
+                )}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </section>
+      {footerScope === null ? null : <p className="vt__footnote">{footerScope}</p>}
       <div className="live-region" role="status">
         {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
           <p className="panel-note">{t("panels.table.noMatch")}</p>
@@ -784,7 +926,7 @@ function TablePanel({
   );
 }
 
-function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
+function TableEditor({ options, onChange, tableColumns = [] }: PanelEditorProps<TableOptions>) {
   const { t } = useI18n();
   const host = usePanelHost();
   const variableId = useId();
@@ -820,6 +962,11 @@ function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
           }
         />
       ) : null}
+      <FooterEditor
+        footer={options.footer}
+        columns={tableColumns}
+        onChange={(footer) => onChange({ ...options, footer })}
+      />
       <ClickVariableOptions
         id={variableId}
         names={host.variables?.names ?? []}

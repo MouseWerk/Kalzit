@@ -106,6 +106,9 @@ describe("catalogs", () => {
       "Median",
       "Minimum",
       "Maximum",
+      // The calculations' short names in both languages (ParityEditors board, frame 18).
+      "Min",
+      "Max",
       "JSON",
       "Format",
       "Text",
