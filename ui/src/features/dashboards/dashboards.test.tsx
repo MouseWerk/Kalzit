@@ -118,13 +118,17 @@ describe("dashboard browser", () => {
     addFolder(server.areas.dashboards, "f-pay", "Payroll", { parentId: "f-hr" });
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("treeitem", { name: "People, Restricted" })).toBeTruthy();
-    expect(within(tree).getByRole("treeitem", { name: "Operations" })).toBeTruthy();
+    expect(
+      await within(tree).findByRole("treeitem", { name: /^People, Restricted( \d+)?$/ }),
+    ).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: /^Operations( \d+)?$/ })).toBeTruthy();
     // The subfolder inherits the restriction and shows it.
-    expect(within(tree).getByRole("treeitem", { name: "Payroll, Restricted" })).toBeTruthy();
+    expect(
+      within(tree).getByRole("treeitem", { name: /^Payroll, Restricted( \d+)?$/ }),
+    ).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
 
-    await user.click(within(tree).getByRole("treeitem", { name: "People, Restricted" }));
+    await user.click(within(tree).getByRole("treeitem", { name: /^People, Restricted( \d+)?$/ }));
     expect(await screen.findByRole("link", { name: "Headcount" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
   });
@@ -133,7 +137,7 @@ describe("dashboard browser", () => {
     setup("editor");
     renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("treeitem", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: /^Operations( \d+)?$/ })).toBeTruthy();
     expect(within(tree).queryByText("People")).toBeNull();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Headcount" })).toBeNull();
@@ -198,7 +202,7 @@ describe("dashboard browser", () => {
     await screen.findByRole("heading", { name: "All dashboards" });
     // At the top level the viewer role decides: nothing to create.
     expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
-    await user.click(await screen.findByRole("treeitem", { name: "Operations" }));
+    await user.click(await screen.findByRole("treeitem", { name: /^Operations( \d+)?$/ }));
     await user.click(await screen.findByRole("button", { name: "New dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "New dashboard" });
     await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Capacity");
@@ -769,6 +773,41 @@ describe("editing a dashboard", () => {
     expect(saved.model.panels.find((p) => p.id === "p-mixed")?.grid.y).toBe(10);
     // Saving keeps edit mode, on the new version.
     expect(await screen.findByRole("button", { name: "Finish editing" })).toBeTruthy();
+  });
+
+  it("selects a dragged panel with the drop and takes the click that follows the release", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const card = panelOf("Orders");
+    expect(card.getAttribute("aria-current")).toBeNull();
+    const header = card.querySelector(".panel-card__header") as HTMLElement;
+    // Anything listening for clicks on the page, as React's own listener does.
+    const clicks = vi.fn();
+    document.addEventListener("click", clicks);
+    try {
+      fireEvent.pointerDown(header, { button: 0, buttons: 1, pointerId: 1, clientX: 10 });
+      fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientX: 300 });
+      fireEvent.pointerUp(window, { button: 0, pointerId: 1, clientX: 300 });
+      // The browser's click after the release, where the press began: a drag is not a click,
+      // and a click here drew the whole dashboard at once while the drop was still pending.
+      fireEvent.click(header);
+      expect(clicks).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("click", clicks);
+    }
+    // The drop selected the panel.
+    await waitFor(() => expect(panelOf("Orders").getAttribute("aria-current")).toBe("true"));
+    // Only that one click was taken: the next one is a click again.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const later = vi.fn();
+    document.addEventListener("click", later);
+    try {
+      fireEvent.click(header);
+      expect(later).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("click", later);
+    }
   });
 
   it("stays in edit mode after Save, with nothing left unsaved", async () => {

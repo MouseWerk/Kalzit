@@ -616,7 +616,9 @@ Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   follows. A plugin that cannot be started or reached does not refuse the settings.
 - Before every call, `CheckOnSave` included (a connection with its secrets goes only to allowed
   targets), the host checks every target of the manifest against the data source target rules
-  (Kalzit's own database by address, metadata addresses, `datasources.allowed_targets`): the hosts
+  (Kalzit's own database by address, metadata addresses, `datasources.allowed_targets`; the database
+  location is read from every PostgreSQL URL form: several hosts, the `host`, `hostaddr` and `port`
+  parameters, key=value strings, IPv6 and unix-socket directories, which count as this machine): the hosts
   and URLs it takes from the settings and its fixed hosts. A target setting that is not text
   (`settings.expected_text`), a URL that does not parse (`settings.url_invalid`) or has no host
   (`settings.url_no_host`), and an empty host (`settings.host_invalid`) are refused. Every
