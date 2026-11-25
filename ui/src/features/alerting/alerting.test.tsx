@@ -33,6 +33,7 @@ import {
   validateDraft,
   withInterval,
 } from "./ruleModel";
+import { shortEndText } from "./shared";
 import { FAKE_STATUS_ON } from "./test/fakeAlerting";
 
 const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -455,6 +456,52 @@ describe("Alerting pages", () => {
     expect(within(list).getByText("instance=lager-api-1")).toBeTruthy();
     expect(within(list).getByRole("link", { name: "Silence instance=lager-api-1" })).toBeTruthy();
     expect(server.calls.some((call) => call.path.endsWith("/alerting/rules/r1"))).toBe(true);
+  });
+
+  it("writes a silence's end short under the state and reads out the full moment", async () => {
+    const endsAt = Date.now() + 2 * 86_400_000;
+    open("/alerting", "viewer", (s) => {
+      s.areas.alerting.rules = [RULE as unknown as Record<string, unknown>];
+      s.areas.alerting.silences = [
+        {
+          id: "s1",
+          matchers: [{ label: "team", op: "=", value: "lager" }],
+          startsAt: 0,
+          endsAt,
+          comment: "Umzug",
+          status: "active",
+          createdBy: "u1",
+          createdByName: "Ada",
+          createdAt: 0,
+          endedBy: null,
+          endedByName: null,
+          endedAt: null,
+        },
+      ];
+    });
+    const name = await screen.findByRole("link", { name: "Lager-API Latenz p95" });
+    const row = name.closest("tr");
+    if (row === null) throw new Error("the rule's row");
+    const full = t("alerting.rules.silencedUntil", {
+      at: new Intl.DateTimeFormat("en", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(endsAt),
+    });
+    const short = t("alerting.rules.silencedUntil", {
+      // The day alone, with the year only across New Year (shortEnd.test.ts).
+      at: shortEndText(endsAt, Date.now(), "en"),
+    });
+    // Seen: the day alone, hidden from screen readers; read: the day with its time.
+    const seen = await within(row).findByText(short);
+    expect(seen.tagName).toBe("TIME");
+    expect(seen.getAttribute("aria-hidden")).toBe("true");
+    expect(seen.getAttribute("dateTime")).toBe(new Date(endsAt).toISOString());
+    const read = within(row).getByText(full);
+    expect(read.className).toBe("visually-hidden");
+    expect(read.parentElement?.getAttribute("title")).toBe(full);
   });
 
   it("shows viewers the rules without the actions that change them", async () => {

@@ -2,8 +2,10 @@
 //! (RFC 3207) or TLS from the start, AUTH PLAIN or LOGIN (RFC 4954). The mail server is a target
 //! like a data source: the address is resolved and checked once (`TargetPolicy`, Kalzit's own
 //! listeners and database refused) and that checked address is connected to, so a second lookup
-//! cannot lead elsewhere. Credentials are only sent over TLS (or to a relay on this machine), and
-//! no command or answer is logged, since they carry the password and the recipients.
+//! cannot lead elsewhere. With STARTTLS or TLS, credentials are only sent once TLS is up with a
+//! trusted certificate; without encryption (plain SMTP to a relay the admin chose, never upgraded)
+//! everything travels in plain text. No command or answer is logged, since they carry the password
+//! and the recipients.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -14,7 +16,7 @@ use base64::Engine;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use super::settings::{Security, SmtpSettings, is_loopback_host};
+use super::settings::{Security, SmtpSettings};
 use crate::datasources::targets::{ResolveError, TargetPolicy};
 use crate::error::ApiError;
 use crate::plugins::connector::OwnEndpoints;
@@ -298,19 +300,10 @@ fn resolve_error(e: ResolveError) -> SendError {
     out
 }
 
-/// `loopback_only`: without encryption, every address connected to must be this machine's, not
-/// only the host's name (a name that looks local can resolve elsewhere).
-async fn connect(connector: &Connector, host: &str, port: u16, loopback_only: bool) -> Result<TcpStream, SendError> {
+async fn connect(connector: &Connector, host: &str, port: u16) -> Result<TcpStream, SendError> {
     let addrs: Vec<SocketAddr> = connector.policy.resolve_all(host, port).await.map_err(resolve_error)?;
     let mut last = String::new();
     for addr in addrs {
-        if loopback_only && !addr.ip().to_canonical().is_loopback() {
-            return Err(SendError::new(
-                Some("security"),
-                "mail.unencrypted_not_local",
-                format!("{host} resolves to {}, not this machine; without encryption only a local relay", addr.ip()),
-            ));
-        }
         if let Err(detail) = connector.own.check(addr).await {
             let mut out = SendError::new(Some("host"), detail.reason, detail.message);
             out.params = detail.params;
@@ -370,13 +363,13 @@ async fn run(
     mail: Option<&Outgoing<'_>>,
 ) -> Result<(String, Option<TlsInfo>), SendError> {
     let host = settings.host.as_str();
-    let tcp: Box<dyn Io> =
-        Box::new(connect(connector, host, settings.port, settings.security == Security::None).await?);
+    let tcp: Box<dyn Io> = Box::new(connect(connector, host, settings.port).await?);
     let (stream, mut tls) = match settings.security {
         Security::Tls => {
             let (stream, info) = handshake(connector, host, tcp).await?;
             (stream, Some(info))
         }
+        // Without encryption the connection stays plain: no STARTTLS, even when offered.
         Security::Starttls | Security::None => (tcp, None),
     };
     let mut session =
@@ -423,10 +416,10 @@ async fn run(
         session = Session { stream: BufReader::new(stream), timeout: connector.step_timeout, extensions: Vec::new() };
         session.hello(hello).await?;
     }
+    // STARTTLS and TLS reach this point only with TLS up; without encryption the admin chose plain
+    // text for the sign-in too.
+    debug_assert!(settings.security == Security::None || tls.is_some());
     if !settings.username.is_empty() {
-        if tls.is_none() && !is_loopback_host(host) {
-            return Err(SendError::new(Some("security"), "mail.unencrypted_not_local", "credentials go over TLS only"));
-        }
         authenticate(&mut session, &settings.username, password.unwrap_or_default()).await?;
     }
     let Some(mail) = mail else {
@@ -649,14 +642,53 @@ mod tests {
         assert_eq!(e.reason, "target.own_address");
     }
 
+    /// A relay in the network: a name that is not this machine's, pinned to the fake server.
+    fn plain_relay(port: u16, username: &str) -> SmtpSettings {
+        crate::datasources::targets::test_hosts::pin("relay.smtp-test.invalid", &["127.0.0.1".parse().unwrap()]);
+        SmtpSettings { host: "relay.smtp-test.invalid".into(), ..settings(port, Security::None, username) }
+    }
+
     #[tokio::test]
-    async fn unencrypted_mail_goes_only_to_a_loopback_address() {
+    async fn plain_smtp_to_a_relay_in_the_network_without_sign_in() {
+        let fake = FakeSmtp::start(Script { starttls: false, ..Script::default() }).await;
+        let c = connector(fake.client_tls());
+        let s = plain_relay(fake.port(), "");
+        assert!(!crate::mail::settings::is_loopback_host(&s.host));
+        let done = deliver(&c, &s, None, "x", Some(&MAIL)).await.unwrap();
+        assert!(done.reply.starts_with("250"), "{}", done.reply);
+        assert_eq!((done.tls, done.certificate_not_after), (None, None));
+        let got = fake.messages();
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].auth.as_deref(), got[0].secure), (None, false));
+        assert_eq!(fake.auth_attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn plain_smtp_signs_in_without_tls_when_the_admin_chose_it() {
+        let fake = FakeSmtp::start(Script { starttls: false, plain_auth: true, ..Script::default() }).await;
+        let c = connector(fake.client_tls());
+        let s = plain_relay(fake.port(), "kalzit");
+        deliver(&c, &s, Some("geheim"), "x", Some(&MAIL)).await.unwrap();
+        let got = fake.messages();
+        assert_eq!(got[0].auth.as_deref(), Some("kalzit:geheim"));
+        assert!(!got[0].secure, "plain SMTP stays plain");
+        // The check a save runs signs in the same way and sends nothing.
+        deliver(&c, &s, Some("geheim"), "x", None).await.unwrap();
+        assert_eq!((fake.messages().len(), fake.auth_attempts()), (1, 2));
+    }
+
+    #[tokio::test]
+    async fn plain_smtp_never_upgrades_even_when_starttls_is_offered() {
+        let fake = FakeSmtp::start(Script { plain_auth: true, ..Script::default() }).await;
+        // A client that does not trust the fake server: a TLS attempt would fail.
         let c = connector(platform_tls().unwrap());
-        // A literal address that is not this machine never gets the unencrypted dialogue, even
-        // when the name check was passed some other way.
-        let s = SmtpSettings { host: "192.0.2.10".into(), ..settings(25, Security::None, "") };
-        let e = deliver(&c, &s, None, "x", None).await.unwrap_err();
-        assert_eq!((e.field, e.reason), (Some("security"), "mail.unencrypted_not_local"));
+        let s = plain_relay(fake.port(), "kalzit");
+        let done = deliver(&c, &s, Some("geheim"), "x", Some(&MAIL)).await.unwrap();
+        assert_eq!(done.tls, None);
+        let got = fake.messages();
+        assert_eq!(got.len(), 1);
+        assert!(!got[0].secure, "no STARTTLS was sent");
+        assert_eq!(got[0].auth.as_deref(), Some("kalzit:geheim"));
     }
 
     #[tokio::test]
