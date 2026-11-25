@@ -41,7 +41,9 @@ export function shiftTimes(value: unknown, realNow: number): unknown {
   }
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, counter(key, item, realNow)]),
+      Object.entries(value)
+        .filter(([key, item]) => !(key === "lastUsedAt" && typeof item === "number"))
+        .map(([key, item]) => [key, counter(key, item, realNow)]),
     );
   }
   const stamp =
@@ -60,7 +62,15 @@ const VISITS: Readonly<Record<string, unknown>> = {
   lastViewedAt: VISUAL_NOW - 2 * 3_600_000,
 };
 
+/**
+ * What a data source shows of the queries that ran on it (the hours with queries, the last use)
+ * depends on which pages ran queries before, in whatever order: it shows none. `lastUsedAt` is
+ * left out (shiftTimes), `latency` is empty.
+ */
 function counter(key: string, item: unknown, realNow: number): unknown {
+  if (key === "latency" && Array.isArray(item)) {
+    return [];
+  }
   if (key in VISITS && (typeof item === "number" || item === null)) {
     return key === "lastViewedAt" && item === null ? null : VISITS[key];
   }
@@ -93,13 +103,13 @@ export async function stageContext(context: BrowserContext, frozen: Frozen): Pro
     if ((request.headers().accept ?? "").includes("text/event-stream")) {
       return route.fallback();
     }
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "POST" && /\/dashboards\/[^/]+\/views$/.test(path)) {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && /\/dashboards\/[^/]+\/views$/.test(url.pathname)) {
       return route.fulfill({ status: 204 });
     }
     if (request.method() === "GET") {
       for (const [pattern, body] of Object.entries(frozen)) {
-        if (new RegExp(pattern).test(path)) {
+        if (new RegExp(pattern).test(`${url.pathname}${url.search}`)) {
           return route.fulfill({ json: shiftTimes(body, realNow) });
         }
       }
@@ -164,18 +174,20 @@ export async function settle(page: Page): Promise<void> {
 /**
  * Text that differs by machine or run, as regular expression sources: the run folder (data
  * directory, fixture paths), the server's address with its free port (link addresses), the
- * host name and ids the server makes up.
+ * host name, ids the server makes up (`extra`: those the seed read) and measured times ("10 ms":
+ * how long a query or a check took).
  */
 function dynamicText(extra: readonly string[]): string[] {
   const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const host = literal(hostname());
   return [
     ...extra.map((text) => `\\b${literal(text)}\\b`),
-    "kalzit-e2e[\\\\/]run-\\d+-\\d+",
+    "[\\\\/]run-\\d{10,}-\\d+[\\\\/]",
     "127\\.0\\.0\\.1:\\d{2,5}",
     "localhost:\\d{2,5}",
     "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
     ...(host.length >= 3 ? [`\\b${host}\\b`] : []),
+    "\\b\\d[\\d,.]*\\s?ms\\b",
   ];
 }
 

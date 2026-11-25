@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Page, Response } from "@playwright/test";
 import { Api } from "../support/api";
 import { createWorld, type World } from "../support/test";
 import { type Extras, seedExtras } from "../sweep/pages";
@@ -120,11 +120,41 @@ async function longWindowLink(
 }
 
 /**
+ * Opens a page and keeps the JSON answers of the requests `pattern` matches, keyed by their exact
+ * address (a regular expression source), for the screens to get the same answers later.
+ */
+async function recordAnswers(page: Page, path: string, pattern: RegExp): Promise<Frozen> {
+  const answers: Frozen = {};
+  const pending: Promise<void>[] = [];
+  const listener = (response: Response) => {
+    const url = new URL(response.url());
+    const address = `${url.pathname}${url.search}`;
+    if (response.request().method() === "GET" && pattern.test(address) && response.ok()) {
+      pending.push(
+        response.json().then((body: unknown) => {
+          answers[`^${address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`] = body;
+        }),
+      );
+    }
+  };
+  page.on("response", listener);
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  await Promise.all(pending);
+  page.off("response", listener);
+  if (Object.keys(answers).length === 0) {
+    throw new Error(`${path} asked nothing that matches ${pattern}`);
+  }
+  return answers;
+}
+
+/**
  * Seeds the server once after setup: the page checks' world and the sweep's extras (both with
- * fixed names), a documents source, a graph source and a recently viewed dashboard. `request`
+ * fixed names), a documents source, a graph source and a recently viewed dashboard. `page`
  * carries the owner's session.
  */
-export async function seedVisual(request: APIRequestContext): Promise<Seed> {
+export async function seedVisual(page: Page): Promise<Seed> {
+  const request = page.request;
   const world = await createWorld();
   const extras = await seedExtras(world);
   const owner = await Api.owner();
@@ -162,6 +192,9 @@ export async function seedVisual(request: APIRequestContext): Promise<Seed> {
     await request.get(`/api/orgs/${orgId}/explore/history`),
     "read the Explore history",
   );
+  // The usage counts grow with every dashboard and query the run opens: the page shows them as
+  // they are now, before any screen was taken.
+  const usage = await recordAnswers(page, "/admin/usage", /\/usage(\/unused)?\?/);
   const seed: Seed = {
     orgId,
     world,
@@ -169,7 +202,7 @@ export async function seedVisual(request: APIRequestContext): Promise<Seed> {
     documentsSourceId,
     graphSourceId,
     publicToken,
-    frozen: { "/explore/history$": history },
+    frozen: { "/explore/history(\\?|$)": history, ...usage },
     dynamic,
   };
   writeFileSync(SEED_FILE, JSON.stringify(seed, null, 2));

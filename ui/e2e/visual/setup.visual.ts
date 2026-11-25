@@ -121,7 +121,7 @@ test("the setup steps, then the seed for the screens", async ({ page, browser, c
   const tips = await page.request.patch("/api/me/preferences", { data: { showTips: false } });
   expect(tips.ok()).toBe(true);
   await page.context().storageState({ path: STATE_FILE });
-  await seedVisual(page.request);
+  await seedVisual(page);
   // What the pages wrote to the console is for the e2e tests to judge, not for this run.
   await consoleGuard.drain();
 });
