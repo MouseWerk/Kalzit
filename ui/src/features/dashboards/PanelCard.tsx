@@ -454,9 +454,16 @@ export function PanelCard({
       } else {
         next = start.grid;
       }
+      swallowClick();
       setDragging(null);
+      // A dragged panel is the selected one. Selected here, with the drop, not by the click the
+      // browser sends after the release: that click came while the drop's transition was still
+      // pending, so React drew the whole dashboard for it at once (one long task per drop,
+      // 52 to 68 ms at 4x CPU throttling).
+      const select = edit.selected ? undefined : edit.onSelect;
       if (key(next) === key(start.grid)) {
         card?.style.removeProperty("translate");
+        select?.();
         return;
       }
       // The card stands in its new cell in this frame (the drop's offset goes with it); the
@@ -464,7 +471,10 @@ export function PanelCard({
       // makes no long task and the panels it pushes move right after.
       placeAt(card, next);
       card?.style.removeProperty("translate");
-      startTransition(() => edit.onGrid(next, false));
+      startTransition(() => {
+        edit.onGrid(next, false);
+        select?.();
+      });
     };
     const cancel = () => finish(false);
     endPress.current = cancel;
@@ -828,6 +838,20 @@ async function saveImage(card: RefObject<HTMLElement | null>, title: string, fai
   } catch {
     showErrorToast(failed);
   }
+}
+
+/**
+ * Takes the click the browser sends right after a drag's release (on the card or the handle,
+ * where the press began): a drag is not a click. The click comes in the same task as the
+ * release, so the listener goes again at the next one if no click came.
+ */
+function swallowClick() {
+  const swallow = (click: MouseEvent) => {
+    click.stopPropagation();
+    click.preventDefault();
+  };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
 /** Puts the drag placeholder into a grid cell. */

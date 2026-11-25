@@ -1,8 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOCS_REF } from "../help/docs";
-import { GUIDE_SOURCES, HELP_PAGES, prepareGuide } from "../help/HelpPage";
-import { type Language, setLanguage } from "../i18n/i18n";
+import { GUIDE_SOURCES, once, prepareGuide } from "../help/HelpPage";
+import { setLanguage } from "../i18n/i18n";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { formatWait } from "./countdown";
@@ -827,28 +827,6 @@ describe("setup, step 3 and the finish", () => {
 });
 
 describe("help pages", () => {
-  // Every import() in Vitest asks the main process for the module, also for one that is already
-  // loaded, and with all workers busy that answer can take longer than a findBy waits. So the
-  // pages are loaded once here with the real loaders, like the catalogs in vitest.setup.ts, and
-  // each test gets them from memory; a test that makes a page fail replaces its loader again.
-  const pages = new Map<string, string>();
-  beforeAll(async () => {
-    for (const language of Object.keys(GUIDE_SOURCES) as Language[]) {
-      for (const name of HELP_PAGES) {
-        pages.set(`${language}/${name}`, await GUIDE_SOURCES[language][name]());
-      }
-    }
-  });
-  beforeEach(() => {
-    for (const language of Object.keys(GUIDE_SOURCES) as Language[]) {
-      for (const name of HELP_PAGES) {
-        vi.spyOn(GUIDE_SOURCES[language], name).mockResolvedValue(
-          pages.get(`${language}/${name}`) as string,
-        );
-      }
-    }
-  });
-
   it("serves getting started without an account, with links kept inside the app", async () => {
     const server = installFakeServer({ setupNeeded: true });
     renderApp("/help/getting-started");
@@ -940,6 +918,19 @@ describe("help pages", () => {
     } finally {
       failed.mockRestore();
     }
+  });
+
+  it("imports a guide page once and tries again after a failed load", async () => {
+    const load = vi
+      .fn<() => Promise<{ default: string }>>()
+      .mockRejectedValueOnce(new Error("Failed to fetch dynamically imported module"))
+      .mockResolvedValue({ default: "# Guide" });
+    const source = once(load);
+    await expect(source()).rejects.toThrow("Failed to fetch");
+    expect(await source()).toBe("# Guide");
+    expect(await source()).toBe("# Guide");
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(GUIDE_SOURCES.en.installation()).toBe(GUIDE_SOURCES.en.installation());
   });
 
   it("knows only the shipped pages", async () => {
