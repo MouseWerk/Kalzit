@@ -13,6 +13,7 @@
 - [ ] Authorization for new routes and resources is checked on the server.
 - [ ] New UI texts are in the English and German catalogs.
 - [ ] Visible UI changes: `npm run screenshots` was rerun and the changed images are committed.
+- [ ] Visual baselines (`ui/e2e/visual/baselines/`): changed only with `npm run visual:update` on Linux, and the reviewer looked at every changed image diff.
 - [ ] User-facing changes have a line in `docs/releases/v<version>.md` ("Improved" or "Fixed"), and a manual Windows check where needed.
 - [ ] Docs (`docs/ARCHITECTURE.md`, `docs/api/`) are updated when a contract changed.
 

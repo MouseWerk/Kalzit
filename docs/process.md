@@ -122,6 +122,41 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.
 
+## Visual comparison
+
+Every screen of the UI is photographed in light and dark at 360, 1280, 2560 and 3440 px wide
+and at 1280 px with twice the device scale, and compared pixel by pixel with an approved
+baseline (`ui/e2e/visual.config.ts`, pictures in `ui/e2e/visual/baselines/<width>/`). The
+screens are the pages of the UI sweep (`ui/e2e/sweep/pages.ts`, held against the router, so a
+new route is photographed too), the four setup steps and Explore with each result shape.
+
+- **Where it runs.** Linux with Chromium only: fonts are drawn differently on Windows and macOS,
+  so the baselines are Linux pictures and the comparison skips on other systems. It runs in the
+  Linux leg of the local CI (job `visual`) and in the Linux e2e job of `ci.yml`.
+- **Same pictures every run.** Its own server with a fresh data folder, seeded once with fixed
+  names; the fixture data lies around a fixed moment and the pages run on a clock fixed to it;
+  times the server stamps during the run are moved to that moment; counters that grow with the
+  run (page views of public links, recent dashboards, the Explore history) are held still;
+  animations, the caret and hover are off. What differs by machine (the run folder, the server's
+  port, the host name, ids the server makes up) is masked. Two runs on the same commit give no
+  difference.
+- **Threshold.** Per pixel, a color distance of 0.1 (YIQ, 0 to 1) counts as equal; one pixel
+  beyond it fails the screen. The threshold is not raised to get a run green; a failing
+  comparison is never accepted on its own.
+- **When it fails.** The run lists the screens that differ (console, `summary.md`, the job
+  summary on GitHub) and keeps expected, actual and diff pictures per screen: locally in
+  `ui/e2e/.output/visual-diffs/`, in the local CI in the run's log folder
+  (`linux-visual-diffs/`), on GitHub as the artifact `visual-diffs`. Look at the diff: an
+  unintended change is a bug to fix.
+- **Updating baselines.** Only on purpose, with `npm run visual:update` on Linux (WSL works),
+  or on GitHub with `gh workflow run visual.yml --ref <branch> -f update=true` and the artifact
+  `visual-baselines` unpacked into `ui/e2e/visual/baselines/`. It writes only the screens that
+  changed; a removed screen's files are deleted by hand (a test fails on baselines without a
+  screen). Commit the pictures with the change that caused them.
+- **Review.** The reviewer opens every changed baseline in the pull request (GitHub shows image
+  diffs side by side and as swipe) and checks that each change is the intended one. The pull
+  request template asks for it.
+
 ## Keeping things clean
 
 - One topic per branch and pull request. Unrelated findings become their own task.

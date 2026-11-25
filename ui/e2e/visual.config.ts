@@ -80,7 +80,10 @@ export default defineConfig({
       },
       expect: {
         timeout: 15_000,
-        toHaveScreenshot: { ...SCREENSHOT, scale: width.scale === 2 ? "device" : "css" },
+        toHaveScreenshot: {
+          ...SCREENSHOT,
+          scale: width.scale === 2 ? ("device" as const) : ("css" as const),
+        },
       },
     })),
   ],
