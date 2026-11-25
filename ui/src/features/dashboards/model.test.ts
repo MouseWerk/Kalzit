@@ -148,7 +148,7 @@ describe("model", () => {
     };
     expect(diffModels(before, after)).toEqual([
       { kind: "title", from: "Sales", to: "Revenue" },
-      { kind: "panelChanged", title: "a2" },
+      { kind: "panelChanged", title: "a2", parts: ["title"] },
       { kind: "panelAdded", title: "c" },
       { kind: "panelRemoved", title: "b" },
     ]);

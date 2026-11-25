@@ -454,6 +454,7 @@ linux-x64 = "bin/linux-x64/tool"
         let files: BTreeMap<String, Vec<u8>> = [
             ("bin/windows-x64/kalzit-csv-http.exe", b"w".to_vec()),
             ("bin/linux-x64/kalzit-csv-http", b"l".to_vec()),
+            ("bin/linux-arm64/kalzit-csv-http", b"a".to_vec()),
             ("README.md", read("csv-http/README.md")),
         ]
         .into_iter()

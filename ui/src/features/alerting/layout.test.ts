@@ -66,6 +66,17 @@ describe("alerting layout guards", () => {
     expect(value(".alert-state", "white-space")).toEqual(["nowrap"]);
   });
 
+  it("keeps room at 1024 px for a state line at its longest, whatever the clock says", () => {
+    // Times and counts in the state and evaluation cells use figures of one width.
+    expect(
+      value(".alert-rules :is(.alert-table__lead, .alert-rules__roomy)", "font-variant-numeric"),
+    ).toEqual(["tabular-nums"]);
+    // With the least room the name's column gives a step of its least width.
+    expect(value(".alert-rules__name", "min-width", TIGHT)).toEqual([
+      "calc(var(--size-field) - var(--space-8))",
+    ]);
+  });
+
   it("stacks the rows of a list as cards on a phone, each value with its column's name", () => {
     expect(value(".alert-table--stack tr", "display", NARROW)).toEqual(["grid"]);
     expect(value(".alert-table--stack td", "grid-column", NARROW)).toEqual(["1 / -1"]);

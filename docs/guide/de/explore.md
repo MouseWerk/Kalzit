@@ -161,6 +161,34 @@ zurück. Ein Ergebnis zeigt höchstens eine begrenzte Zahl von Dokumenten (**Bei
 abgeschnitten.**), und **Weitere Dokumente laden** holt die nächsten (MongoDB, Elasticsearch und
 OpenSearch, JSON- und NDJSON-Dateien).
 
+### Logs
+
+Logzeilen sind auch Dokumente: **Logs** ist eine Ansicht auf dieselben Dokumente, keine eigene
+Datenform und keine Umwandlung. Sie liest aus jedem Dokument eine Zeit, einen Text und einen Level
+und zeigt sie als Zeilen, die neuesten zuerst, mit dem **Volumen je Level** darüber. Ergebnisse von
+Loki öffnen in **Logs**, ebenso Treffer aus Elasticsearch und OpenSearch mit Zeit- und Textfeld.
+Andere Dokument-Quellen bieten den Reiter an, wenn sie ein Zeitfeld haben, und fragen einmal, welches
+Feld der Text ist. Unter **Felder** siehst und änderst du, welche Felder die Ansicht liest
+(**Zeitfeld**, **Textfeld**, **Level-Feld**; „Automatisch“ sagt, was gefunden wurde). Level sind ein
+Punkt und ein Wort: Kritisch, Fehler, Warnung, Info, Debug, Trace oder unbekannt.
+
+- **Volumen je Level** zählt den ganzen Zeitraum, wo die Quelle zählen kann: bei Loki führt Kalzit
+  neben den Zeilen eine Zählabfrage mit demselben Selektor und denselben Filtern aus, und
+  **Untersuchen** zeigt sie als zweite Abfrage. Sonst zählt es die geladenen Zeilen und sagt das.
+  Ein Klick auf einen Level zeigt nur ihn, Strg+Klick schaltet einen an oder aus; Ziehen über die
+  Balken wählt einen Zeitraum.
+- Die Leiste ändert nur die Ansicht: **Neueste zuerst** oder **Älteste zuerst**, **Zeit** (mit
+  Millisekunden, mit Datum, nur Uhrzeit, relativ oder ausgeblendet), **Umbruch**, **JSON
+  aufbereiten** und **Duplikate** (zeigen, Gleiche zusammenfassen, ohne Zahlen vergleichen, nach
+  Muster). Kalzit merkt sich deine Wahl in diesem Browser.
+- Ein Klick auf eine Zeile oder Eingabe öffnet ihre Details: die Labels der Quelle und die Felder,
+  die Kalzit aus der Zeile (JSON oder Schlüssel=Wert) oder dem Dokument liest. **Danach filtern**
+  und **Herausfiltern** ergänzen die Abfrage in ihrer eigenen Sprache und führen sie aus, etwa
+  `| host = "web-3"` in LogQL oder `AND host:"web-3"` in Lucene, so siehst du, wie es geschrieben
+  wird.
+- Eine Log-Abfrage lädt 1.000 Zeilen, wenn du keine andere Höchstzahl setzt, höchstens 5.000. Hat der
+  Zeitraum mehr, sagt die Liste **Hier endet die Liste, nicht die Daten.**
+
 ### Graphen
 
 Ein Ergebnis `graph` bleibt Knoten und Kanten: das Panel **Netzwerk**, **Hierarchie** oder

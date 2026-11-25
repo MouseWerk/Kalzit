@@ -751,10 +751,9 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
     assert_eq!(status_of(r, "panel 7 \"Orders per channel\""), ItemStatus::Converted);
 
     // Table: the organize step becomes a step that renames the columns, the overrides match the
-    // new names as in Grafana, cell displays and mappings carry over, the footer and the sort
-    // order are reported.
+    // new names as in Grafana, cell displays and mappings carry over, the footer becomes Kalzit's,
+    // the sort order is reported.
     let table = panel(m, "p8");
-    assert_eq!(table["options"], json!({ "columnFilters": true }));
     let steps = table["transformations"].as_array().unwrap();
     assert_eq!(steps.len(), 1, "{steps:?}");
     assert_eq!(steps[0]["type"], "organize");
@@ -762,6 +761,12 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
         steps[0]["rename"],
         json!({ "country": "Country", "customer": "Customer", "last_status": "Last order", "orders": "Orders",
                 "revenue": "Revenue", "segment": "Segment" })
+    );
+    assert_eq!(
+        table["options"],
+        json!({ "columnFilters": true, "footer": { "show": true, "over": "all", "columns": [
+            { "column": "Orders", "calc": "sum" }, { "column": "Revenue", "calc": "sum" }
+        ] } })
     );
     let overrides = table["fieldConfig"]["overrides"].as_array().unwrap();
     let column = |name: &str| {
@@ -789,7 +794,7 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
     assert!(customer["link"].as_str().unwrap().contains("c.name='${__value}'"), "{customer}");
     // The step names the other columns; they need no override.
     assert_eq!(overrides.len(), 3, "{overrides:?}");
-    assert_eq!(notes_of(r, "panel 8 \"Top customers\""), ["table_footer", "table_sort", "link_grafana_path"]);
+    assert_eq!(notes_of(r, "panel 8 \"Top customers\""), ["table_sort", "link_grafana_path"]);
 
     // Thresholds drawn as lines and areas; the transparent base step becomes neutral.
     let cpu = panel(m, "p9");
