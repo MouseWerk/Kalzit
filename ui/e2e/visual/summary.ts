@@ -42,7 +42,9 @@ export default class VisualSummary implements Reporter {
     const pictures = result.attachments.filter(
       (attachment) => attachment.path !== undefined && PICTURE.test(attachment.name),
     );
-    const message = (result.error?.message ?? result.status).split("\n")[0] ?? "";
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips terminal color codes
+    const plain = (result.error?.message ?? result.status).replace(/\u001b\[[0-9;]*m/g, "");
+    const message = plain.split("\n")[0] ?? "";
     const entry = { project, screen: test.title, files: [] as string[], message };
     for (const picture of pictures) {
       const source = picture.path ?? "";
@@ -51,7 +53,10 @@ export default class VisualSummary implements Reporter {
       copyFileSync(source, target);
       entry.files.push(join(project, basename(picture.name)).replaceAll("\\", "/"));
     }
-    (pictures.length > 0 ? this.differences : this.failures).push(entry);
+    // A screen differs when the comparison made a diff picture; anything else is a failure to
+    // reach the screen's state.
+    const differs = pictures.some((picture) => picture.name.endsWith("-diff.png"));
+    (differs ? this.differences : this.failures).push(entry);
   }
 
   onEnd(result: FullResult): void {

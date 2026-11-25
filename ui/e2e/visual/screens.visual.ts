@@ -7,6 +7,7 @@ import { readSeed, type Seed } from "./seed";
 import { dynamicRegions, STATE_FILE, settle, stageContext, stagePage } from "./stage";
 import {
   COMPARABLE,
+  HIDPI_SCREENS,
   NOT_COMPARABLE,
   SETUP_DONE,
   SETUP_STEPS,
@@ -41,16 +42,23 @@ async function shoot(screen: Screen, page: Page, seed: Seed) {
     throw new Error(`no width for the project ${test.info().project.name}`);
   }
   await stageContext(page.context(), seed.frozen);
-  await stagePage(page);
-  await screen.prepare?.(page);
-  for (const theme of THEMES) {
-    // A fresh load per theme: charts take their colors when they draw.
-    await page.emulateMedia({ colorScheme: theme });
-    await page.goto(screen.path(seed));
-    await screen.ready(page, seed, "en");
-    await settle(page);
-    await expect(page).toHaveScreenshot(shotName(width, screen.name, theme), {
-      mask: await dynamicRegions(page),
+  let tab = page;
+  for (const [index, theme] of THEMES.entries()) {
+    // A fresh page per theme: charts take their colors when they draw, and a page in edit mode
+    // would hold a navigation back with its question about unsaved changes.
+    if (index > 0) {
+      const next = await page.context().newPage();
+      await tab.close();
+      tab = next;
+    }
+    await stagePage(tab);
+    await screen.prepare?.(tab);
+    await tab.emulateMedia({ colorScheme: theme });
+    await tab.goto(screen.path(seed));
+    await screen.ready(tab, seed, "en");
+    await settle(tab);
+    await expect(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
+      mask: await dynamicRegions(tab, seed.dynamic),
     });
   }
 }
@@ -78,6 +86,9 @@ test.describe("signed out", () => {
 test("every screen has a file name of its own", () => {
   const names = SCREENS.map((screen) => slug(screen.name));
   expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
+  // The screens at twice the scale are screens of the list.
+  const known = new Set(SCREENS.map((screen) => screen.name));
+  expect(HIDPI_SCREENS.filter((name) => !known.has(name))).toEqual([]);
 });
 
 /**
@@ -91,7 +102,9 @@ test("every baseline of this width belongs to a screen", () => {
   }
   const dir = join(test.info().project.testDir, "baselines", width.name);
   const screens = [
-    ...SCREENS.map((screen) => screen.name),
+    ...SCREENS.map((screen) => screen.name).filter(
+      (name) => width.scale === 1 || HIDPI_SCREENS.includes(name),
+    ),
     ...SETUP_STEPS,
     ...(width.scale === 1 ? [SETUP_DONE] : []),
   ];

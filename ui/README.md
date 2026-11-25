@@ -19,7 +19,7 @@ and TanStack Query. No CSS framework, no component library, no web fonts. The pr
 | `npm run e2e`          | Playwright against the release binary; see "Testing contracts" in `docs/ARCHITECTURE.md`                      |
 | `npm run e2e:sweep`    | The UI sweep, on demand: every page per theme, language and width; see `docs/quality/ui-pass-2026-11.md`      |
 | `npm run screenshots`  | Regenerates the README images in `docs/screenshots/`; rerun it when a change is visible in the UI             |
-| `npm run visual`       | Visual comparison (Linux): every screen, light and dark, at 360, 1280, 2560, 3440 px and 1280 px at 2x       |
+| `npm run visual`       | Visual comparison (Linux): every screen, light and dark, at 360, 1280, 2560, 3440 px; 30 of them at 1280 px 2x |
 | `npm run visual:update` | Writes the baselines of the screens that changed, to commit; see "Visual comparison" in `docs/process.md`   |
 
 Node 26 or newer. Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI

@@ -15,7 +15,14 @@ export interface Seed {
   documentsSourceId: string;
   /** A Neo4j source; its answers come from the pages (no Neo4j runs beside the visual run). */
   graphSourceId: string;
+  /**
+   * A public link whose window reaches back to the fixed moment the pages show: the server checks
+   * a visitor's time range against its own clock, which is the real one.
+   */
+  publicToken: string;
   frozen: Frozen;
+  /** Text the server makes up anew in every run (the instance id), masked in the pictures. */
+  dynamic: string[];
 }
 
 export const DOCUMENTS_SOURCE = "Bestellungen (JSON)";
@@ -74,6 +81,44 @@ async function ruleEvaluated(request: APIRequestContext, orgId: string, ruleId: 
   throw new Error("the alert rule was not evaluated within 5 minutes");
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** The longest window the server allows (`sharing.max_expiry_days` at its maximum). */
+const LONGEST_DAYS = 3650;
+
+/**
+ * A public link to the dashboard whose window covers the fixed moment: the server checks the
+ * visitor's range against the real time, and the pages show a moment more than a year back. The
+ * longest window the server allows reaches ten years back, so this holds until mid-2035.
+ */
+async function longWindowLink(
+  request: APIRequestContext,
+  orgId: string,
+  dashboardId: string,
+): Promise<string> {
+  const settings = await ok<{ items: { key: string; version: number }[] }>(
+    await request.get("/api/admin/settings"),
+    "read the settings",
+  );
+  const version = settings.items.find((item) => item.key === "sharing.max_expiry_days")?.version;
+  await ok(
+    await request.patch("/api/admin/settings/sharing.max_expiry_days", {
+      data: { value: LONGEST_DAYS, version: version ?? 0 },
+    }),
+    "allow the longest window",
+  );
+  const link = await ok<{ token: string }>(
+    await request.post(`/api/orgs/${orgId}/dashboards/${dashboardId}/public-links`, {
+      data: {
+        maxWindowMs: LONGEST_DAYS * DAY_MS,
+        timeRange: { from: "now-6h", to: "now" },
+        variables: { region: "Nord" },
+      },
+    }),
+    "create the public link",
+  );
+  return link.token;
+}
+
 /**
  * Seeds the server once after setup: the page checks' world and the sweep's extras (both with
  * fixed names), a documents source, a graph source and a recently viewed dashboard. `request`
@@ -105,6 +150,12 @@ export async function seedVisual(request: APIRequestContext): Promise<Seed> {
   if (viewed.status() !== 204) {
     throw new Error(`record a view: HTTP ${viewed.status()}`);
   }
+  const publicToken = await longWindowLink(request, orgId, world.dashboardId);
+  const instances = await ok<{ items: { id: string }[] }>(
+    await request.get("/api/admin/instances"),
+    "read the instances",
+  );
+  const dynamic = instances.items.flatMap((instance) => [instance.id, instance.id.slice(0, 8)]);
   await ruleEvaluated(request, orgId, extras.ruleId);
   // Explore keeps what was run; the pages that run queries would add to it in any order.
   const history = await ok<unknown>(
@@ -117,7 +168,9 @@ export async function seedVisual(request: APIRequestContext): Promise<Seed> {
     extras,
     documentsSourceId,
     graphSourceId,
+    publicToken,
     frozen: { "/explore/history$": history },
+    dynamic,
   };
   writeFileSync(SEED_FILE, JSON.stringify(seed, null, 2));
   return seed;

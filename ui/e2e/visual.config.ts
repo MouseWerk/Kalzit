@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { VISUAL_NOW } from "./visual/stage";
-import { WIDTHS } from "./visual/variants";
+import { screensAt, WIDTHS } from "./visual/variants";
 
 /**
  * The visual comparison (`npm run visual`): every screen in light and dark at each width of
@@ -73,6 +73,7 @@ export default defineConfig({
       name: width.name,
       dependencies: ["setup"],
       testMatch: /screens\.visual\.ts$/,
+      grep: screensAt(width),
       use: {
         viewport: { width: width.width, height: width.height },
         deviceScaleFactor: width.scale,

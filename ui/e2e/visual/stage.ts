@@ -166,9 +166,11 @@ export async function settle(page: Page): Promise<void> {
  * directory, fixture paths), the server's address with its free port (link addresses), the
  * host name and ids the server makes up.
  */
-function dynamicText(): string[] {
-  const host = hostname().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function dynamicText(extra: readonly string[]): string[] {
+  const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const host = literal(hostname());
   return [
+    ...extra.map((text) => `\\b${literal(text)}\\b`),
     "kalzit-e2e[\\\\/]run-\\d+-\\d+",
     "127\\.0\\.0\\.1:\\d{2,5}",
     "localhost:\\d{2,5}",
@@ -184,7 +186,10 @@ const MASK = "data-visual-mask";
  * Marks the smallest elements whose text, value or title holds machine- or run-dependent text and
  * answers a locator for them, for the comparison's `mask` option.
  */
-export async function dynamicRegions(page: Page): Promise<Locator[]> {
+export async function dynamicRegions(
+  page: Page,
+  extra: readonly string[] = [],
+): Promise<Locator[]> {
   await page.evaluate(
     ({ sources, attribute }) => {
       const patterns = sources.map((source) => new RegExp(source, "i"));
@@ -205,7 +210,7 @@ export async function dynamicRegions(page: Page): Promise<Locator[]> {
         }
       }
     },
-    { sources: dynamicText(), attribute: MASK },
+    { sources: dynamicText(extra), attribute: MASK },
   );
   return [page.locator(`[${MASK}]`)];
 }

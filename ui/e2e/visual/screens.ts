@@ -29,11 +29,12 @@ const fromSweep = (page: SweepPage): Screen => ({
 });
 
 /**
- * Pages whose sweep state changes the server: the sweep makes a new report on each visit of the
- * reports list, which would add a row to every later picture. Here the list shows the report the
- * setup made.
+ * Pages that need another state here. The sweep makes a new report on each visit of the reports
+ * list, which would add a row to every later picture; here the list shows the report the setup
+ * made. The public dashboard opens the link whose window reaches the fixed moment (seed.ts).
  */
 const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
+  "public dashboard": { path: (seed) => `/public/dashboards/${seed.publicToken}` },
   reports: {
     ready: async (page, _seed, language) => {
       await expect(

@@ -125,7 +125,8 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
 ## Visual comparison
 
 Every screen of the UI is photographed in light and dark at 360, 1280, 2560 and 3440 px wide
-and at 1280 px with twice the device scale, and compared pixel by pixel with an approved
+(30 screens, one or two of each area, also at 1280 px with twice the device scale:
+`HIDPI_SCREENS` in `ui/e2e/visual/variants.ts`), and compared pixel by pixel with an approved
 baseline (`ui/e2e/visual.config.ts`, pictures in `ui/e2e/visual/baselines/<width>/`). The
 screens are the pages of the UI sweep (`ui/e2e/sweep/pages.ts`, held against the router, so a
 new route is photographed too), the four setup steps and Explore with each result shape.

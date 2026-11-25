@@ -32,6 +32,53 @@ export const THEMES = ["light", "dark"] as const;
 export type Theme = (typeof THEMES)[number];
 
 /**
+ * The screens also taken at twice the device scale: one or two of each area, enough to see that
+ * icons, hairlines and text stay sharp on a HiDPI screen. All screens at 2x would double the size
+ * of the baselines for little more (a screen at 2x shows what it shows at 1x, only sharper).
+ */
+export const HIDPI_SCREENS: readonly string[] = [
+  "home",
+  "dashboards",
+  "dashboard",
+  "panel editor",
+  "dashboard time picker",
+  "share dialog",
+  "explore result",
+  "explore documents",
+  "explore graph",
+  "trace waterfall",
+  "data sources",
+  "data source",
+  "alert rules",
+  "alert rule",
+  "contact points",
+  "reports",
+  "members",
+  "roles",
+  "administration",
+  "plugins",
+  "general settings",
+  "account",
+  "usage",
+  "sign in",
+  "local sign in",
+  "public dashboard",
+  "public snapshot",
+  "public link unavailable",
+  "page not found",
+  "help: getting started",
+];
+
+/** The tests of a width project: at twice the scale only the screens above. */
+export function screensAt(width: Width): RegExp {
+  if (width.scale === 1) {
+    return /.*/;
+  }
+  const names = HIDPI_SCREENS.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`signed (in|out) (${names.join("|")})$|every (screen|baseline)`);
+}
+
+/**
  * The setup steps setup.visual.ts takes. The last one exists only once, after the setup is made,
  * so it has no picture at twice the device scale (that page cannot be made a second time).
  */
