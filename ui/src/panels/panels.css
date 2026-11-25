@@ -673,6 +673,55 @@
     background: transparent;
   }
 
+  /* The footer: one calculation per column, standing at the bottom while the rows scroll. */
+  .vt__foot {
+    position: sticky;
+    inset-block-end: 0;
+    z-index: var(--z-sticky);
+    height: var(--vt-row-height);
+    padding: 0 var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+    font-weight: var(--font-weight-semibold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .vt__table--columns tr > .vt__foot.vt__foot:first-child {
+    z-index: var(--z-sticky-corner);
+  }
+
+  .vt__foot-label {
+    margin-inline-end: var(--space-1);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /* The footer's calculation per column in the editor: the column's name, then its choice. */
+  .table-footer-editor {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .table-footer-editor__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .vt__footnote {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
   /* An option written as its own markup adds no box of its own. */
   .option-field {
     display: contents;

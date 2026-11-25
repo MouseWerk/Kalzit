@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type {
   DocumentSet,
   FieldDistribution,
+  FieldType,
   Frame,
   GraphSet,
   QueryResult,
@@ -173,4 +174,15 @@ export interface PanelEditorProps<Options> {
    * (a graph panel's colors). Absent where there is no preview.
    */
   graphLabels?: readonly { label: string; count: number }[];
+  /**
+   * The columns of the preview's tables after the steps, by shown name, for options set per
+   * column (the table footer). Absent where there is no preview.
+   */
+  tableColumns?: readonly TableColumn[];
+}
+
+/** One column the panel shows: its shown name and its type. */
+export interface TableColumn {
+  name: string;
+  type: FieldType;
 }
