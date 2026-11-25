@@ -854,12 +854,16 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
     }
     assert_eq!(m["variables"][2]["options"], json!(["web-1", "web-2", "api-1", "api-2", "db-1"]));
     assert_eq!(status_of(r, "variable bucket"), ItemStatus::Converted);
-    assert_eq!(status_of(r, "variable job"), ItemStatus::Skipped);
+    // Grafana's label_values(...) becomes a Prometheus helper.
+    assert_eq!(status_of(r, "variable job"), ItemStatus::Converted);
+    let job = m["variables"].as_array().unwrap().iter().find(|v| v["name"] == "job").unwrap();
+    assert_eq!(job["query"], json!({ "helper": "labelValues", "label": "job", "metric": "up" }), "{job}");
 
     // No panel fell back to its defaults, and no raw Grafana unit is left anywhere.
     assert!(r.items.iter().all(|i| i.notes.iter().all(|n| !n.code.starts_with("options_default"))), "{:#?}", r.items);
     assert!(!m.to_string().contains("currencyEUR"));
-    assert_eq!(r.counts.skipped, 2, "{:#?}", r.items);
+    // Only panel 16 is skipped; the job variable is a helper now.
+    assert_eq!(r.counts.skipped, 1, "{:#?}", r.items);
     assert_eq!(r.counts.converted + r.counts.approximated + r.counts.skipped, r.items.len() as u32);
 }
 

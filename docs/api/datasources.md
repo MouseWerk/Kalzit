@@ -2837,6 +2837,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
 | `prometheus.result_type` | `type` | an unexpected result type |
+| `prometheus.helper_label` | `name` | a helper's `label` is no label name |
+| `prometheus.helper_metric` | `name` | a helper's `metric` is no metric name |
+| `prometheus.helper_filter` | | a helper's `filter` holds brackets, braces, parentheses, `#` or `or` outside its strings |
 | `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
 | `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |

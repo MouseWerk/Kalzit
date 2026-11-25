@@ -373,7 +373,11 @@ describe("the bar", () => {
       screen.getByRole("button", { name: "Remove filter: region does not equal West" }),
     );
     await waitFor(() => expect(sentFilters(server)).toEqual([]));
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add filter" }));
+    // The focus moves in the next animation frame (AdhocFilters.tsx), which may come after the
+    // query went out.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add filter" })),
+    );
   });
 
   it("refuses a filter without a field and closes on Escape without a change", async () => {
