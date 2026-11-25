@@ -516,6 +516,10 @@ export function footerText(
             total: total.toLocaleString(language),
           })
         : value.toLocaleString(language);
+    case "plain":
+      return value.toLocaleString(language, {
+        maximumFractionDigits: column.options.decimals ?? 2,
+      });
     case "percent":
       return new Intl.NumberFormat(language, {
         style: "percent",
@@ -566,9 +570,11 @@ function FrameTable({
   const footer = options.footer;
   const allRows = rowCount(frame);
   // The footer reads the rows in the answer's order: all of them, or those the filters keep.
+  // With no filter typed, "only filtered rows" are all rows, and the note says so.
+  const filtering = footer.over === "filtered" && filters.some((f) => f !== null);
   const footerRows = !footer.show
     ? null
-    : footer.over === "filtered" && filters.some((f) => f !== null)
+    : filtering
       ? filterRows(frame, sortedRows(frame, null), filters)
       : sortedRows(frame, null);
   const footerTexts =
@@ -586,7 +592,7 @@ function FrameTable({
       ? null
       : frame.meta?.rowsTruncated === true
         ? t("panels.table.footer.overLoaded", { count: allRows.toLocaleString(language) })
-        : footer.over === "filtered"
+        : filtering
           ? t("panels.table.footer.overFiltered", {
               count: footerRows.length.toLocaleString(language),
               total: allRows.toLocaleString(language),

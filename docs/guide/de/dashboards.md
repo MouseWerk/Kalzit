@@ -73,7 +73,7 @@ Markierung **Bearbeiten**, und die Werkzeugzeile zeigt **Einstellungen**, **Bear
   des Dashboards speichern** und **Aktuelle Variablenwerte als Standard speichern** an. Ohne
   Haken bleiben die gespeicherten Standardwerte. **Als Kopie speichern…** lässt das gespeicherte
   Dashboard, wie es ist, und macht aus deinen Änderungen ein neues.
-- **Bearbeiten beenden** mit ungespeicherten Änderungen fragt, ob du **Speichern…**,
+- **Bearbeiten beenden** mit ungespeicherten Änderungen fragt, ob du **Speichern**,
   **Verwerfen** oder weiter bearbeiten willst. Hat inzwischen jemand anderes gespeichert,
   vergleicht ein Konfliktdialog **Deine Änderungen** mit **Inzwischen von anderen gespeichert**;
   du kannst weiter bearbeiten, deine verwerfen und die andere Version öffnen, **Meine als Kopie

@@ -5,9 +5,7 @@
   ones. It stays in place while you scroll and always says what it calculates over. Imported
   Grafana tables keep their footer.
 - Saving a dashboard shows what changed, in words (with which parts of a panel) or line by line
-  as JSON, and offers "Save as copy". After saving you stay in edit mode, so "Finish editing"
-  stays where it was.
-- "Finish editing" with unsaved changes now offers to save them, besides discarding them.
+  as JSON, and offers "Save as copy".
 - When someone else saved in the meantime, the conflict dialog can also save your changes as a
   copy, so both versions stay.
 - Panels have query options above their queries: the maximum data points, the smallest interval

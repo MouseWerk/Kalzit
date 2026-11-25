@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Field, Frame } from "../../api/generated/shapes";
+import type { FieldConfig } from "../fieldConfig/fieldConfig";
 import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import {
@@ -154,7 +155,7 @@ const frame: Frame = {
   ],
 };
 
-function renderTable(options: unknown) {
+function renderTable(options: unknown, fieldConfig?: FieldConfig) {
   const plugin = getPanel("table") as AnyPanelPlugin;
   const { Panel } = plugin;
   return render(
@@ -164,6 +165,7 @@ function renderTable(options: unknown) {
         options={plugin.options(options)}
         timeRange={{ from: 0, to: 1 }}
         title="Top-Kunden"
+        {...(fieldConfig === undefined ? {} : { fieldConfig })}
       />
     </div>,
   );
@@ -197,10 +199,31 @@ describe("the table footer", () => {
       columnFilters: true,
       footer: { show: true, over: "filtered", numbers: "sum", columns: [] },
     });
+    // No filter typed yet: all rows, and the note says so.
+    expect(screen.getByText("Footer over all 4 rows")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Filter Umsatz"), { target: { value: ">30000" } });
     const foot = container.querySelector("tfoot") as HTMLElement;
     expect(within(foot).getAllByRole("cell")[1]?.textContent).toBe("Total80,155");
     expect(screen.getByText("Footer over the 2 filtered of 4 rows")).toBeTruthy();
+  });
+
+  it("shows the variance without the column's unit, which would be its square", () => {
+    const { container } = renderTable(
+      {
+        footer: {
+          show: true,
+          columns: [
+            { column: "Umsatz", calc: "variance" },
+            { column: "Bestellungen", calc: "sum" },
+          ],
+        },
+      },
+      { defaults: { unit: "kg" }, overrides: [] },
+    );
+    const cells = within(container.querySelector("tfoot") as HTMLElement).getAllByRole("cell");
+    expect(cells[1]?.textContent).toMatch(/^Variance[\d,.]+$/);
+    // A sum keeps the unit.
+    expect(cells[2]?.textContent).toContain("kg");
   });
 
   it("is absent while off", () => {

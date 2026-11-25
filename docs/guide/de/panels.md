@@ -156,8 +156,10 @@ etwa **Summe**, **Mittel**, **Anzahl** (als „4 von 2.000 Zeilen“), **Min**, 
 Spalte** setzt oder ändert sie für eine Spalte. **Rechnet über** alle Zeilen der Abfrage oder nur
 die Zeilen, die die Spaltenfilter behalten; eine Zeile unter der Tabelle sagt immer, worüber,
 und „über die geladenen N Zeilen“, wenn das Zeilenlimit der Abfrage die Antwort gekürzt hat.
-Summe, Mittel und Perzentile tragen die Einheit der Spalte; Anzahlen sind reine Zahlen.
-Importierte Grafana-Tabellen behalten die erste Rechnung ihrer Fußzeile.
+Summe, Mittel und Perzentile tragen die Einheit der Spalte; Anzahlen und die Varianz sind reine
+Zahlen. Importierte Grafana-Tabellen behalten die erste Rechnung ihrer Fußzeile; wo Grafana anders
+rechnet (seine Differenz für Zähler, die Streuung der Grundgesamtheit, eine Zeilenzahl), sagt es
+der Import-Bericht.
 
 ## Kreisdiagramm
 

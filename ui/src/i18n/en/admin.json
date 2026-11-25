@@ -476,6 +476,7 @@
   "admin.auditAction.dashboard.created": "Dashboard created",
   "admin.auditAction.dashboard.saved": "Dashboard saved",
   "admin.auditAction.dashboard.version_restored": "Dashboard version restored",
+  "admin.auditAction.dashboard.units_corrected": "Dashboard units taken over from Grafana",
   "admin.auditAction.dashboard.trashed": "Dashboard moved to the trash",
   "admin.auditAction.dashboard.restored": "Dashboard restored",
   "admin.auditAction.dashboard.purged": "Dashboard deleted for good",

@@ -12,8 +12,10 @@ import {
   placePanel,
   readingOrder,
   refIdAt,
+  type VariableModel,
 } from "./model";
 import { createLimiter } from "./queryQueue";
+import { initialVariables } from "./Variables";
 
 function panel(id: string, x: number, y: number, w = 12, h = 8): PanelModel {
   return {
@@ -55,6 +57,25 @@ describe("grid layout", () => {
 });
 
 describe("model", () => {
+  it("keeps a variable that starts with every value picked, only with several values", () => {
+    const model = parseModel(
+      {
+        variables: [
+          { name: "host", type: "custom", multi: true, allByDefault: true, options: ["a", "b"] },
+          { name: "one", type: "custom", allByDefault: true, options: ["x", "y"] },
+        ],
+      },
+      "",
+    );
+    const [host, one] = model.variables as [VariableModel, VariableModel];
+    expect(host.allByDefault).toBe(true);
+    expect(cleanVariable(one).allByDefault).toBeUndefined();
+    expect(cleanVariable({ ...host, multi: false }).allByDefault).toBeUndefined();
+    // Without a stored value it starts with all of them; a stored value wins.
+    expect(initialVariables(model.variables)).toEqual({ host: ["a", "b"], one: "x" });
+    expect(initialVariables([{ ...host, current: ["b"] }])).toEqual({ host: ["b"] });
+  });
+
   it("names targets A to Z, then AA, and fills gaps", () => {
     expect([0, 1, 25, 26, 27].map(refIdAt)).toEqual(["A", "B", "Z", "AA", "AB"]);
     const targets = [

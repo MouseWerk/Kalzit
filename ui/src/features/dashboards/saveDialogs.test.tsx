@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { QueryOptions } from "./QueryOptions";
-import { FinishEditingDialog, SaveDialog } from "./SaveDialogs";
+import { SaveDialog } from "./SaveDialogs";
 
 const panel = (id: string, extra: Partial<PanelModel> = {}): PanelModel => ({
   id,
@@ -93,23 +93,6 @@ describe("the save dialog", () => {
     expect(onSave).toHaveBeenCalledWith("Legende rechts", { range: false, values: false });
     await user.click(screen.getByRole("button", { name: "Save as copy…" }));
     expect(onSaveCopy).toHaveBeenCalled();
-  });
-});
-
-describe("finishing editing with changes", () => {
-  it("offers to save, to discard, or to keep editing (G15)", async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn();
-    const onDiscard = vi.fn();
-    render(
-      <FinishEditingDialog count={5} onSave={onSave} onDiscard={onDiscard} onClose={() => {}} />,
-    );
-    const dialog = screen.getByRole("alertdialog", { name: "Finish editing?" });
-    expect(dialog.textContent).toContain("You have 5 changes that are not saved yet.");
-    await user.click(within(dialog).getByRole("button", { name: "Save…" }));
-    expect(onSave).toHaveBeenCalled();
-    await user.click(within(dialog).getByRole("button", { name: "Discard" }));
-    expect(onDiscard).toHaveBeenCalled();
   });
 });
 

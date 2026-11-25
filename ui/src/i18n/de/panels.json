@@ -94,6 +94,7 @@
   "panels.unit.auto": "Von der Datenquelle",
   "panels.unit.custom": "Eigenes Suffix…",
   "panels.unit.customText": "Suffix",
+  "panels.unit.unknown": "Unbekannte Einheit: {unit} (wird nicht angezeigt)",
   "panels.unitGroup.misc": "Allgemein",
   "panels.unitGroup.data": "Datenmengen",
   "panels.unitGroup.rate": "Raten",

@@ -126,6 +126,11 @@ interface PanelEditorProps {
   refresh?: number;
   /** The dashboard's time range and refresh controls, shown in the editor's bar. */
   toolbar?: ReactNode;
+  /**
+   * The dashboard's variable bar, above the preview: a value chosen here is the dashboard's
+   * value too, and the preview runs with it.
+   */
+  variablesBar?: ReactNode;
   range: TimeRange;
   variables: VariableValues;
   /** The panel as saved, absent for a new one; unchanged targets preview through its route. */
@@ -185,6 +190,7 @@ export function PanelEditor({
   original,
   refresh = 0,
   toolbar,
+  variablesBar,
   range,
   variables,
   stored,
@@ -926,6 +932,9 @@ export function PanelEditor({
           </button>
         </div>
       </div>
+      {variablesBar === undefined || variablesBar === null ? null : (
+        <div className="panel-editor__variables">{variablesBar}</div>
+      )}
       {blocked ? (
         <p className="field__error" id={`${titleId}-blocked`}>
           {t("documents.projection.blocked")}

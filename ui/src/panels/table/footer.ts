@@ -72,8 +72,11 @@ export function calcFits(calc: FooterCalc, type: FieldType): boolean {
   return ANY_TYPE.has(calc) || isNumeric(type);
 }
 
-/** What a result is: in the column's unit, a plain count, a percentage, or one of its cells. */
-export type CalcResultKind = "value" | "count" | "percent" | "cell";
+/**
+ * What a result is: in the column's unit, a count, a plain number without the unit (variance),
+ * a percentage, or one of its cells.
+ */
+export type CalcResultKind = "value" | "count" | "plain" | "percent" | "cell";
 
 export function calcResultKind(calc: FooterCalc): CalcResultKind {
   switch (calc) {
@@ -83,6 +86,9 @@ export function calcResultKind(calc: FooterCalc): CalcResultKind {
       return "count";
     case "deltaPercent":
       return "percent";
+    // In the square of the column's unit, which no unit option names: a plain number.
+    case "variance":
+      return "plain";
     case "first":
     case "last":
     case "firstRow":

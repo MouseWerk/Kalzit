@@ -146,8 +146,9 @@ row** do not). **All number columns** sets one calculation for every number colu
 column** sets or overrides it for a column. **Calculates over** all rows of the query or only the
 rows the column filters keep; a line under the table always says which, and "over the N rows
 loaded" when the query's row limit cut the answer. Sums, means and percentiles carry the
-column's unit; counts are plain numbers. Imported Grafana tables keep their footer's first
-calculation.
+column's unit; counts and the variance are plain numbers. Imported Grafana tables keep their
+footer's first calculation; where Grafana calculates differently (its counter-aware delta, the
+population spread, a row count), the import report says so.
 
 ## Pie chart
 

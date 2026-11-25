@@ -140,6 +140,8 @@ export interface VariableModel {
   current?: unknown;
   /** Several values at once (custom and query variables); repeats need it. */
   multi?: boolean;
+  /** Without a stored value, a multi-value variable starts with every option picked. */
+  allByDefault?: boolean;
   /**
    * `query`: how options come from a graph or documents result (without it, from a table's first
    * column). The explicit projection the server applies too (`routes/query.rs`, `options_from`).
@@ -505,6 +507,9 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.multi === true) {
     variable.multi = true;
   }
+  if (value.allByDefault === true) {
+    variable.allByDefault = true;
+  }
   const valuesFrom = parseValuesFrom(value.valuesFrom);
   if (valuesFrom !== null) {
     variable.valuesFrom = valuesFrom;
@@ -527,6 +532,7 @@ export function cleanVariable(variable: VariableModel): VariableModel {
   if (clean.multi !== true || (clean.type !== "custom" && clean.type !== "query")) {
     delete clean.multi;
   }
+  if (clean.multi !== true || clean.allByDefault !== true) delete clean.allByDefault;
   if (clean.type !== "query" || clean.valuesFrom === undefined) delete clean.valuesFrom;
   return clean;
 }

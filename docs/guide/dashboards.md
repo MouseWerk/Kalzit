@@ -68,7 +68,7 @@ toolbar shows **Settings**, **Finish editing** (it asks first when something cha
   current time range as the dashboard's default** and **Save the current variable values as
   defaults**. Unticked, the saved defaults stay. **Save as copy...** keeps the saved dashboard as
   it is and makes a new one of your changes.
-- **Finish editing** with unsaved changes asks whether to **Save...**, **Discard** them or keep
+- **Finish editing** with unsaved changes asks whether to **Save**, **Discard** them or keep
   editing. If someone else saved in the meantime, a conflict dialog compares **Your changes** with
   **Saved by others in the meantime**; you can keep editing, discard yours and open theirs,
   **Save mine as a copy...** (both stay), or **Save mine as the newest version**.

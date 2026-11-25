@@ -129,10 +129,10 @@ test("finishing editing with changes offers to save them", async ({ page, world 
   await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
 
   await page.getByRole("button", { name: t("dashboards.doneEditing") }).click();
-  const ask = page.getByRole("alertdialog", { name: t("dashboards.finish.title") });
-  await expect(ask).toContainText(t("dashboards.finish.textOne"));
+  const ask = page.getByRole("dialog", { name: t("dashboards.finish.title") });
+  await expect(ask).toContainText(t("dashboards.finish.text"));
   expect(await seriousViolations(page)).toEqual([]);
-  await ask.getByRole("button", { name: t("dashboards.finish.save") }).click();
+  await ask.getByRole("button", { name: t("dashboards.finish.save"), exact: true }).click();
   const dialog = page.getByRole("dialog", { name: t("dashboards.save.title") });
   await dialog.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
   await expect(dialog).toBeHidden();
