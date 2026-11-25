@@ -142,8 +142,8 @@ skip or weaken a test.
   runs next to M8). M11: multi-model sources (ArangoDB mixed shapes, SurrealDB, PostgreSQL with
   Apache AGE) and a built-in file data store on top of the file source (upload of CSV, JSON,
   NDJSON, GraphML; offline; Kalzit's own data, queries read-only); no own database engine. Full
-  Zabbix support also comes in M11 (owner decision 2026-11-25): metrics, problems, hosts and maps
-  through the read-only Zabbix API, in their native shapes.
+  Zabbix support also comes in M11 (owner decision 2026-11-25): metrics, problems, events, hosts
+  and maps through the read-only Zabbix API, in their native shapes.
 - Owner goal across milestones: beginners grow into power users (tips, contextual help, guides,
   plain-language errors, the query behind no-code steps), calm and dismissible.
 
