@@ -81,6 +81,23 @@ async function ruleEvaluated(request: APIRequestContext, orgId: string, ruleId: 
   throw new Error("the alert rule was not evaluated within 5 minutes");
 }
 
+/** Waits until the server wrote its first usage counts (`since` is the oldest written one). */
+async function usageWritten(request: APIRequestContext, orgId: string) {
+  const deadline = Date.now() + 2 * 60_000;
+  while (Date.now() < deadline) {
+    const now = Date.now();
+    const usage = await ok<{ since: number | null }>(
+      await request.get(`/api/orgs/${orgId}/usage?from=${now - 7 * DAY_MS}&to=${now}`),
+      "read the usage",
+    );
+    if (usage.since !== null) {
+      return;
+    }
+    await new Promise((done) => setTimeout(done, 1000));
+  }
+  throw new Error("the server wrote no usage counts within 2 minutes");
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The longest window the server allows (`sharing.max_expiry_days` at its maximum). */
 const LONGEST_DAYS = 3650;
@@ -213,7 +230,9 @@ export async function seedVisual(page: Page): Promise<Seed> {
     "read the Explore history",
   );
   // The usage counts grow with every dashboard and query the run opens: the page shows them as
-  // they are now, before any screen was taken.
+  // they are now, before any screen was taken, once the server wrote the view above (it writes
+  // its counts every 15 s; before that the page has no "recorded since").
+  await usageWritten(request, orgId);
   const usage = await recordAnswers(page, "/admin/usage", /\/usage(\/unused)?\?/);
   const seed: Seed = {
     orgId,

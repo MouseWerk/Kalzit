@@ -6,21 +6,21 @@ and TanStack Query. No CSS framework, no component library, no web fonts. The pr
 
 ## Scripts
 
-| Command                | What it does                                                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`          | Dev server with hot reload; proxies `/api`, `/healthz` and `/readyz` to the server on `http://127.0.0.1:3000` |
-| `npm run build`        | Typecheck, then production build to `dist/`                                                                   |
-| `npm run typecheck`    | TypeScript, strict                                                                                            |
-| `npm run lint`         | Biome lint, warnings fail                                                                                     |
-| `npm run format`       | Biome format, writes changes                                                                                  |
-| `npm run format:check` | Biome format, checks only                                                                                     |
-| `npm run check`        | Biome lint, format and import order together                                                                  |
-| `npm test`             | Vitest: unit, component and guard tests                                                                       |
-| `npm run e2e`          | Playwright against the release binary; see "Testing contracts" in `docs/ARCHITECTURE.md`                      |
-| `npm run e2e:sweep`    | The UI sweep, on demand: every page per theme, language and width; see `docs/quality/ui-pass-2026-11.md`      |
-| `npm run screenshots`  | Regenerates the README images in `docs/screenshots/`; rerun it when a change is visible in the UI             |
-| `npm run visual`       | Visual comparison against the baselines in `MouseWerk/kalzit-visual` (commit in `e2e/visual/baselines.lock`): every screen, light and dark, at 360, 1280, 2560, 3440 px, 30 of them also at 1280 px 2x. Linux only: elsewhere every test skips |
-| `npm run visual:update` | Writes the baselines of the screens that changed into a checkout of `kalzit-visual` (`KALZIT_VISUAL_BASELINES`), for a pull request there and a lock bump here; see "Visual comparison" in `docs/process.md` |
+| Command                 | What it does                                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`           | Dev server with hot reload; proxies `/api`, `/healthz` and `/readyz` to the server on `http://127.0.0.1:3000`                                                                                                                                  |
+| `npm run build`         | Typecheck, then production build to `dist/`                                                                                                                                                                                                    |
+| `npm run typecheck`     | TypeScript, strict                                                                                                                                                                                                                             |
+| `npm run lint`          | Biome lint, warnings fail                                                                                                                                                                                                                      |
+| `npm run format`        | Biome format, writes changes                                                                                                                                                                                                                   |
+| `npm run format:check`  | Biome format, checks only                                                                                                                                                                                                                      |
+| `npm run check`         | Biome lint, format and import order together                                                                                                                                                                                                   |
+| `npm test`              | Vitest: unit, component and guard tests                                                                                                                                                                                                        |
+| `npm run e2e`           | Playwright against the release binary; see "Testing contracts" in `docs/ARCHITECTURE.md`                                                                                                                                                       |
+| `npm run e2e:sweep`     | The UI sweep, on demand: every page per theme, language and width; see `docs/quality/ui-pass-2026-11.md`                                                                                                                                       |
+| `npm run screenshots`   | Regenerates the README images in `docs/screenshots/`; rerun it when a change is visible in the UI                                                                                                                                              |
+| `npm run visual`        | Visual comparison against the baselines in `MouseWerk/kalzit-visual` (commit in `e2e/visual/baselines.lock`): every screen, light and dark, at 360, 1280, 2560, 3440 px, 30 of them also at 1280 px 2x. Linux only: elsewhere every test skips |
+| `npm run visual:update` | Writes the baselines of the screens that changed into a checkout of `kalzit-visual` (`KALZIT_VISUAL_BASELINES`), for a pull request there and a lock bump here; see "Visual comparison" in `docs/process.md`                                   |
 
 Node 26 or newer. Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI
 opens the setup page; the setup code is in `setup-token.txt` in the server's data folder.
