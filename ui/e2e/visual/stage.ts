@@ -170,6 +170,13 @@ export async function settle(page: Page): Promise<void> {
         done();
       }
     });
+    // Whole pixels for every scroll position: a page scrolled to a fraction of a pixel (a result
+    // scrolled into view) drew fixed and sticky parts a pixel apart from run to run.
+    for (const element of [document.scrollingElement, ...document.querySelectorAll("*")]) {
+      if (element !== null && (element.scrollTop % 1 !== 0 || element.scrollLeft % 1 !== 0)) {
+        element.scrollTo(Math.round(element.scrollLeft), Math.round(element.scrollTop));
+      }
+    }
   });
   // No hover state and no tooltip from where the pointer happened to be.
   await page.mouse.move(0, 0);
