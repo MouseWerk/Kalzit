@@ -5,7 +5,6 @@ import { useI18n } from "../../i18n/i18n";
 import { EMPTY_FIELD_CONFIG, type Tone, toneClass, toneOf } from "../fieldConfig/fieldConfig";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { timeField, toNumber } from "../frame";
-import { rootRem } from "../measure";
 import { StatPreview } from "../picker/previews";
 import { reduceFrames, toneName } from "../reduce";
 import { EmptyPanel, emptyReason, SelectField } from "../shared";
@@ -144,10 +143,11 @@ export function statLayout(count: number, width: number, height: number, rem = 1
 function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelProps<StatOptions>) {
   const { t, language, timeZone } = useI18n();
   const listRef = useRef<HTMLUListElement>(null);
-  const { width, height } = useElementSize(listRef);
+  // The root font size comes with the measured size, never read while rendering (see WithLegend).
+  const { width, height, rem } = useElementSize(listRef);
   const config = legacyUnit(fieldConfig, options.unit);
   const items = reduceFrames(frames, config, options.reducer, language, timeZone);
-  const layout = statLayout(items.length, width, height, rootRem());
+  const layout = statLayout(items.length, width, height, rem);
   useStyleVars(listRef, { "--stat-columns": layout.columns });
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;

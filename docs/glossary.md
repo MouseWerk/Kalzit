@@ -36,6 +36,7 @@ catalog.
 | Eigentümer-Team | Owner team | Das Team, dem ein Ordner oder Dashboard gehört; nur es (und Freigaben) bearbeitet ihn. | Besitzerteam, Owner-Team |
 | Sichtbarkeit | Visibility | Wer Inhalte eines Teams außer dem Team sieht: alle mit Zugriff (nur lesen) oder „Nur Team“. | |
 | Panel | Panel | Eine Visualisierung in einem Dashboard. | Kachel, Widget |
+| Karten | Cards | Die Darstellung einer Liste, etwa der Dashboards, als Karten mit Vorschau statt als Tabelle; die Karten sind keine Panels. | Kacheln (für diese Ansicht), Tiles (in English) |
 | Bibliothekspanel | Library panel | Ein Panel, das an einer Stelle gepflegt und in mehrere Dashboards eingefügt wird; verknüpfte Kopien übernehmen jede Änderung. | Bibliotheks-Panel (im Deutschen) |
 | Schwellenwert | Threshold | Ein Wert, ab dem ein Panel eine andere Farbe oder Stufe zeigt. | Schwellwert (im Deutschen) |
 | Variable | Variable | Ein Platzhalter wie `$host` in Abfragen und Titeln, gesetzt in der Leiste über dem Dashboard oder durch einen Klick auf eine Zeile, ein Dokument oder einen Knoten; geht als Parameter an die Datenbank, nie als Text in die Abfrage. | |
@@ -45,6 +46,9 @@ catalog.
 | Explore | Explore | Ad-hoc-Abfragen ohne Dashboard, mit Verlauf. Name der Funktion, nicht übersetzt. | Erkunden |
 | Auswertung | Analysis | Gespeicherte Abfrage mit Schritten und Ansicht, teilbar im Team. | Analyse (als Name), Report |
 | Dokument | Document | Ein Eintrag aus einer Dokumentdatenbank (MongoDB), als Baum. | Datensatz (für Dokumente) |
+| Logs | Logs | Die Ansicht in Explore, die Dokumente als Logzeilen zeigt: Zeit, Text und Level je Dokument, mit dem Volumen je Level darüber. Keine eigene Datenform; Name in beiden Sprachen. | Protokolle |
+| Logzeile | Log line | Ein Eintrag in der Logs-Ansicht; dahinter steht genau ein Dokument der Quelle. | Protokollzeile |
+| Level | Level | Die Stufe einer Logzeile: Kritisch, Fehler, Warnung, Info, Debug, Trace oder unbekannt; als Punkt und Wort, nie nur als Farbe. | Schweregrad |
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |

@@ -170,6 +170,7 @@ form = "url"
 [binaries]
 windows-x64 = "bin/windows-x64/counter.exe"
 linux-x64 = "bin/linux-x64/counter"
+linux-arm64 = "bin/linux-arm64/counter"
 ```
 
 Ids under `io.kalzit.` and `dev.kalzit.` are Kalzit's own and need Kalzit's key. Labels and help
@@ -214,6 +215,7 @@ cargo build --release
 kalzit-plugin package \
   --manifest kalzit-plugin.toml \
   --file bin/linux-x64/counter=target/release/counter \
+  --file bin/linux-arm64/counter=path/to/arm64/counter \
   --file bin/windows-x64/counter.exe=path/to/windows/counter.exe \
   --file LICENSE=LICENSE \
   --key-file counter-signing.key \
@@ -229,6 +231,10 @@ or install it with `cargo install --git https://github.com/MouseWerk/Kalzit kalz
   Every file of the package is listed in `[files]` with its SHA-256, and the signature covers the
   manifest, so nothing can be added or changed afterwards.
 - `--platform linux-x64` keeps only that entry of `[binaries]`, for a package built on one system.
+  The platforms are `windows-x64`, `linux-x64` and `linux-arm64`, as the Kalzit server ships
+  them. Build an ARM binary on an arm64 machine (or with a cross toolchain) and list it under
+  `linux-arm64`; Kalzit starts the entry of the platform it runs on. Kalzit's own examples are
+  built natively on an arm64 runner, like the server binary (`release.yml`).
 - The key comes from `--key-file` or `KALZIT_PLUGIN_SIGNING_KEY` (32 bytes, base64);
   `--unsigned` builds a package without a signature.
 - `sign --package <zip> --key-file <file>` signs an existing package again.

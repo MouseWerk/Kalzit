@@ -851,11 +851,14 @@ describe("time zone", () => {
     const server = setup();
     server.state.preferences.timeZone = "UTC";
     renderApp("/dashboards");
-    // The fake dashboards were last saved on 2026-10-01 at 00:00 UTC.
-    expect(await screen.findAllByText(/Oct 1, 2026, 12:00\s?AM/)).not.toHaveLength(0);
+    // The fake dashboards were last saved on 2026-10-01 at 00:00 UTC. The list says how long
+    // ago and names the exact time on the time element.
+    const exactTimes = () =>
+      [...document.querySelectorAll("time[title]")].map((time) => time.getAttribute("title"));
+    await waitFor(() => expect(exactTimes().join("|")).toMatch(/Oct 1, 2026, 12:00\s?AM/));
     act(() => setTimeZone("Asia/Tokyo"));
-    expect(await screen.findAllByText(/Oct 1, 2026, 9:00\s?AM/)).not.toHaveLength(0);
-    expect(screen.queryByText(/Oct 1, 2026, 12:00\s?AM/)).toBeNull();
+    await waitFor(() => expect(exactTimes().join("|")).toMatch(/Oct 1, 2026, 9:00\s?AM/));
+    expect(exactTimes().join("|")).not.toMatch(/Oct 1, 2026, 12:00\s?AM/);
   });
 });
 

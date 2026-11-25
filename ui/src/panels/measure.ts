@@ -18,7 +18,11 @@ export function textWidth(text: string, font: string): number | undefined {
   return context.measureText(text).width;
 }
 
-/** The root font size in px, for sizes given in rem. */
+/**
+ * The root font size in px, for sizes given in rem. It reads the computed style, which restyles
+ * the page first when anything changed since: call it where layout is current (useElementSize
+ * hands it out with a box's size), never while rendering.
+ */
 export function rootRem(): number {
   if (typeof document === "undefined") {
     return 16;

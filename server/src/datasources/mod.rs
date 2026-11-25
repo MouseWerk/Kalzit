@@ -521,7 +521,7 @@ pub struct OwnDatabase {
 
 impl OwnDatabase {
     pub fn new(db: AnyPool, database_url: &str) -> Self {
-        let is_postgres = database_url.starts_with("postgres:") || database_url.starts_with("postgresql:");
+        let is_postgres = crate::pg_location::is_postgres_url(database_url);
         Self { db, is_postgres, identity: OnceCell::new() }
     }
 
