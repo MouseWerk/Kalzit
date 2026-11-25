@@ -356,20 +356,26 @@ e2e() {
 }
 
 # The visual comparison (ui/e2e/visual.config.ts; ci.yml runs it in the Linux e2e job): every
-# screen against its baseline, with the e2e binary. It starts its own server on a free port and
-# needs no services. The pictures of the screens that differ go to the run's log folder.
+# screen against the baselines of the commit in ui/e2e/visual/baselines.lock, fetched once into
+# the cache, with the e2e binary. Set up like e2e: the browser packages' test, the browser with
+# its system packages, and the services lock (its server takes a free port, but it runs beside
+# no other heavy job). The pictures of the screens that differ go to the run's log folder.
 visual() {
   e2e_build
+  .github/scripts/browser-deps.test.sh
   local attempt
   for attempt in 1 2 3; do
     (cd ui && npx playwright install --with-deps chromium) && break
     echo "installing the browser failed (attempt $attempt of 3)" >&2
     [ "$attempt" -lt 3 ] || return 1
   done
+  services_lock
+  trap 'services_unlock' EXIT
   local run_dir="$KALZIT_CI_CACHE/visual-run"
   rm -rf "$run_dir"
   local status=0
-  (cd ui && KALZIT_E2E_BINARY="$T/e2e/kalzit" KALZIT_E2E_RUN_DIR="$run_dir" npm run visual) || status=$?
+  (cd ui && KALZIT_E2E_BINARY="$T/e2e/kalzit" KALZIT_E2E_RUN_DIR="$run_dir" \
+    KALZIT_VISUAL_CACHE="$KALZIT_CI_CACHE/visual-baselines" npm run visual) || status=$?
   local kept
   for kept in visual-diffs visual-report visual-server.log; do
     if [ "$status" -ne 0 ] && [ -e "ui/e2e/.output/$kept" ]; then

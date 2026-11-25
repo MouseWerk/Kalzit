@@ -1058,16 +1058,39 @@ jobs:
           # the system temp folder on C:, where virus scans can hold a commit for seconds.
           KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-e2e
       # The visual comparison (ui/e2e/visual.config.ts): every screen in light and dark at four
-      # widths (30 of them also at twice the device scale), against ui/e2e/visual/baselines.
+      # widths (30 of them also at twice the device scale), against approved baselines.
       # Linux only: the baselines are Linux pictures (fonts differ per system). It runs even when
       # the e2e tests failed, so its pictures are there to look at; it starts its own server.
+      # The baselines live in MouseWerk/kalzit-visual, at the commit ui/e2e/visual/baselines.lock
+      # names; `npm run visual` fetches it unless the cache has it.
+      - name: Visual baselines commit
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: visual
+        run: echo "commit=$(sed -n 's/^commit=//p' ui/e2e/visual/baselines.lock)" >> "$GITHUB_OUTPUT"
+      - name: Restore the visual baselines
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: baselines
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: visual-baselines-${{ steps.visual.outputs.commit }}
       - name: Visual comparison
         if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: compare
         run: npm run visual
         timeout-minutes: 40
         working-directory: ui
         env:
           KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
+      - name: Save the visual baselines
+        if: >-
+          !cancelled() && runner.os == 'Linux' && steps.baselines.outputs.cache-hit != 'true'
+          && steps.compare.outcome != 'skipped' && github.event_name != 'merge_group'
+          && hashFiles('ui/e2e/.visual-baselines/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: ${{ steps.baselines.outputs.cache-primary-key }}
       # Expected, actual and diff pictures of each screen that differs, with summary.md.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ failure() && runner.os == 'Linux' }}

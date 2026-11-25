@@ -88,7 +88,9 @@ const LONGEST_DAYS = 3650;
 /**
  * A public link to the dashboard whose window covers the fixed moment: the server checks the
  * visitor's range against the real time, and the pages show a moment more than a year back. The
- * longest window the server allows reaches ten years back, so this holds until mid-2035.
+ * longest window the server allows reaches ten years back, so this holds until mid-2035. The
+ * setting is raised only for the link's creation and reset to its default right after (the link
+ * keeps its window), so Verwaltung > Teilen shows the default as on any server.
  */
 async function longWindowLink(
   request: APIRequestContext,
@@ -100,7 +102,7 @@ async function longWindowLink(
     "read the settings",
   );
   const version = settings.items.find((item) => item.key === "sharing.max_expiry_days")?.version;
-  await ok(
+  const raised = await ok<{ version: number }>(
     await request.patch("/api/admin/settings/sharing.max_expiry_days", {
       data: { value: LONGEST_DAYS, version: version ?? 0 },
     }),
@@ -115,6 +117,14 @@ async function longWindowLink(
       },
     }),
     "create the public link",
+  );
+  await ok(
+    await request.post("/api/admin/settings/batch", {
+      data: {
+        changes: [{ key: "sharing.max_expiry_days", version: raised.version, reset: true }],
+      },
+    }),
+    "reset the longest window",
   );
   return link.token;
 }

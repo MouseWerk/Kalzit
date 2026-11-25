@@ -6,10 +6,11 @@ name: Visual
 #   gh workflow run visual.yml --ref <branch> -f update=true    write the baselines that changed
 #
 # The comparison also runs in ci.yml's Linux e2e job and in tools/local-ci/linux.sh. This
-# workflow is for writing baselines on Linux without a Linux machine at hand: with `update` the
-# artifact `visual-baselines` holds the whole baselines folder, to unpack into
-# ui/e2e/visual/baselines, look at and commit (docs/process.md, "Visual comparison"). It never
-# commits anything itself.
+# workflow is for writing baselines on Linux without a Linux machine at hand: with `update` it
+# checks out MouseWerk/kalzit-visual at the commit ui/e2e/visual/baselines.lock names, writes the
+# changed pictures into it, and the artifact `visual-baselines` holds its whole `baselines`
+# folder, to copy into a branch of kalzit-visual for a pull request there (docs/process.md,
+# "Visual comparison"). It never commits or pushes anything itself.
 
 on:
   workflow_dispatch:
@@ -18,6 +19,13 @@ on:
         description: Write the baselines of the screens that changed (npm run visual:update)
         type: boolean
         default: false
+      discover:
+        description: List text that differs by run outside the known places (KALZIT_VISUAL_DISCOVER)
+        type: boolean
+        default: false
+  # TEMPORARY while the baselines move to MouseWerk/kalzit-visual; removed before review.
+  push:
+    branches: [ci/visual-regression]
 
 concurrency:
   group: visual-${{ github.ref }}-${{ github.run_id }}
@@ -38,7 +46,10 @@ jobs:
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
-      VISUAL_UPDATE: ${{ inputs.update == true }}
+      VISUAL_UPDATE: ${{ inputs.update == true || contains(github.event.head_commit.message, '[visual-update]') }}
+      KALZIT_VISUAL_DISCOVER: ${{ (inputs.discover == true || contains(github.event.head_commit.message, '[visual-discover]')) && '1' || '' }}
+      # TEMPORARY: an empty checkout to write the first baselines into.
+      VISUAL_EMPTY: ${{ contains(github.event.head_commit.message, '[visual-empty]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -96,31 +107,70 @@ jobs:
         run: |
           DEPS_CACHE="$HOME/.cache/kalzit-browser-debs" ../.github/scripts/browser-deps.sh \
             node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Visual baselines commit
+        id: visual
+        run: echo "commit=$(sed -n 's/^commit=//p' ui/e2e/visual/baselines.lock)" >> "$GITHUB_OUTPUT"
+      - name: Restore the visual baselines
+        if: ${{ env.VISUAL_UPDATE != 'true' }}
+        id: baselines
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: visual-baselines-${{ steps.visual.outputs.commit }}
       - name: Visual comparison
         if: ${{ env.VISUAL_UPDATE != 'true' }}
         run: npm run visual
         timeout-minutes: 40
         working-directory: ui
         env:
-          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual-run
+      - name: Save the visual baselines
+        if: >-
+          !cancelled() && env.VISUAL_UPDATE != 'true' && steps.baselines.outputs.cache-hit != 'true'
+          && hashFiles('ui/e2e/.visual-baselines/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: ${{ steps.baselines.outputs.cache-primary-key }}
+      # A checkout of the baselines repository at the locked commit, for the update to write into.
+      - name: Check out the baselines
+        if: ${{ env.VISUAL_UPDATE == 'true' }}
+        run: |
+          repo="$(sed -n 's/^repo=//p' ui/e2e/visual/baselines.lock)"
+          commit="$(sed -n 's/^commit=//p' ui/e2e/visual/baselines.lock)"
+          git init -q "$RUNNER_TEMP/kalzit-visual"
+          [ "$VISUAL_EMPTY" = true ] && exit 0
+          git -C "$RUNNER_TEMP/kalzit-visual" fetch -q --depth 1 "$repo" "$commit"
+          git -C "$RUNNER_TEMP/kalzit-visual" -c advice.detachedHead=false checkout -q FETCH_HEAD
       - name: Write the baselines that changed
         if: ${{ env.VISUAL_UPDATE == 'true' }}
         run: npm run visual:update
         timeout-minutes: 40
         working-directory: ui
         env:
-          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
-      - name: Size of the baselines
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual-run
+          KALZIT_VISUAL_BASELINES: ${{ runner.temp }}/kalzit-visual
+      - name: Changed baselines
         if: ${{ !cancelled() && env.VISUAL_UPDATE == 'true' }}
         run: |
-          echo "$(find ui/e2e/visual/baselines -name '*.png' | wc -l) pictures, $(du -sh ui/e2e/visual/baselines | cut -f1)" \
+          cd "$RUNNER_TEMP/kalzit-visual"
+          echo "$(git status --porcelain | wc -l) pictures changed; $(find baselines -name '*.png' | wc -l) pictures, $(du -sh baselines | cut -f1)" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          git status --porcelain | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && env.VISUAL_UPDATE == 'true' }}
         with:
           name: visual-baselines
-          path: ui/e2e/visual/baselines
+          path: ${{ runner.temp }}/kalzit-visual/baselines
           if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && env.KALZIT_VISUAL_DISCOVER == '1' }}
+        with:
+          name: visual-discover
+          path: ui/e2e/.output/visual-discover.jsonl
+          if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ failure() }}

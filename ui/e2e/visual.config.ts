@@ -1,11 +1,13 @@
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { baselineDir } from "./visual/baselines";
 import { VISUAL_NOW } from "./visual/stage";
 import { COMPARISON, screensAt, WIDTHS } from "./visual/variants";
 
 /**
  * The visual comparison (`npm run visual`): every screen in light and dark at each width of
- * visual/variants.ts, compared pixel by pixel with the baselines in e2e/visual/baselines.
+ * visual/variants.ts, compared pixel by pixel with the approved baselines (visual/baselines.ts:
+ * the commit of MouseWerk/kalzit-visual that visual/baselines.lock names).
  * `npm run visual:update` writes the baselines of the screens that changed; nothing else does.
  *
  * Baselines are made on Linux with Chromium only: fonts are drawn differently on Windows and
@@ -34,7 +36,8 @@ export default defineConfig({
   testDir: "./visual",
   testMatch: /\.visual\.ts$/,
   outputDir: join(OUTPUT, "visual-results"),
-  snapshotPathTemplate: "{testDir}/baselines/{arg}{ext}",
+  // The approved baselines: the locked commit of their repository, or a checkout for an update.
+  snapshotPathTemplate: join(baselineDir(), "{arg}{ext}"),
   globalSetup: "./visual/global-setup.ts",
   fullyParallel: true,
   forbidOnly: CI,

@@ -2,9 +2,18 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test as base, expect } from "../support/test";
+import { baselineDir } from "./baselines";
 import { SCREENS, type Screen } from "./screens";
 import { readSeed, type Seed } from "./seed";
-import { STATE_FILE, settle, setupShot, stageContext, stagePage, steadyText } from "./stage";
+import {
+  noteUnplaced,
+  STATE_FILE,
+  settle,
+  setupShot,
+  stageContext,
+  stagePage,
+  steadyText,
+} from "./stage";
 import {
   COMPARABLE,
   HIDPI_SCREENS,
@@ -19,7 +28,8 @@ import {
 
 /**
  * Every screen in light and dark at the width of the project (visual.config.ts), compared with
- * its baseline in e2e/visual/baselines. A difference fails; `npm run visual:update` writes new
+ * its approved baseline (baselines.ts: the commit of MouseWerk/kalzit-visual named in
+ * baselines.lock). A difference fails; `npm run visual:update` writes new
  * baselines, which a reviewer looks at in the pull request (docs/process.md, "Visual
  * comparison").
  */
@@ -57,7 +67,10 @@ async function shoot(screen: Screen, page: Page, seed: Seed) {
     await tab.goto(screen.path(seed));
     await screen.ready(tab, seed, "en");
     await settle(tab);
-    await steadyText(tab, seed.dynamic);
+    noteUnplaced(
+      shotName(width, screen.name, theme).join("/"),
+      await steadyText(tab, seed.dynamic),
+    );
     // Soft: both themes are compared and reported, not only the first that differs.
     await expect.soft(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
       mask: screen.masks?.(tab) ?? [],
@@ -70,7 +83,7 @@ test.describe("signed in", () => {
   for (const screen of SCREENS.filter((candidate) => !candidate.signedOut)) {
     test(screen.name, async ({ page, seed, consoleGuard }) => {
       await shoot(screen, page, seed);
-      // What the pages write to the console is for the e2e tests to judge, not for this run.
+      // Not a console check: the e2e tests fail on console output; this run only compares pictures.
       await consoleGuard.drain();
     });
   }
@@ -122,7 +135,7 @@ test("every baseline of this width belongs to a screen", () => {
   if (width === undefined) {
     throw new Error(`no width for the project ${test.info().project.name}`);
   }
-  const dir = join(test.info().project.testDir, "baselines", width.name);
+  const dir = join(baselineDir(), width.name);
   const screens = [
     ...SCREENS.map((screen) => screen.name).filter(
       (name) => width.scale === 1 || HIDPI_SCREENS.includes(name),

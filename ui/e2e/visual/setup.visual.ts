@@ -6,6 +6,7 @@ import { t } from "../support/i18n";
 import { expect, test } from "../support/test";
 import { seedVisual } from "./seed";
 import {
+  noteUnplaced,
   STATE_FILE,
   settle,
   setupShot,
@@ -19,6 +20,7 @@ import {
   NOT_COMPARABLE,
   SETUP_DONE,
   SETUP_STEPS,
+  shotName,
   THEMES,
   WIDTHS,
   type Width,
@@ -64,7 +66,7 @@ async function shootStep(page: Page, step: string, widths: readonly Width[]): Pr
     for (const theme of THEMES) {
       await page.emulateMedia({ colorScheme: theme });
       await settle(page);
-      await steadyText(page);
+      noteUnplaced(shotName(width, step, theme).join("/"), await steadyText(page));
       const file = setupShot(width, step, theme);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, await stableShot(page, width.scale === 2 ? "device" : "css"));
@@ -154,6 +156,6 @@ test("the setup steps, then the seed for the screens", async ({ page, browser, c
   expect(tips.ok()).toBe(true);
   await page.context().storageState({ path: STATE_FILE });
   await seedVisual(page);
-  // What the pages wrote to the console is for the e2e tests to judge, not for this run.
+  // Not a console check: the e2e tests fail on console output; this run only compares pictures.
   await consoleGuard.drain();
 });

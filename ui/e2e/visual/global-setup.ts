@@ -1,4 +1,5 @@
 import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import baseSetup from "../global-setup";
 import { VISUAL_DIR } from "./stage";
 import { DIFF_DIR } from "./summary";
@@ -8,7 +9,7 @@ import { DIFF_DIR } from "./summary";
  * around the fixed moment), with the folders of the last visual run emptied first.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  for (const dir of [VISUAL_DIR, DIFF_DIR]) {
+  for (const dir of [VISUAL_DIR, DIFF_DIR, join(VISUAL_DIR, "..", "visual-discover.jsonl")]) {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
   mkdirSync(VISUAL_DIR, { recursive: true });

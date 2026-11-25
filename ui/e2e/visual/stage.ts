@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,17 +38,27 @@ export const setupShot = (width: { name: string }, step: string, theme: string):
 /**
  * Moves every server timestamp (Unix ms, as the API writes times) of this run to the fixed
  * moment, keeping whole days apart: "created now, expires in 30 days" stays so. The fixture data
- * lies around VISUAL_NOW, far outside the window, and stays as it is.
+ * lies around VISUAL_NOW, far outside the window, and stays as it is. `hold` gives fixed values
+ * for keys of the answer (HELD).
  */
-export function shiftTimes(value: unknown, realNow: number): unknown {
+export function shiftTimes(
+  value: unknown,
+  realNow: number,
+  hold: Readonly<Record<string, unknown>> = {},
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => shiftTimes(item, realNow));
+    return value.map((item) => shiftTimes(item, realNow, hold));
   }
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key, item]) => !(key === "lastUsedAt" && typeof item === "number"))
-        .map(([key, item]) => [key, counter(key, item, realNow)]),
+        .filter(([key]) => !(key in hold && hold[key] === undefined))
+        .map(([key, item]) => [
+          key,
+          key in hold && (typeof item === "number" || Array.isArray(item))
+            ? hold[key]
+            : shiftTimes(item, realNow, hold),
+        ]),
     );
   }
   const stamp =
@@ -58,28 +69,26 @@ export function shiftTimes(value: unknown, realNow: number): unknown {
 }
 
 /**
- * Counters of page loads grow with every visit of a public page, in whatever order the run's
- * workers take the pages; they show a fixed count instead.
+ * Values that grow with the run, in whatever order its workers take the pages, held at fixed
+ * values in the answers of their own endpoints only (`undefined` leaves the key out):
+ *
+ * - public links and snapshots count each page load of a public page;
+ * - a data source shows the hours of the last day with queries and its last use, which depend
+ *   on which pages ran queries before.
  */
-const VISITS: Readonly<Record<string, unknown>> = {
-  views: 12,
-  lastViewedAt: VISUAL_NOW - 2 * 3_600_000,
-};
+const HELD: readonly { path: RegExp; keys: Readonly<Record<string, unknown>> }[] = [
+  {
+    path: /\/api\/orgs\/[^/]+\/(dashboards\/[^/]+\/)?(public-links|snapshots)(\/[^/]+)?$/,
+    keys: { views: 12, lastViewedAt: VISUAL_NOW - 2 * 3_600_000 },
+  },
+  {
+    path: /\/api\/orgs\/[^/]+\/datasources(\/[^/]+)?$/,
+    keys: { latency: [], lastUsedAt: undefined },
+  },
+];
 
-/**
- * What a data source shows of the queries that ran on it (the hours with queries, the last use)
- * depends on which pages ran queries before, in whatever order: it shows none. `lastUsedAt` is
- * left out (shiftTimes), `latency` is empty.
- */
-function counter(key: string, item: unknown, realNow: number): unknown {
-  if (key === "latency" && Array.isArray(item)) {
-    return [];
-  }
-  if (key in VISITS && (typeof item === "number" || item === null)) {
-    return key === "lastViewedAt" && item === null ? null : VISITS[key];
-  }
-  return shiftTimes(item, realNow);
-}
+const heldKeys = (path: string) =>
+  Object.assign({}, ...HELD.filter((held) => held.path.test(path)).map((held) => held.keys));
 
 /** A seeded generator in place of Math.random, so layouts that start from chance repeat. */
 function seededRandom(): void {
@@ -90,16 +99,50 @@ function seededRandom(): void {
   };
 }
 
+/**
+ * The fonts of the pictures. The UI brings its own faces (Instrument Sans, JetBrains Mono); for
+ * every glyph they lack, the browser would take a font of the system, which differs between
+ * machines. Here the font stacks end in Noto Sans and Noto Sans Mono (OFL-1.1, dev dependencies,
+ * for the pictures only), served from the page's own origin, so every Linux machine draws the
+ * same glyphs.
+ */
+const FONT_PATH = "/__visual-fonts/";
+const FONT_FILES: Readonly<Record<string, string>> = {
+  "sans.woff2": "@fontsource-variable/noto-sans/files/noto-sans-latin-wght-normal.woff2",
+  "mono.woff2": "@fontsource-variable/noto-sans-mono/files/noto-sans-mono-latin-wght-normal.woff2",
+};
+const NODE_MODULES = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "node_modules");
+
+function visualFonts(path: string): void {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(`
+    @font-face { font-family: "Visual Sans"; src: url("${path}sans.woff2") format("woff2"); font-weight: 100 900; }
+    @font-face { font-family: "Visual Mono"; src: url("${path}mono.woff2") format("woff2"); font-weight: 100 900; }
+    :root {
+      --font-sans: "Instrument Sans Variable", "Visual Sans";
+      --font-mono: "JetBrains Mono Variable", "Visual Mono";
+    }
+  `);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
+
 /** Answers the setup captured, for lists that grow with the run (Explore's history). */
 export type Frozen = Record<string, unknown>;
 
 /**
- * Prepares a context: the seeded generator, the server's times moved to the fixed moment,
- * frozen answers for lists that grow with the run, and no recorded dashboard views (they would
- * change the recent dashboards and the usage counts while the run goes on).
+ * Prepares a context: the seeded generator, the fonts, the server's times moved to the fixed
+ * moment, frozen answers for lists that grow with the run, and no recorded dashboard views (they
+ * would change the recent dashboards and the usage counts while the run goes on).
  */
 export async function stageContext(context: BrowserContext, frozen: Frozen): Promise<void> {
   await context.addInitScript(seededRandom);
+  await context.addInitScript(visualFonts, FONT_PATH);
+  await context.route(`**${FONT_PATH}*`, (route) => {
+    const file = FONT_FILES[new URL(route.request().url()).pathname.slice(FONT_PATH.length)];
+    return file === undefined
+      ? route.fulfill({ status: 404 })
+      : route.fulfill({ path: join(NODE_MODULES, file), contentType: "font/woff2" });
+  });
   const realNow = Date.now();
   await context.route(/\/api\//, async (route: Route) => {
     const request = route.request();
@@ -111,10 +154,11 @@ export async function stageContext(context: BrowserContext, frozen: Frozen): Pro
     if (request.method() === "POST" && /\/dashboards\/[^/]+\/views$/.test(url.pathname)) {
       return route.fulfill({ status: 204 });
     }
+    const hold = heldKeys(url.pathname);
     if (request.method() === "GET") {
       for (const [pattern, body] of Object.entries(frozen)) {
         if (new RegExp(pattern).test(`${url.pathname}${url.search}`)) {
-          return route.fulfill({ json: shiftTimes(body, realNow) });
+          return route.fulfill({ json: shiftTimes(body, realNow, hold) });
         }
       }
     }
@@ -133,7 +177,7 @@ export async function stageContext(context: BrowserContext, frozen: Frozen): Pro
     if (text === "") {
       return route.fulfill({ response });
     }
-    return route.fulfill({ response, json: shiftTimes(JSON.parse(text), realNow) });
+    return route.fulfill({ response, json: shiftTimes(JSON.parse(text), realNow, hold) });
   });
 }
 
@@ -182,61 +226,148 @@ export async function settle(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
 }
 
+/* The places that show such text, found with KALZIT_VISUAL_DISCOVER=1 (steadyRules). */
+const NOWHERE = ":not(*)";
+const RUN_FOLDER = NOWHERE;
+const IDS = NOWHERE;
+const ADDRESSES = NOWHERE;
+const HOSTS = NOWHERE;
+const DURATIONS = NOWHERE;
+const DISK = NOWHERE;
+const BUILD = NOWHERE;
+
+/** Text that differs by machine or run, in the places of the UI that show it. */
+interface SteadyRule {
+  /** What the text is, for the discovery report. */
+  what: string;
+  /** The elements that show it; nothing outside them is touched. */
+  selector: string;
+  /** The text itself, a regular expression source (case-sensitive). */
+  pattern: string;
+}
+
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
- * Text that differs by machine or run, as regular expression sources: paths in the run folder
- * (data directory, fixture files), the server's address with its free port (link addresses), the
- * host name, ids the server makes up, what the seed read (`extra`: the instance id, the commit
- * and the build date), measured times ("10 ms": how long a query or a check took) and the free
- * disk space.
+ * The places that show text differing by machine or run: paths in the run folder (data directory,
+ * fixture files), the server's address with its free port, the host name, ids the server makes
+ * up, what the seed read (`extra`: the instance id, the commit and the build date), measured
+ * times ("10 ms") and the free disk space. Whole ids and paths come first: the instance id's short
+ * form is also the start of every id made in the same moment.
+ *
+ * A new place shows up as a flaky picture; `KALZIT_VISUAL_DISCOVER=1 npm run visual` lists every
+ * match outside these selectors in e2e/.output/visual-discover.jsonl.
  */
-function dynamicText(extra: readonly string[]): string[] {
-  const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const host = literal(hostname());
-  // Whole ids and paths first: the instance id's short form is also the start of every id made
-  // in the same moment, and replacing it first would leave the rest of those ids behind.
+function steadyRules(extra: readonly string[]): SteadyRule[] {
+  const host = hostname();
   return [
-    "\\S*[\\\\/]run-\\d{10,}-\\d+[\\\\/]\\S*",
-    "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
-    "127\\.0\\.0\\.1:\\d{2,5}",
-    "localhost:\\d{2,5}",
-    ...(host.length >= 3 ? [`\\b${host}\\b`] : []),
-    "\\b\\d[\\d,.]*\\s?ms\\b",
-    "\\b\\d[\\d,.]*\\s?[kMGT]?B free\\b",
-    ...extra.map((text) => `\\b${literal(text)}\\b`),
+    {
+      what: "run folder",
+      selector: RUN_FOLDER,
+      pattern: "\\S*[\\\\/]run-\\d{10,}-\\d+[\\\\/]\\S*",
+    },
+    {
+      what: "id",
+      selector: IDS,
+      pattern: "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
+    },
+    { what: "server address", selector: ADDRESSES, pattern: "\\b127\\.0\\.0\\.1:\\d{4,5}\\b" },
+    ...(host.length >= 3
+      ? [{ what: "host name", selector: HOSTS, pattern: `(?<![\\w.-])${literal(host)}(?![\\w.-])` }]
+      : []),
+    { what: "measured time", selector: DURATIONS, pattern: "\\b\\d[\\d,.]*\\s?ms\\b" },
+    { what: "free disk space", selector: DISK, pattern: "\\b\\d[\\d,.]*\\s?[kMGT]?B free\\b" },
+    ...extra.map((text) => ({
+      what: "build or instance",
+      selector: BUILD,
+      pattern: `\\b${literal(text)}\\b`,
+    })),
   ];
 }
 
 /** What stands in for text that differs by machine or run. */
 export const STEADY = "•••";
 
+const DISCOVER_FILE = join(VISUAL_DIR, "..", "visual-discover.jsonl");
+
+/** Notes the matches outside the known places of one picture (discovery), one line each. */
+export function noteUnplaced(picture: string, unplaced: readonly Unplaced[]): void {
+  for (const one of unplaced) {
+    appendFileSync(DISCOVER_FILE, `${JSON.stringify({ picture, ...one })}\n`);
+  }
+}
+
+/** Where a match outside the known places was found (discovery). */
+export interface Unplaced {
+  what: string;
+  element: string;
+}
+
 /**
- * Replaces text that differs by machine or run (dynamicText) with the same placeholder in every
- * run, in text and in fields, just before a picture. The placeholder keeps the boxes around it
- * the same size in every run, which a mask over the varying text would not.
+ * Replaces text that differs by machine or run with the same placeholder in every run, in text
+ * and in fields of the places steadyRules names, just before a picture. The placeholder keeps the
+ * boxes around it the same size in every run, which a mask over the varying text would not.
+ * With `discover`, it replaces matches anywhere and answers those outside the known places.
  */
-export async function steadyText(page: Page, extra: readonly string[] = []): Promise<void> {
-  await page.evaluate(
-    ({ sources, placeholder }) => {
-      const patterns = sources.map((source) => new RegExp(source, "gi"));
-      const steady = (text: string) =>
-        patterns.reduce((result, pattern) => result.replace(pattern, placeholder), text);
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const text = node.textContent ?? "";
-        const replaced = steady(text);
-        if (replaced !== text) {
-          node.textContent = replaced;
+export async function steadyText(
+  page: Page,
+  extra: readonly string[] = [],
+  discover = process.env.KALZIT_VISUAL_DISCOVER === "1",
+): Promise<Unplaced[]> {
+  return page.evaluate(
+    ({ rules, placeholder, discover }) => {
+      const unplaced: { what: string; element: string }[] = [];
+      const pathOf = (element: Element) => {
+        const parts: string[] = [];
+        for (
+          let at: Element | null = element;
+          at !== null && parts.length < 4;
+          at = at.parentElement
+        ) {
+          const classes = [...at.classList]
+            .slice(0, 2)
+            .map((name) => `.${name}`)
+            .join("");
+          parts.unshift(`${at.tagName.toLowerCase()}${classes}`);
+        }
+        return parts.join(" > ");
+      };
+      for (const rule of rules) {
+        const pattern = new RegExp(rule.pattern, "g");
+        const scopes = discover ? [document.body] : [...document.querySelectorAll(rule.selector)];
+        for (const scope of scopes) {
+          const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+          const fields = [
+            ...(scope.matches("input, textarea") ? [scope] : []),
+            ...scope.querySelectorAll("input, textarea"),
+          ] as (HTMLInputElement | HTMLTextAreaElement)[];
+          const found: Element[] = [];
+          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+            const text = node.textContent ?? "";
+            const replaced = text.replace(pattern, placeholder);
+            if (replaced !== text) {
+              node.textContent = replaced;
+              if (node.parentElement !== null) found.push(node.parentElement);
+            }
+          }
+          for (const field of fields) {
+            const replaced = field.value.replace(pattern, placeholder);
+            if (replaced !== field.value) {
+              field.value = replaced;
+              found.push(field);
+            }
+          }
+          if (discover) {
+            for (const element of found) {
+              if (element.closest(rule.selector) === null) {
+                unplaced.push({ what: rule.what, element: pathOf(element) });
+              }
+            }
+          }
         }
       }
-      for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-        "input, textarea",
-      )) {
-        const replaced = steady(field.value);
-        if (replaced !== field.value) {
-          field.value = replaced;
-        }
-      }
+      return unplaced;
     },
-    { sources: dynamicText(extra), placeholder: STEADY },
+    { rules: steadyRules(extra), placeholder: STEADY, discover },
   );
 }
