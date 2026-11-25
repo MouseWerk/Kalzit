@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HANDBOOK_PAGES, type HandbookSlug } from "../catalog";
@@ -102,6 +102,62 @@ describe("the handbook's content", () => {
       glossary: true,
     };
     expect(HANDBOOK_PAGES.map((page) => page.slug).sort()).toEqual(Object.keys(slugs).sort());
+  });
+
+  it("reaches the container image's build: every page and picture passes .dockerignore and a COPY", () => {
+    // The image builds the UI from a narrow context; a page or picture missing there fails only
+    // the docker job, long after the UI build passed everywhere else.
+    const repo = resolve(DOCS, "..");
+    const glob = (pattern: string) =>
+      new RegExp(
+        `^${pattern
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replaceAll("**", "\0")
+          .replaceAll("*", "[^/]*")
+          .replaceAll("?", "[^/]")
+          .replaceAll("\0", ".*")}$`,
+      );
+    // As Docker reads it: the last pattern that matches the path or one of its folders decides.
+    const rules = readFileSync(join(repo, ".dockerignore"), "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"))
+      .map((line) => {
+        const include = line.startsWith("!");
+        return { include, pattern: glob((include ? line.slice(1) : line).replace(/\/+$/, "")) };
+      });
+    const inContext = (path: string) => {
+      const parts = path.split("/");
+      const prefixes = parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+      let included = true;
+      for (const rule of rules) {
+        if (prefixes.some((prefix) => rule.pattern.test(prefix))) included = rule.include;
+      }
+      return included;
+    };
+    const copied = readFileSync(join(repo, "Dockerfile"), "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("COPY "))
+      .flatMap((line) => {
+        const args = line.split(/\s+/).slice(1);
+        return args.slice(0, -1).filter((arg) => !arg.startsWith("--"));
+      })
+      .filter((source) => source.startsWith("docs/"));
+    const inCopy = (path: string) =>
+      copied.some((source) => path === source || path.startsWith(`${source.replace(/\/+$/, "")}/`));
+    const paths = [
+      ...built.pages.flatMap((page) => [page.en.file, page.de?.file]),
+      ...built.images.map((path) => path.replace(/^docs\//, "")),
+    ]
+      .filter((file) => file !== undefined)
+      .map((file) => `docs/${file}`);
+    for (const path of new Set(paths)) {
+      expect(inContext(path), `${path} in .dockerignore`).toBe(true);
+      expect(inCopy(path), `${path} in a COPY of the Dockerfile`).toBe(true);
+    }
+    // And no more of docs/ than that.
+    expect(inContext("docs/PLAN.md")).toBe(false);
+    expect(inContext("docs/operations/performance-baseline-0.6.md")).toBe(false);
   });
 });
 

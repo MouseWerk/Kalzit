@@ -3,7 +3,9 @@
  * the user guide in docs/guide (English) and docs/guide/de (German), the operator pages of
  * docs/operations (English only) and the glossary, in the order and groups of the table of
  * contents. The build reads this list (src/handbook/build/plugin.ts) and ships every page with
- * the UI; a test checks that every guide file is listed here, so a new page is not forgotten.
+ * the UI; a test checks that every guide file is listed here, so a new page is not forgotten. A
+ * page outside docs/guide must also be let into the container image's build (.dockerignore and a
+ * COPY in the Dockerfile); a test checks that as well.
  *
  * Plain data without imports: the build loads it in Node, and the app shell (help links) may
  * import its types without pulling the handbook into the first page load.

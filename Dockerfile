@@ -57,10 +57,14 @@ COPY plugin-sdk plugin-sdk
 COPY plugin-tool plugin-tool
 COPY examples examples
 COPY ui ui
-# The help pages shown before sign-in and the handbook are guide pages, bundled into the web
-# interface together with the screenshots they show.
+# The help pages shown before sign-in and the handbook (ui/src/handbook/catalog.ts), bundled into
+# the web interface together with the screenshots they show: the guide, three operator pages and
+# the glossary. .dockerignore lets in exactly these files of docs/; a test in
+# ui/src/handbook/build checks both lists against the catalog.
 COPY docs/guide docs/guide
 COPY docs/screenshots docs/screenshots
+COPY docs/glossary.md docs/glossary.md
+COPY docs/operations/updates.md docs/operations/high-availability.md docs/operations/winget.md docs/operations/
 RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry,sharing=locked \
     cargo fetch --locked \
     && cd ui \
