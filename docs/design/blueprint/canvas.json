@@ -53,7 +53,7 @@
     "Settings.dc.html": {
       "expand": "fill",
       "h": 1000,
-      "title": "Server settings",
+      "title": "Server settings (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 4400
@@ -297,6 +297,14 @@
       "w": 1440,
       "x": 41040,
       "y": 0
+    },
+    "SettingsRedesign.dc.html": {
+      "expand": "fill",
+      "h": 13920,
+      "title": "Settings: Verwaltung and Konto",
+      "w": 1440,
+      "x": 42560,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -354,7 +362,8 @@
     "XYMapTrend.dc.html",
     "StartRedesign.dc.html",
     "MobileNav.dc.html",
-    "Panels.dc.html"
+    "Panels.dc.html",
+    "SettingsRedesign.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
