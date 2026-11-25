@@ -181,11 +181,13 @@ export async function seedVisual(page: Page): Promise<Seed> {
     throw new Error(`record a view: HTTP ${viewed.status()}`);
   }
   const publicToken = await longWindowLink(request, orgId, world.dashboardId);
-  const instances = await ok<{ items: { id: string }[] }>(
+  const cluster = await ok<{ instances: { id: string; host: string }[] }>(
     await request.get("/api/admin/instances"),
     "read the instances",
   );
-  const dynamic = instances.items.flatMap((instance) => [instance.id, instance.id.slice(0, 8)]);
+  const dynamic = cluster.instances
+    .flatMap((one) => [one.id, one.id.slice(0, 8), one.host])
+    .filter((text) => text.length >= 3);
   await ruleEvaluated(request, orgId, extras.ruleId);
   // Explore keeps what was run; the pages that run queries would add to it in any order.
   const history = await ok<unknown>(
