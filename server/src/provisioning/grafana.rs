@@ -714,8 +714,7 @@ impl Converter<'_> {
         if matches!(
             kind,
             "timeseries" | "xy" | "trend" | "bar" | "piechart" | "histogram" | "state-timeline" | "status-history"
-        )
-            && let Some(l) = Self::legend(&o, matches!(kind, "timeseries" | "bar"), notes)
+        ) && let Some(l) = Self::legend(&o, matches!(kind, "timeseries" | "bar"), notes)
         {
             out.insert("legend".into(), l);
         }

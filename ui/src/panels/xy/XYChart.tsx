@@ -11,9 +11,9 @@ import {
   fieldOptionsFor,
 } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
-import { toNumber } from "../frame";
 import type { LegendOptions, TooltipMode } from "../fieldConfig/legendOptions";
 import { axisTickFormat } from "../fieldConfig/units";
+import { toNumber } from "../frame";
 import { Readout, type ReadoutItem } from "../readout";
 import { linePath } from "../timeseries/series";
 import { useElementSize } from "../useElementSize";
