@@ -188,7 +188,7 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
   await page.getByRole("button", { name: t("dashboards.save") }).click();
   const save = page.getByRole("dialog", { name: t("dashboards.save.title") });
-  await save.getByRole("button", { name: t("dashboards.save.submit") }).click();
+  await save.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
   await expect(save).toBeHidden();
   await page.reload();
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
@@ -219,7 +219,7 @@ test("a time series drawn as stacked bars is saved with its graph style", async 
   await editor.getByRole("button", { name: t("dashboards.editor.back") }).click();
   await page.getByRole("button", { name: t("dashboards.save") }).click();
   const save = page.getByRole("dialog", { name: t("dashboards.save.title") });
-  await save.getByRole("button", { name: t("dashboards.save.submit") }).click();
+  await save.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
   await expect(save).toBeHidden();
   const stored = await owner.context.get(`/api/orgs/${owner.orgId}/dashboards/${id}`);
   const body = (await stored.json()) as {

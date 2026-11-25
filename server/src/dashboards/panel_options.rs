@@ -402,6 +402,90 @@ struct TableOptions {
     /// Dashboard variable a click on a row sets, and the column it takes (empty: the first).
     variable: Option<String>,
     variable_column: Option<String>,
+    footer: Option<TableFooter>,
+}
+
+/// The table's footer: one calculation per column, over all rows of the answer or only the rows
+/// the column filters keep.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct TableFooter {
+    show: Option<bool>,
+    over: Option<FooterRows>,
+    /// The calculation of every number column without one of its own.
+    numbers: Option<String>,
+    #[serde(default)]
+    columns: Vec<FooterColumn>,
+}
+
+choice!(FooterRows { All = "all", Filtered = "filtered" });
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FooterColumn {
+    /// The column's shown name or field name.
+    column: String,
+    calc: String,
+}
+
+/// Columns a footer names one by one.
+const MAX_FOOTER_COLUMNS: usize = 100;
+
+/// The calculations that reduce many values to one, by the names the legend, the footer and the
+/// steps share (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and
+/// `lastRow` take the row, `stddev` and `variance` are the sample measures, `p1` to `p99`.
+const CALCS: &[&str] = &[
+    "last",
+    "min",
+    "max",
+    "mean",
+    "sum",
+    "first",
+    "delta",
+    "deltaPercent",
+    "range",
+    "median",
+    "stddev",
+    "variance",
+    "count",
+    "distinct",
+    "gaps",
+    "lastRow",
+    "firstRow",
+];
+
+fn is_calc(text: &str) -> bool {
+    CALCS.contains(&text)
+        || text.strip_prefix('p').is_some_and(|n| {
+            !n.starts_with('0') && n.len() <= 2 && n.parse::<u8>().is_ok_and(|p| (1..=99).contains(&p))
+        })
+}
+
+fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
+    let Some(footer) = footer else { return Ok(()) };
+    if let Some(calc) = &footer.numbers
+        && !is_calc(calc)
+    {
+        return Err(format!("options.footer.numbers: {calc} is not a calculation"));
+    }
+    if footer.columns.len() > MAX_FOOTER_COLUMNS {
+        return Err(format!("options.footer.columns takes at most {MAX_FOOTER_COLUMNS} entries"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, c) in footer.columns.iter().enumerate() {
+        check_text(&format!("options.footer.columns[{i}].column"), &c.column, MAX_TEXT_CHARS, false)?;
+        if c.column.is_empty() {
+            return Err(format!("options.footer.columns[{i}].column must not be empty"));
+        }
+        if !seen.insert(c.column.as_str()) {
+            return Err(format!("options.footer.columns[{i}]: {} has a calculation already", c.column));
+        }
+        if !is_calc(&c.calc) {
+            return Err(format!("options.footer.columns[{i}].calc: {} is not a calculation", c.calc));
+        }
+    }
+    Ok(())
 }
 
 choice!(TraceView { Auto = "auto", List = "list", Waterfall = "waterfall" });
@@ -882,6 +966,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             if let Some(column) = &o.variable_column {
                 check_text("options.variableColumn", column, MAX_TEXT_CHARS, false)?;
             }
+            check_footer(o.footer.as_ref())?;
             check_range("options.pageSize", o.page_size, 5, 1000)
         }
         "trace" => {
@@ -1067,6 +1152,14 @@ mod tests {
             ("bar", json!({ "categoryLabels": "hidden" })),
             ("table", json!({ "columnFilters": true, "pagination": true, "pageSize": 50 })),
             ("table", json!({})),
+            (
+                "table",
+                json!({ "footer": { "show": true, "over": "filtered", "numbers": "sum", "columns": [
+                    { "column": "Umsatz", "calc": "p95" },
+                    { "column": "Kunde", "calc": "count" },
+                    { "column": "Land", "calc": "firstRow" }
+                ] } }),
+            ),
             ("gauge", json!({ "reducer": "mean", "showThresholdMarkers": false })),
             ("bargauge", json!({ "reducer": "last", "displayMode": "lcd", "orientation": "vertical" })),
             ("bargauge", json!({ "valueDisplay": "color", "namePlacement": "top" })),
@@ -1342,6 +1435,20 @@ mod tests {
             ("table", json!({ "pageSize": 4 }), "options.pageSize"),
             ("table", json!({ "pageSize": 1001 }), "options.pageSize"),
             ("table", json!({ "rowColors": true }), "unknown field"),
+            ("table", json!({ "footer": { "numbers": "average" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p0" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p100" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p05" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "over": "visible" } }), "options"),
+            ("table", json!({ "footer": { "rows": 1 } }), "unknown field"),
+            (
+                "table",
+                json!({ "footer": { "columns": [{ "column": "a", "calc": "sum" }, { "column": "a", "calc": "max" }] } }),
+                "options.footer.columns[1]",
+            ),
+            ("table", json!({ "footer": { "columns": [{ "column": "", "calc": "sum" }] } }), "must not be empty"),
+            ("table", json!({ "footer": { "columns": [{ "column": "a\u{7}", "calc": "sum" }] } }), "control"),
+            ("table", json!({ "footer": { "columns": [{ "column": "a", "calc": "total" }] } }), "columns[0].calc"),
             ("timeseries", json!({ "lineWidth": 9 }), "options.lineWidth"),
             ("timeseries", json!({ "legend": { "mode": "grid", "placement": "bottom" } }), "options"),
             ("stat", json!({ "colorMode": "rainbow" }), "options"),

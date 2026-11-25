@@ -149,6 +149,18 @@ setzt** eine Dashboard-Variable auf den Wert der Zeile in der **Spalte für die 
 Name, den die Kopfzeile zeigt, oder der Feldname; leer nimmt die erste Spalte); diese Zelle wird
 zu einer Schaltfläche, sodass auch die Tastatur sie erreicht.
 
+**Fußzeile** fügt unten eine Zeile an, die beim Scrollen stehen bleibt: eine Rechnung je Spalte,
+etwa **Summe**, **Mittel**, **Anzahl** (als „4 von 2.000 Zeilen“), **Min**, **Max**, **Median**,
+**p95** oder **Erster** und **Letzter** (die leere Zellen überspringen; **Erste Zeile** und
+**Letzte Zeile** nicht). **Alle Zahlenspalten** setzt eine Rechnung für jede Zahlenspalte, **Je
+Spalte** setzt oder ändert sie für eine Spalte. **Rechnet über** alle Zeilen der Abfrage oder nur
+die Zeilen, die die Spaltenfilter behalten; eine Zeile unter der Tabelle sagt immer, worüber,
+und „über die geladenen N Zeilen“, wenn das Zeilenlimit der Abfrage die Antwort gekürzt hat.
+Summe, Mittel und Perzentile tragen die Einheit der Spalte; Anzahlen und die Varianz sind reine
+Zahlen. Importierte Grafana-Tabellen behalten die erste Rechnung ihrer Fußzeile; wo Grafana anders
+rechnet (seine Differenz für Zähler, die Streuung der Grundgesamtheit, eine Zeilenzahl), sagt es
+der Import-Bericht.
+
 ## Kreisdiagramm
 
 **Form** Kreis oder Ring. **Beschriftung** Keine, Prozent, Name oder Wert; **Position der
