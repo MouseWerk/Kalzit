@@ -1987,7 +1987,7 @@ async fn run_cached(
     let registry = &state.datasources;
     // The cache, when the request, the server and the source all use it: the answer kept for
     // this caller, or the key to keep the new one under, with the range it runs with.
-    let ttl_ms = cache.and_then(|_| cache::source_ttl_ms(&ds.kind, &ds.settings));
+    let ttl_ms = cache.and_then(|(use_, _)| cache::source_ttl_ms(&ds.kind, &ds.settings).map(|t| use_.ttl_ms(t)));
     let (Some((use_, limit)), Some(ttl_ms)) = (cache, ttl_ms) else {
         return (execute(state, ctx, ds, kind, item, run, limits).await, run.range);
     };
@@ -2025,7 +2025,9 @@ async fn run_cached(
         },
     );
     if use_.mode == cache::CacheMode::Use {
-        let found = registry.cache.get(&key, stamp, now);
+        // An answer kept by a run that allowed a longer TTL (another panel with the same query)
+        // is not served past this run's.
+        let found = registry.cache.get(&key, stamp, now).filter(|f| f.info.age_ms <= ttl_ms as u64);
         let served = match found {
             Some(found) => serve_hit(state, ctx, &key, found, &limits).await,
             None => None,

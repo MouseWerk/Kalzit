@@ -139,6 +139,17 @@ width (px)**. **Clicking a row sets** a dashboard variable to the row's value in
 variable** (the name the header shows, or the field name; empty takes the first column); that
 cell becomes a button, so the keyboard reaches it too.
 
+**Footer** adds a row at the bottom that stays in place while you scroll: one calculation per
+column, such as **Total**, **Mean**, **Count** (shown as "4 of 2,000 rows"), **Min**, **Max**,
+**Median**, **p95** or **First** and **Last** (which skip empty cells; **First row** and **Last
+row** do not). **All number columns** sets one calculation for every number column, **Per
+column** sets or overrides it for a column. **Calculates over** all rows of the query or only the
+rows the column filters keep; a line under the table always says which, and "over the N rows
+loaded" when the query's row limit cut the answer. Sums, means and percentiles carry the
+column's unit; counts and the variance are plain numbers. Imported Grafana tables keep their
+footer's first calculation; where Grafana calculates differently (its counter-aware delta, the
+population spread, a row count), the import report says so.
+
 ## Pie chart
 
 **Shape** Pie or Donut. **Labels** None, Percent, Name or Value; **Label position** On the slices
