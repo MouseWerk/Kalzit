@@ -1,10 +1,10 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test as base, expect } from "../support/test";
 import { SCREENS, type Screen } from "./screens";
 import { readSeed, type Seed } from "./seed";
-import { STATE_FILE, settle, stageContext, stagePage, steadyText } from "./stage";
+import { STATE_FILE, settle, setupShot, stageContext, stagePage, steadyText } from "./stage";
 import {
   COMPARABLE,
   HIDPI_SCREENS,
@@ -81,6 +81,26 @@ test.describe("signed out", () => {
       await shoot(screen, page, seed);
       await consoleGuard.drain();
     });
+  }
+});
+
+/**
+ * The setup steps, taken by the setup project on the fresh server (setup.visual.ts) and compared
+ * here, so a difference fails this test while the setup still seeds the server for every screen.
+ */
+test("the setup steps", () => {
+  const width = WIDTHS.find((candidate) => candidate.name === test.info().project.name);
+  if (width === undefined) {
+    throw new Error(`no width for the project ${test.info().project.name}`);
+  }
+  const steps = [...SETUP_STEPS, ...(width.scale === 1 ? [SETUP_DONE] : [])];
+  for (const step of steps) {
+    for (const theme of THEMES) {
+      // Soft: every step is compared and reported, not only the first that differs.
+      expect
+        .soft(readFileSync(setupShot(width, step, theme)))
+        .toMatchSnapshot(shotName(width, step, theme));
+    }
   }
 });
 

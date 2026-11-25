@@ -1,16 +1,24 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Page } from "@playwright/test";
 import { baseUrl, OWNER } from "../support/api";
 import { t } from "../support/i18n";
 import { expect, test } from "../support/test";
 import { seedVisual } from "./seed";
-import { STATE_FILE, settle, stageContext, stagePage, steadyText, VISUAL_DIR } from "./stage";
+import {
+  STATE_FILE,
+  settle,
+  setupShot,
+  stageContext,
+  stagePage,
+  steadyText,
+  VISUAL_DIR,
+} from "./stage";
 import {
   COMPARABLE,
   NOT_COMPARABLE,
   SETUP_DONE,
   SETUP_STEPS,
-  shotName,
   THEMES,
   WIDTHS,
   type Width,
@@ -26,7 +34,30 @@ test.skip(!COMPARABLE, NOT_COMPARABLE);
 const CSS_WIDTHS = WIDTHS.filter((width) => width.scale === 1);
 const HIDPI = WIDTHS.find((width) => width.scale === 2);
 
-/** Pictures of the current step: each width by resizing the page, each theme by the scheme. */
+/** Tries for two equal pictures in a row, as the comparison does before it compares. */
+const STABLE_TRIES = 20;
+
+/** A picture of the page once two in a row are the same. */
+async function stableShot(page: Page, scale: "css" | "device"): Promise<Buffer> {
+  const shoot = () => page.screenshot({ animations: "disabled", caret: "hide", scale });
+  let last = await shoot();
+  for (let attempt = 0; attempt < STABLE_TRIES; attempt++) {
+    // A short pause between two pictures, as the comparison itself waits between its tries.
+    await page.waitForTimeout(100);
+    const next = await shoot();
+    if (next.equals(last)) {
+      return next;
+    }
+    last = next;
+  }
+  throw new Error(`the page did not hold still for two pictures in ${STABLE_TRIES} tries`);
+}
+
+/**
+ * Pictures of the current step, each width by resizing the page and each theme by the scheme.
+ * They are kept for the width projects to compare (screens.visual.ts, "setup steps"): a
+ * difference fails there, while the setup goes on to seed the server for every other screen.
+ */
 async function shootStep(page: Page, step: string, widths: readonly Width[]): Promise<void> {
   for (const width of widths) {
     await page.setViewportSize({ width: width.width, height: width.height });
@@ -34,9 +65,9 @@ async function shootStep(page: Page, step: string, widths: readonly Width[]): Pr
       await page.emulateMedia({ colorScheme: theme });
       await settle(page);
       await steadyText(page);
-      await expect(page).toHaveScreenshot(shotName(width, step, theme), {
-        scale: width.scale === 2 ? "device" : "css",
-      });
+      const file = setupShot(width, step, theme);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, await stableShot(page, width.scale === 2 ? "device" : "css"));
     }
   }
 }

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { VISUAL_NOW } from "./visual/stage";
-import { screensAt, WIDTHS } from "./visual/variants";
+import { COMPARISON, screensAt, WIDTHS } from "./visual/variants";
 
 /**
  * The visual comparison (`npm run visual`): every screen in light and dark at each width of
@@ -22,15 +22,9 @@ process.env.KALZIT_E2E_SERVER_LOG = "visual-server.log";
 const OUTPUT = join(import.meta.dirname, ".output");
 const CI = process.env.CI !== undefined && process.env.CI !== "";
 
-/**
- * How pictures are compared. Per pixel, `threshold` is the color distance (0 to 1, in YIQ) up to
- * which two pixels count as equal, stricter than Playwright's 0.2; beyond it a single pixel fails
- * (no share of pixels may differ). Two runs on one Linux machine give identical pictures; the
- * threshold is not raised to get a run green.
- */
+/** How pictures are taken and compared (COMPARISON in visual/variants.ts holds the threshold). */
 const SCREENSHOT = {
-  threshold: 0.1,
-  maxDiffPixels: 0,
+  ...COMPARISON,
   animations: "disabled",
   caret: "hide",
   scale: "css",
@@ -49,7 +43,7 @@ export default defineConfig({
   timeout: 120_000,
   // A baseline is never written by a failing run: only `npm run visual:update` writes them.
   updateSnapshots: "none",
-  expect: { timeout: 15_000, toHaveScreenshot: SCREENSHOT },
+  expect: { timeout: 15_000, toHaveScreenshot: SCREENSHOT, toMatchSnapshot: COMPARISON },
   reporter: [
     ["list"],
     ["html", { outputFolder: join(OUTPUT, "visual-report"), open: "never" }],
@@ -87,6 +81,7 @@ export default defineConfig({
       },
       expect: {
         timeout: 15_000,
+        toMatchSnapshot: COMPARISON,
         toHaveScreenshot: {
           ...SCREENSHOT,
           scale: width.scale === 2 ? ("device" as const) : ("css" as const),

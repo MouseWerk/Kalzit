@@ -28,6 +28,14 @@ export const COMPARABLE =
 export const NOT_COMPARABLE =
   "the baselines are made on Linux; fonts are drawn differently on other systems";
 
+/**
+ * How pictures are compared. Per pixel, `threshold` is the color distance (0 to 1, in YIQ) up to
+ * which two pixels count as equal, stricter than Playwright's 0.2; beyond it a single pixel fails
+ * (no share of pixels may differ). Two runs on one Linux machine give identical pictures; the
+ * threshold is not raised to get a run green.
+ */
+export const COMPARISON = { threshold: 0.1, maxDiffPixels: 0 } as const;
+
 export const THEMES = ["light", "dark"] as const;
 export type Theme = (typeof THEMES)[number];
 
@@ -75,7 +83,9 @@ export function screensAt(width: Width): RegExp {
     return /.*/;
   }
   const names = HIDPI_SCREENS.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`signed (in|out) (${names.join("|")})$|every (screen|baseline)`);
+  return new RegExp(
+    `signed (in|out) (${names.join("|")})$|every (screen|baseline)|the setup steps$`,
+  );
 }
 
 /**

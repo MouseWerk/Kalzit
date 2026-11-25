@@ -30,6 +30,10 @@ export const VISUAL_DIR = resolve(
 export const STATE_FILE = join(VISUAL_DIR, "owner.json");
 export const SEED_FILE = join(VISUAL_DIR, "seed.json");
 
+/** Where the setup keeps its picture of a step, for the width projects to compare. */
+export const setupShot = (width: { name: string }, step: string, theme: string): string =>
+  join(VISUAL_DIR, "setup", width.name, `${step.replace(/[^a-z0-9]+/gi, "-")}--${theme}.png`);
+
 /**
  * Moves every server timestamp (Unix ms, as the API writes times) of this run to the fixed
  * moment, keeping whole days apart: "created now, expires in 30 days" stays so. The fixture data
