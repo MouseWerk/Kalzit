@@ -273,6 +273,14 @@
       "w": 1440,
       "x": 36480,
       "y": 0
+    },
+    "SettingsRedesign.dc.html": {
+      "expand": "fill",
+      "h": 13920,
+      "title": "Settings: Verwaltung and Konto (draft)",
+      "w": 1440,
+      "x": 42560,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -327,7 +335,8 @@
     "Mails.dc.html",
     "ParityEditors.dc.html",
     "Logs.dc.html",
-    "XYMapTrend.dc.html"
+    "XYMapTrend.dc.html",
+    "SettingsRedesign.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
