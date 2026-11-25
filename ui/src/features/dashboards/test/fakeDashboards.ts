@@ -162,11 +162,21 @@ function summary(d: StoredDashboard) {
     createdAt: d.createdAt,
     updatedAt: current.createdAt,
     updatedBy: current.authorId,
+    updatedByName: current.authorName,
     deletedAt: d.deletedAt,
     tags: current.model.tags ?? [],
     ownerTeam: null,
     teamOnly: false,
   };
+}
+
+/** The layout preview of a model, as the server builds it (panels outside rows only here). */
+function layoutOf(model: DashboardModel) {
+  const items = model.panels
+    .filter((panel) => panel.rowId === undefined)
+    .map((panel) => ({ ...panel.grid, type: panel.type }))
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+  return { items: items.slice(0, 24), more: items.length > 24 };
 }
 
 function detail(d: StoredDashboard, areas?: FakeAreaStates) {
@@ -685,6 +695,38 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     if (parts[0] !== "dashboards") {
       return undefined;
     }
+    // The caller's stars and recently opened dashboards live in the shell's fake.
+    const starredIds = () => new Set(areas.shell.stars.map((s) => s.dashboardId));
+    const openedAt = (id: string) => areas.shell.views.find((v) => v.dashboardId === id)?.at;
+    const listable = (d: StoredDashboard) =>
+      d.deletedAt === null &&
+      visible(d.folderId) &&
+      !trashedChain(d.folderId) &&
+      inScope(d.folderId);
+    if (parts.length === 2 && parts[1] === "counts" && method === "GET") {
+      if (!can("dashboards:read")) return error(403, "forbidden");
+      const extra = unknownParam(search, ["team"]);
+      if (extra !== undefined) return validation(extra);
+      const shown = state.dashboards.filter(listable);
+      const folders = new Map<string | null, number>();
+      const tags = new Map<string, { tag: string; count: number }>();
+      for (const d of shown) {
+        folders.set(d.folderId, (folders.get(d.folderId) ?? 0) + 1);
+        for (const tag of latest(d).model.tags ?? []) {
+          const entry = tags.get(tag.toLowerCase()) ?? { tag, count: 0 };
+          entry.count += 1;
+          tags.set(tag.toLowerCase(), entry);
+        }
+      }
+      const stars = starredIds();
+      return json(200, {
+        total: shown.length,
+        folders: [...folders].map(([folderId, count]) => ({ folderId, count })),
+        starred: shown.filter((d) => stars.has(d.id)).length,
+        opened: shown.filter((d) => openedAt(d.id) !== undefined).length,
+        tags: [...tags.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)),
+      });
+    }
     if (parts.length === 1 && method === "GET") {
       if (!can("dashboards:read")) return error(403, "forbidden");
       const extra = unknownParam(search, [
@@ -695,20 +737,33 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         "limit",
         "cursor",
         "team",
+        "starred",
+        "opened",
+        "layout",
+        "sort",
       ]);
       if (extra !== undefined) return validation(extra);
+      const sort = search.get("sort") ?? "title";
+      if (!["title", "updated", "opened"].includes(sort)) return validation("sort");
       const folderId = search.get("folderId");
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
         return error(404, "not_found");
       }
       const trashed = search.get("trashed") === "true";
       const q = (search.get("q") ?? "").toLowerCase();
+      const stars = starredIds();
+      // Title, a tag or the name of the folder it is in, as on the server.
+      const matches = (d: StoredDashboard) =>
+        latest(d).model.title.toLowerCase().includes(q) ||
+        (q !== "" &&
+          ((latest(d).model.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+            (folderById(d.folderId)?.name.toLowerCase().includes(q) ?? false)));
       const items = state.dashboards
         .filter((d) => (trashed ? d.deletedAt !== null : d.deletedAt === null))
         .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
         .filter((d) => inScope(d.folderId))
-        .filter((d) => latest(d).model.title.toLowerCase().includes(q))
+        .filter(matches)
         .filter((d) => {
           const tag = search.get("tag");
           return (
@@ -716,8 +771,30 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
             (latest(d).model.tags ?? []).some((t) => t.toLowerCase() === tag.toLowerCase())
           );
         })
-        .map((d) => ({ ...summary(d), access: accessOf(d) }))
-        .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+        .filter((d) => search.get("starred") !== "true" || stars.has(d.id))
+        .filter((d) => search.get("opened") !== "true" || openedAt(d.id) !== undefined)
+        .map((d) => {
+          const opened = openedAt(d.id);
+          return {
+            ...summary(d),
+            access: accessOf(d),
+            starred: stars.has(d.id),
+            ...(opened === undefined ? {} : { openedAt: opened }),
+            ...(search.get("layout") === "true" ? { layout: layoutOf(latest(d).model) } : {}),
+          };
+        })
+        .sort((a, b) => {
+          const byTitle = a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+          if (sort === "updated") return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+          if (sort === "opened") {
+            return (
+              (b.openedAt ?? 0) - (a.openedAt ?? 0) ||
+              b.updatedAt - a.updatedAt ||
+              b.id.localeCompare(a.id)
+            );
+          }
+          return byTitle;
+        });
       return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {

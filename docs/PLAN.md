@@ -612,8 +612,8 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      fehlschlägt.
    - Nachzügler aus M6: Erweiterungen aus den Reviews in M6, die keine Fehlerbehebungen sind: Liste
      „Letzte Anmeldungen“ (2FA-Board Frame 4A), erneute Anmeldung beim Anbieter (`max_age`) vor dem
-     Einrichten des ersten zweiten Faktors, arm64-Binaries für die Beispiel-Plugins (`csv-http`),
-     „Mehr laden“ auch in gespeicherten Analysen und in der Vorschau des Panel-Editors,
+     Einrichten des ersten zweiten Faktors, „Mehr laden“ auch in gespeicherten Analysen und in der
+     Vorschau des Panel-Editors,
      Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
      einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
      Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
