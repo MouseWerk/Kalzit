@@ -157,6 +157,43 @@ async fn drop_schema(base: &str, name: &str) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// What a fake Graphite was asked for: the `target` and `maxDataPoints` of every render request.
+#[derive(Clone, Default)]
+pub struct GraphiteAsked(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+
+impl GraphiteAsked {
+    pub fn all(&self) -> Vec<(String, String)> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// A Graphite that answers every `render` with one series of one point and keeps what it was
+/// asked: a target with `$__interval_ms` in it shows the interval a run used, `maxDataPoints`
+/// the points. Its address and the record.
+#[expect(clippy::disallowed_methods, reason = "a fake data source, not an API route")]
+pub async fn fake_graphite() -> (std::net::SocketAddr, GraphiteAsked) {
+    type Params = axum::extract::Query<std::collections::HashMap<String, String>>;
+    let asked = GraphiteAsked::default();
+    let keep = asked.clone();
+    let app = axum::Router::new().route(
+        "/render",
+        axum::routing::get(move |axum::extract::Query(q): Params| {
+            let keep = keep.clone();
+            async move {
+                let target = q.get("target").cloned().unwrap_or_default();
+                let points = q.get("maxDataPoints").cloned().unwrap_or_default();
+                keep.0.lock().unwrap().push((target.clone(), points));
+                let from = q.get("from").and_then(|f| f.parse::<i64>().ok()).unwrap_or(0);
+                axum::Json(serde_json::json!([{ "target": target, "datapoints": [[1.0, from]] }]))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (addr, asked)
+}
+
 /// The database for a test app that runs on either database: a throwaway schema on PostgreSQL
 /// where `KALZIT_TEST_POSTGRES_URL` is set (its `url` goes into `database.url`, and the app keeps
 /// the guard), otherwise `None` (SQLite in the data directory).

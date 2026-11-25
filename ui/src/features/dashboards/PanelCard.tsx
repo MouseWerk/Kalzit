@@ -69,6 +69,7 @@ import {
 } from "./model";
 import { PanelMenu, type PanelMenuItem } from "./PanelMenu";
 import { TIME_PANELS, timeNote } from "./panelTime";
+import { queryLimits } from "./queryLimits";
 import {
   documentsOf,
   errorsOf,
@@ -78,7 +79,6 @@ import {
   type TargetOutcome,
   tracesOf,
 } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -253,7 +253,8 @@ export function PanelCard({
   const kindOf = useSourceKinds(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
-  const note = timeNote(panel);
+  // Hidden by the query options; the inspector still names an own range or shift.
+  const note = panel.hideTimeNote === true ? {} : timeNote(panel);
   const noteText = [
     note.last === undefined ? null : t("dashboardTools.time.last", { range: note.last }),
     note.shift === undefined ? null : t("dashboardTools.time.shifted", { shift: note.shift }),
@@ -806,7 +807,7 @@ export function PanelCard({
             title={title}
             range={range}
             variables={storedQueryVariables(query.variables, query.saved ?? [])}
-            intervalMs={intervalFor(range)}
+            intervalMs={queryLimits(panel, range).intervalMs}
             onClose={() => setSummarizing(false)}
           />
         ) : null}
@@ -878,8 +879,8 @@ function exportPanelData(
 ) {
   const common = {
     timeRange: query.range,
-    maxDataPoints: MAX_DATA_POINTS,
-    intervalMs: intervalFor(query.range),
+    maxDataPoints: queryLimits(panel, query.range).maxDataPoints,
+    intervalMs: queryLimits(panel, query.range).intervalMs,
     format: choice.format,
     language: choice.language,
     ...(choice.frame === undefined ? {} : { frame: choice.frame }),
