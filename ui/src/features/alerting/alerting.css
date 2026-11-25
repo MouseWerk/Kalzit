@@ -348,6 +348,14 @@
     display: none;
   }
 
+  /*
+   * The state and the evaluation time carry times and counts that change by the minute; with
+   * figures of one width a column is as wide at 11:58 as at 10:11.
+   */
+  .alert-rules :is(.alert-table__lead, .alert-rules__roomy) {
+    font-variant-numeric: tabular-nums;
+  }
+
   @container alert-list (width < 80rem) {
     .alert-rules__wide {
       display: none;
@@ -400,6 +408,14 @@
 
     .alert-rules__condition {
       min-width: var(--size-card-min);
+    }
+
+    /*
+     * The name's column gives a step of its least width for that: the source under the name
+     * ends in an ellipsis anyway, and the table keeps room for a state line at its longest.
+     */
+    .alert-rules__name {
+      min-width: calc(var(--size-field) - var(--space-8));
     }
   }
 
