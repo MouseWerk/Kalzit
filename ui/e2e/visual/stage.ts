@@ -228,8 +228,8 @@ export async function settle(page: Page): Promise<void> {
 
 /*
  * The places that show such text, as KALZIT_VISUAL_DISCOVER=1 listed them (steadyRules). Text of
- * the same form elsewhere stays: the trace durations and the AI gateway's address come from the
- * fixtures and are the same in every run.
+ * the same form elsewhere stays: the trace durations and the addresses of the Tempo source and
+ * the AI gateway come from the fixtures and are the same in every run.
  */
 /** Paths in the run folder: locked folder settings, a source's address, file and form. */
 const RUN_FOLDER =
