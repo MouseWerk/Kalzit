@@ -281,6 +281,14 @@
       "w": 1440,
       "x": 38000,
       "y": 0
+    },
+    "MobileNav.dc.html": {
+      "expand": "fill",
+      "h": 5160,
+      "title": "Navigation on narrow screens",
+      "w": 1440,
+      "x": 39520,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -336,7 +344,8 @@
     "ParityEditors.dc.html",
     "Logs.dc.html",
     "XYMapTrend.dc.html",
-    "StartRedesign.dc.html"
+    "StartRedesign.dc.html",
+    "MobileNav.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
