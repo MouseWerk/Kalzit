@@ -282,6 +282,22 @@
       "x": 38000,
       "y": 0
     },
+    "MobileNav.dc.html": {
+      "expand": "fill",
+      "h": 5160,
+      "title": "Navigation on narrow screens",
+      "w": 1440,
+      "x": 39520,
+      "y": 0
+    },
+    "Panels.dc.html": {
+      "expand": "fill",
+      "h": 8960,
+      "title": "Panels: box, menu, Inspect, single view",
+      "w": 1440,
+      "x": 41040,
+      "y": 0
+    },
     "SettingsRedesign.dc.html": {
       "expand": "fill",
       "h": 13920,
@@ -345,6 +361,8 @@
     "Logs.dc.html",
     "XYMapTrend.dc.html",
     "StartRedesign.dc.html",
+    "MobileNav.dc.html",
+    "Panels.dc.html",
     "SettingsRedesign.dc.html"
   ],
   "pages": [],
