@@ -118,13 +118,17 @@ describe("dashboard browser", () => {
     addFolder(server.areas.dashboards, "f-pay", "Payroll", { parentId: "f-hr" });
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("treeitem", { name: "People, Restricted" })).toBeTruthy();
-    expect(within(tree).getByRole("treeitem", { name: "Operations" })).toBeTruthy();
+    expect(
+      await within(tree).findByRole("treeitem", { name: /^People, Restricted( \d+)?$/ }),
+    ).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: /^Operations( \d+)?$/ })).toBeTruthy();
     // The subfolder inherits the restriction and shows it.
-    expect(within(tree).getByRole("treeitem", { name: "Payroll, Restricted" })).toBeTruthy();
+    expect(
+      within(tree).getByRole("treeitem", { name: /^Payroll, Restricted( \d+)?$/ }),
+    ).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
 
-    await user.click(within(tree).getByRole("treeitem", { name: "People, Restricted" }));
+    await user.click(within(tree).getByRole("treeitem", { name: /^People, Restricted( \d+)?$/ }));
     expect(await screen.findByRole("link", { name: "Headcount" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
   });
@@ -133,7 +137,7 @@ describe("dashboard browser", () => {
     setup("editor");
     renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("treeitem", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: /^Operations( \d+)?$/ })).toBeTruthy();
     expect(within(tree).queryByText("People")).toBeNull();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Headcount" })).toBeNull();
@@ -198,7 +202,7 @@ describe("dashboard browser", () => {
     await screen.findByRole("heading", { name: "All dashboards" });
     // At the top level the viewer role decides: nothing to create.
     expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
-    await user.click(await screen.findByRole("treeitem", { name: "Operations" }));
+    await user.click(await screen.findByRole("treeitem", { name: /^Operations( \d+)?$/ }));
     await user.click(await screen.findByRole("button", { name: "New dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "New dashboard" });
     await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Capacity");
@@ -300,10 +304,42 @@ describe("dashboard view", () => {
     renderApp("/dashboards/d-sales/panels/p-orders/edit");
     await screen.findByRole("region", { name: "Edit panel" });
     await waitFor(() => expect(server.areas.dashboards.variableRequests).toHaveLength(1));
-    // No filter bar in the editor; the value is there for the preview all the same.
-    expect(screen.queryByRole("combobox", { name: "city" })).toBeNull();
+    // The dashboard's variable bar stands above the preview, and the preview runs with its value.
+    expect(await screen.findByRole("combobox", { name: "city" })).toBeTruthy();
     await waitFor(() =>
       expect(server.calls.some((c) => JSON.stringify(c.body ?? "").includes('"city":"graz"'))).toBe(
+        true,
+      ),
+    );
+  });
+
+  it("re-runs the panel editor's preview with a variable value chosen there", async () => {
+    const server = setup("editor");
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "region",
+          type: "custom",
+          options: [
+            { value: "eu", label: "Europe" },
+            { value: "us", label: "United States" },
+          ],
+        },
+      ],
+    };
+    const { user } = renderApp("/dashboards/d-sales/panels/p-orders/edit");
+    const editor = await screen.findByRole("region", { name: "Edit panel" });
+    const select = await within(editor).findByRole("combobox", { name: "region" });
+    await waitFor(() =>
+      expect(server.calls.some((c) => JSON.stringify(c.body ?? "").includes('"region":"eu"'))).toBe(
+        true,
+      ),
+    );
+    await pickOption(user, select, "us");
+    await waitFor(() =>
+      expect(server.calls.some((c) => JSON.stringify(c.body ?? "").includes('"region":"us"'))).toBe(
         true,
       ),
     );
@@ -362,6 +398,31 @@ describe("dashboard view", () => {
     expect(optionLabels(select)).not.toContain("No value");
   });
 
+  it("opens a query variable that starts with all values with every option picked", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "city",
+          label: "City",
+          type: "query",
+          multi: true,
+          allByDefault: true,
+          datasourceId: PG_ID,
+          query: { sql: "SELECT city" },
+        },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [
+      { value: "graz", label: "Graz" },
+      { value: "linz", label: "Linz" },
+    ];
+    renderApp("/dashboards/d-sales");
+    expect(await screen.findByRole("button", { name: "City: All" })).toBeTruthy();
+  });
+
   it("keeps the values a viewer picked when the dashboard is saved", async () => {
     const server = setup("editor");
     const stored = storedSales(server);
@@ -377,8 +438,8 @@ describe("dashboard view", () => {
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
-    // The new version opens a fresh view; the pick survives it.
-    await screen.findByRole("button", { name: "Edit" });
+    // Edit mode goes on from the new version; the pick survives it.
+    await screen.findByRole("button", { name: "Finish editing" });
     expect(screen.getByRole("combobox", { name: "region" })).toHaveProperty("value", "us");
   });
 
@@ -710,7 +771,86 @@ describe("editing a dashboard", () => {
     expect(orders?.grid).toEqual({ x: 0, y: 2, w: 13, h: 8 });
     // The panel below was pushed down instead of being covered.
     expect(saved.model.panels.find((p) => p.id === "p-mixed")?.grid.y).toBe(10);
+    // Saving keeps edit mode, on the new version.
+    expect(await screen.findByRole("button", { name: "Finish editing" })).toBeTruthy();
+  });
+
+  it("selects a dragged panel with the drop and takes the click that follows the release", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const card = panelOf("Orders");
+    expect(card.getAttribute("aria-current")).toBeNull();
+    const header = card.querySelector(".panel-card__header") as HTMLElement;
+    // Anything listening for clicks on the page, as React's own listener does.
+    const clicks = vi.fn();
+    document.addEventListener("click", clicks);
+    try {
+      fireEvent.pointerDown(header, { button: 0, buttons: 1, pointerId: 1, clientX: 10 });
+      fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientX: 300 });
+      fireEvent.pointerUp(window, { button: 0, pointerId: 1, clientX: 300 });
+      // The browser's click after the release, where the press began: a drag is not a click,
+      // and a click here drew the whole dashboard at once while the drop was still pending.
+      fireEvent.click(header);
+      expect(clicks).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("click", clicks);
+    }
+    // The drop selected the panel.
+    await waitFor(() => expect(panelOf("Orders").getAttribute("aria-current")).toBe("true"));
+    // Only that one click was taken: the next one is a click again.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const later = vi.fn();
+    document.addEventListener("click", later);
+    try {
+      fireEvent.click(header);
+      expect(later).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("click", later);
+    }
+  });
+
+  it("stays in edit mode after Save, with nothing left unsaved", async () => {
+    const server = setup("editor");
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await panelAction(user, "Delete “Slow”");
+    const save = screen.getByRole("button", { name: "Save dashboard" });
+    await user.click(save);
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Save dashboard" })).toBeNull(),
+    );
+    // The toolbar keeps its buttons where they were: Finish editing, and Save with nothing to save.
+    expect(screen.getByRole("button", { name: "Finish editing" })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save dashboard" }).hasAttribute("disabled")).toBe(
+        true,
+      ),
+    );
+    // Finishing now asks nothing.
+    await user.click(screen.getByRole("button", { name: "Finish editing" }));
     expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("offers Save when finishing with unsaved changes, and finishes after it", async () => {
+    const server = setup("editor");
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await panelAction(user, "Delete “Slow”");
+    await user.click(screen.getByRole("button", { name: "Finish editing" }));
+    const ask = screen.getByRole("dialog", { name: "Finish editing with unsaved changes?" });
+    expect(within(ask).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(within(ask).getByRole("button", { name: "Discard" })).toBeTruthy();
+    await user.click(within(ask).getByRole("button", { name: "Save" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Finish editing" })).toBeNull();
   });
 
   it("puts Edit, then Done and Save, before the overflow menu, so a second click adds nothing", async () => {

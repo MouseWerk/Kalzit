@@ -30,6 +30,7 @@
   "dashboardTools.repeat.rowVariable": "Repeat the row for each value of",
   "dashboardTools.repeat.rowHint": "Shows the row with all its panels once per selected value of a variable that allows several values.",
   "dashboardTools.variables.multi": "Allow several values",
+  "dashboardTools.variables.allByDefault": "Start with every value picked",
   "dashboardTools.variables.multiDefaultHint": "Separate values with commas.",
   "dashboardTools.tags.label": "Tags",
   "dashboardTools.tags.hint": "Separate tags with commas. Links and playlists find dashboards by tag.",

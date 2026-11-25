@@ -13,6 +13,7 @@
   "explore.running": "Wird ausgeführt…",
   "explore.hint": "Schreib eine Abfrage und führe sie mit {keys} aus. Das Ergebnis erscheint hier in einer passenden Visualisierung.",
   "explore.result": "Ergebnis",
+  "explore.tab.logs": "Logs",
   "explore.tab.result": "Ergebnis",
   "explore.tab.inspect": "Untersuchen",
   "explore.tab.documents": "Dokumente",

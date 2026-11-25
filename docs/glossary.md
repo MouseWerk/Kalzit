@@ -36,6 +36,7 @@ catalog.
 | Eigentümer-Team | Owner team | Das Team, dem ein Ordner oder Dashboard gehört; nur es (und Freigaben) bearbeitet ihn. | Besitzerteam, Owner-Team |
 | Sichtbarkeit | Visibility | Wer Inhalte eines Teams außer dem Team sieht: alle mit Zugriff (nur lesen) oder „Nur Team“. | |
 | Panel | Panel | Eine Visualisierung in einem Dashboard. | Kachel, Widget |
+| Karten | Cards | Die Darstellung einer Liste, etwa der Dashboards, als Karten mit Vorschau statt als Tabelle; die Karten sind keine Panels. | Kacheln (für diese Ansicht), Tiles (in English) |
 | Bibliothekspanel | Library panel | Ein Panel, das an einer Stelle gepflegt und in mehrere Dashboards eingefügt wird; verknüpfte Kopien übernehmen jede Änderung. | Bibliotheks-Panel (im Deutschen) |
 | Schwellenwert | Threshold | Ein Wert, ab dem ein Panel eine andere Farbe oder Stufe zeigt. | Schwellwert (im Deutschen) |
 | Variable | Variable | Ein Platzhalter wie `$host` in Abfragen und Titeln, gesetzt in der Leiste über dem Dashboard oder durch einen Klick auf eine Zeile, ein Dokument oder einen Knoten; geht als Parameter an die Datenbank, nie als Text in die Abfrage. | |
@@ -45,6 +46,9 @@ catalog.
 | Explore | Explore | Ad-hoc-Abfragen ohne Dashboard, mit Verlauf. Name der Funktion, nicht übersetzt. | Erkunden |
 | Auswertung | Analysis | Gespeicherte Abfrage mit Schritten und Ansicht, teilbar im Team. | Analyse (als Name), Report |
 | Dokument | Document | Ein Eintrag aus einer Dokumentdatenbank (MongoDB), als Baum. | Datensatz (für Dokumente) |
+| Logs | Logs | Die Ansicht in Explore, die Dokumente als Logzeilen zeigt: Zeit, Text und Level je Dokument, mit dem Volumen je Level darüber. Keine eigene Datenform; Name in beiden Sprachen. | Protokolle |
+| Logzeile | Log line | Ein Eintrag in der Logs-Ansicht; dahinter steht genau ein Dokument der Quelle. | Protokollzeile |
+| Level | Level | Die Stufe einer Logzeile: Kritisch, Fehler, Warnung, Info, Debug, Trace oder unbekannt; als Punkt und Wort, nie nur als Farbe. | Schweregrad |
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
@@ -89,6 +93,43 @@ catalog.
 | Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
 | API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
 | Handbuch | Handbook | Kalzits Anleitung in der App: im Programm enthalten, durchsuchbar, nur zum Lesen; Hilfe > Handbuch und „Hilfe zu dieser Seite“. Die Dateien im Repository (`docs/guide`) heißen weiter „Anleitung“ / “guide”. | |
+| Logs | Logs | Die Ansicht und das Panel für Logzeilen aus Loki, Elasticsearch, OpenSearch und Dokument-Quellen. Eine Ansicht auf die Datenform `documents`, die Zeit, Text und Level liest; keine eigene Datenform und keine Projektion. In beiden Sprachen „Logs“. | |
+| Logzeile | Log line | Ein Eintrag in der Logs-Ansicht: ein Dokument mit Zeitpunkt, Text und, wenn vorhanden, Level. | |
+| Level | Level | Die Schwere einer Logzeile, in jeder Quelle auf sieben Werte gebracht: Kritisch, Fehler, Warnung, Info, Debug, Trace, unbekannt (Critical, Error, Warning, Info, Debug, Trace, unknown). Als Punkt und Wort gezeigt, nie nur als Farbe. | |
+| Volumen je Level | Volume by level | Das gestapelte Balkendiagramm über der Logs-Liste: Anzahl der Logzeilen je Level über den ganzen Zeitraum; aus einer Zählabfrage der Quelle, sonst aus den geladenen Zeilen und dann so beschriftet. | |
+| Umgebung zeigen | Show context | Die Logzeilen direkt vor und nach einer Zeile im selben Strom, ohne die Textfilter der Abfrage; eine neue Abfrage, braucht `datasources:query`. | |
+| Freie Filter | Ad hoc filters | Variablen-Art: Filter aus Feld, Vergleich und Wert, die als Chips in der Variablenleiste stehen und für alle Panels einer Datenquelle gelten; der Server baut sie in die Abfrage ein, Werte als Parameter. | |
+| Danach filtern / Herausfiltern | Filter for / Filter out | Aktionen an einem Wert in einem Panel oder einer Logzeile: nur Zeilen mit diesem Wert behalten oder sie weglassen. In Explore ändert das die Abfrage sichtbar, auf einem Dashboard setzt es einen Chip der Freien Filter. | |
+| Schalter (Variable) | Switch (variable) | Variablen-Art: an oder aus, mit je einem Wert, als Schalter in der Variablenleiste. | |
+| Datenquelle (Variable) | Data source (variable) | Variablen-Art: wählt die Datenquelle aller Panels, die sie nutzen; zeigt jeder Person nur Quellen, die sie abfragen darf. | |
+| „Alle“ | “All” | Der Eintrag einer Auswahl-Variable, der alle Werte meint: geht als Liste aller Werte an die Datenquelle, oder als ein eigener Wert für „Alle“, immer als Parameter. | |
+| Abfrage-Optionen | Query options | Die Zeile über den Abfragen im Panel-Editor: Höchstzahl Datenpunkte, kleinstes Intervall, eigener Zeitraum, Zeitverschiebung, Zeitangabe ausblenden. | |
+| Besonderer Wert | Special value | Art einer Wertzuordnung für Null, NaN, Leer, Wahr und Falsch. | |
+| Fußzeile | Footer | Die Zeile unter einer Tabelle mit einer Rechnung je Spalte (Summe, Mittel, Anzahl, …); sagt, worüber sie rechnet. | |
+| Trend (Panel) | Trend (panel) | Panel wie die Zeitreihe, dessen X-Achse ein Zahlfeld mit aufsteigenden Werten ist statt der Zeit. | |
+| Trendlinie | Trend line | Der neue Name des Schritts „Trend“, der eine Trendlinie durch die Werte legt. Die Kataloge nennen ihn noch „Trend“; umbenannt wird er mit dem PR, der das Panel „Trend“ einführt, damit Panel und Schritt nicht gleich heißen. | |
+| XY-Diagramm | XY chart | Panel, das zwei Zahlfelder gegeneinander stellt: jede Zeile ein Punkt, wahlweise verbunden. | |
+| Ebene (Karte) | Layer (map) | Eine Art, Orte auf der Karte zu zeichnen: Punkte, Dichte, Flächen, Linien (Points, Density, Areas, Lines); höchstens vier je Karte. | |
+| Ort (Karte) | Place (map) | Woher die Karte die Lage einer Zeile nimmt: Koordinaten, Geohash oder Nachschlagen eines Länder- oder Regionscodes; Zeilen „ohne Ort“ werden gezählt und genannt. | |
+| Felder ordnen und umbenennen | Arrange and rename fields | Schritt: Reihenfolge und Namen der Felder, ein- und ausblenden. | |
+| Felder nach Name filtern | Filter fields by name | Schritt: nur Felder behalten, deren Name passt. | |
+| Typ umwandeln | Convert type | Schritt: Text zu Zahl, Zeit oder Wahrheitswert. | |
+| Felder herauslösen | Extract fields | Schritt: neue Felder aus JSON oder Schlüssel=Wert in einem Textfeld. | |
+| Text formatieren / Zeit formatieren | Format text / Format time | Schritte: Text groß, klein, gekürzt; Zeitpunkt als Text in einem Muster. | |
+| Zeilen filtern | Filter rows | Schritt: Zeilen nach Werten behalten oder weglassen. | |
+| Sortieren / Begrenzen | Sort / Limit | Schritte: Zeilen nach Feldern ordnen; nur die ersten N Zeilen behalten. | |
+| Nach Labels verknüpfen | Join by labels | Schritt: Serien über ihre Labels zu einer Tabelle verbinden. | |
+| Untereinander stellen / Nebeneinander stellen | Stack tables / Place side by side | Schritte: Tabellen mit gleichen Feldern zu einer machen; alle Felder aller Abfragen in eine Tabelle stellen. | |
+| Nachschlagen | Look up | Schritt, der Werte aus einer Liste ergänzt (etwa Land zu Code); auch die Art, wie die Karte einen Ort aus einem Code findet. | |
+| Serien zu Zeilen / Zeilen zu Feldern / Labels zu Feldern | Series to rows / Rows to fields / Labels to fields | Schritte, die eine Tabelle umformen, ohne Werte zu ändern. | |
+| Transponieren | Transpose | Schritt: Zeilen und Spalten tauschen. | |
+| Zur Matrix gruppieren | Group to matrix | Schritt: zwei Felder als Zeile und Spalte, eines als Wert. | |
+| Nach Werten aufteilen | Split by values | Schritt: eine Tabelle je Wert eines Feldes. | |
+| Zeitreihen vorbereiten | Prepare time series | Schritt: lange Tabelle zu einer Serie je Wert und zurück. | |
+| Verschachtelte Tabellen | Nested tables | Schritt: Gruppen als Zeilen, die sich aufklappen. | |
+| Reduzieren | Reduce | Schritt: jede Serie auf einen Wert bringen (Letzter, Summe, Mittel, …). | |
+| Histogramm (Schritt) / Heatmap berechnen | Histogram (step) / Calculate heatmap | Schritte: Werte in Klassen zählen; Klassen über Zeit und Wert. | |
+| Optionen aus Abfrageergebnis | Options from query result | Schritt: Min, Max, Einheit und Schwellenwerte eines Panels aus einer Abfrage setzen. | |
 
 ## Schreibweise / Style
 

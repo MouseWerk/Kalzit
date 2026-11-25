@@ -323,6 +323,7 @@ impl DataSourcePlugin for ClickHouse {
             Some(f) => f,
             None => FrameBuilder::new(Vec::new(), req.limits.max_rows, req.limits.budget.clone()),
         };
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql);
         for (name, type_name) in reader.unsupported {
             let message = format!("{name} has the type {type_name}, which is shown as text; convert it in the query");

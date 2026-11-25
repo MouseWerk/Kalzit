@@ -182,6 +182,7 @@
   "shell.start.changeOf.dashboard.created": "{actor} hat das Dashboard „{target}“ angelegt",
   "shell.start.changeOf.dashboard.saved": "{actor} hat „{target}“ gespeichert",
   "shell.start.changeOf.dashboard.version_restored": "{actor} hat eine frühere Version von „{target}“ wiederhergestellt",
+  "shell.start.changeOf.dashboard.units_corrected": "Kalzit hat die Grafana-Einheiten von „{target}“ übernommen",
   "shell.start.changeOf.dashboard.trashed": "{actor} hat „{target}“ in den Papierkorb verschoben",
   "shell.start.changeOf.dashboard.restored": "{actor} hat „{target}“ wiederhergestellt",
   "shell.start.changeOf.datasource.created": "{actor} hat die Datenquelle „{target}“ hinzugefügt",

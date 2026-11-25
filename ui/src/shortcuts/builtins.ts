@@ -283,6 +283,13 @@ export const BUILTIN_SHORTCUTS = [
     note: "shortcuts.explore.aiStopNote",
     overrides: "layer.close",
   },
+  {
+    id: "explore.logsLevel",
+    area: "explore",
+    keys: [combo("Mod", "Click")],
+    label: "shortcuts.explore.logsLevel",
+    note: "shortcuts.explore.logsLevelNote",
+  },
 
   // Query editors
   {

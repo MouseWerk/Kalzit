@@ -155,6 +155,8 @@
     --z-tooltip: 275;
     --z-toast: 300;
     --z-skip-link: 400;
+    /* The boot state of index.html: over everything until the first page has rendered. */
+    --z-boot: 500;
 
     /* Compact density, as in developer tools: 240 px sidebar, 56 px rail, 32 px rows. */
     --sidebar-width: 15rem;
@@ -186,6 +188,8 @@
     /* A data source kind's mark: in the picker's cards, and next to a name in lists. */
     --size-kind-mark: 2.5rem;
     --size-kind-mark-small: 1.5rem;
+    /* The bar of the boot state under the mark (index.html). */
+    --size-boot-bar: 6rem;
     /* A family glyph in a kind's tile: its drawing fills about 70 % of the icon box, so at 80 % it
        covers as much of the tile as a logo does (--size-kind-logo). */
     --size-kind-glyph: 80%;
@@ -241,6 +245,8 @@
     --duration-normal: 180ms;
     /* The sidebar's slide between the column and the icon rail. */
     --duration-sidebar: 220ms;
+    /* The boot state's mark waits this long, so a fast load shows only the canvas. */
+    --duration-boot-delay: 150ms;
     --easing: cubic-bezier(0.2, 0, 0, 1);
     /*
      * Icons in motion (board Icons.dc.html): a press, a quarter turn, the check drawing itself,
@@ -900,7 +906,6 @@
     --heat-8: light-dark(oklch(34% 0.11 252), oklch(87% 0.08 238));
 
     --font-size-display: 2rem;
-    --size-gauge: 12rem;
     --size-picker-card: 7rem;
     --size-bar-gauge: 1.5rem;
   }
@@ -911,7 +916,13 @@
   :root {
     /* A span annotation's band: a light wash that keeps the series lines above it readable. */
     --annotation-fill: light-dark(oklch(47% 0.014 260 / 0.12), oklch(74% 0.01 260 / 0.16));
-    --annotation-handle: 0.625rem;
+    --annotation-handle: 0.5rem;
+    /* The marker's target around that dot (WCAG 2.5.8). */
+    --annotation-hit: 1.5rem;
+    /* A point annotation is a thin dashed line in its color at this strength, a span a band. */
+    --annotation-line-alpha: 0.7;
+    --annotation-band-alpha: 0.14;
+    --annotation-dash: 0.25rem;
     /* Kiosk mode's strip at the top for its way out: a control and a gap. */
     --space-kiosk-top: calc(var(--control-height) + var(--space-4));
   }
