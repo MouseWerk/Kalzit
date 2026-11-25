@@ -4,6 +4,8 @@ name: Visual
 #
 #   gh workflow run visual.yml --ref <branch>                   compare with the baselines
 #   gh workflow run visual.yml --ref <branch> -f update=true    write the baselines that changed
+#   gh workflow run visual.yml --ref <branch> -f discover=true  list text that differs by run
+#                                                               outside its known places
 #
 # The comparison also runs in ci.yml's Linux e2e job and in tools/local-ci/linux.sh. This
 # workflow is for writing baselines on Linux without a Linux machine at hand: with `update` it
@@ -23,9 +25,6 @@ on:
         description: List text that differs by run outside the known places (KALZIT_VISUAL_DISCOVER)
         type: boolean
         default: false
-  # TEMPORARY while the baselines move to MouseWerk/kalzit-visual; removed before review.
-  push:
-    branches: [ci/visual-regression]
 
 concurrency:
   group: visual-${{ github.ref }}-${{ github.run_id }}
@@ -46,10 +45,8 @@ jobs:
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
-      VISUAL_UPDATE: ${{ inputs.update == true || contains(github.event.head_commit.message, '[visual-update]') }}
-      KALZIT_VISUAL_DISCOVER: ${{ (inputs.discover == true || contains(github.event.head_commit.message, '[visual-discover]')) && '1' || '' }}
-      # TEMPORARY: an empty checkout to write the first baselines into.
-      VISUAL_EMPTY: ${{ contains(github.event.head_commit.message, '[visual-empty]') }}
+      VISUAL_UPDATE: ${{ inputs.update == true }}
+      KALZIT_VISUAL_DISCOVER: ${{ inputs.discover == true && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -139,7 +136,6 @@ jobs:
           repo="$(sed -n 's/^repo=//p' ui/e2e/visual/baselines.lock)"
           commit="$(sed -n 's/^commit=//p' ui/e2e/visual/baselines.lock)"
           git init -q "$RUNNER_TEMP/kalzit-visual"
-          [ "$VISUAL_EMPTY" = true ] && exit 0
           git -C "$RUNNER_TEMP/kalzit-visual" fetch -q --depth 1 "$repo" "$commit"
           git -C "$RUNNER_TEMP/kalzit-visual" -c advice.detachedHead=false checkout -q FETCH_HEAD
       - name: Write the baselines that changed
