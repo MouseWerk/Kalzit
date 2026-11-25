@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import { test as base, expect } from "../support/test";
 import { SCREENS, type Screen } from "./screens";
 import { readSeed, type Seed } from "./seed";
-import { dynamicRegions, STATE_FILE, settle, stageContext, stagePage } from "./stage";
+import { STATE_FILE, settle, stageContext, stagePage, steadyText } from "./stage";
 import {
   COMPARABLE,
   HIDPI_SCREENS,
@@ -57,8 +57,9 @@ async function shoot(screen: Screen, page: Page, seed: Seed) {
     await tab.goto(screen.path(seed));
     await screen.ready(tab, seed, "en");
     await settle(tab);
+    await steadyText(tab, seed.dynamic);
     await expect(tab).toHaveScreenshot(shotName(width, screen.name, theme), {
-      mask: [...(await dynamicRegions(tab, seed.dynamic)), ...(screen.masks?.(tab) ?? [])],
+      mask: screen.masks?.(tab) ?? [],
     });
   }
 }

@@ -185,9 +185,17 @@ export async function seedVisual(page: Page): Promise<Seed> {
     await request.get("/api/admin/instances"),
     "read the instances",
   );
+  // The build: its commit and date change with every build, not with the screens.
+  const about = await ok<{ commit?: string; buildDate?: string }>(
+    await request.get("/api/about"),
+    "read the build",
+  );
   const dynamic = cluster.instances
     .flatMap((one) => [one.id, one.id.slice(0, 8), one.host])
-    .filter((text) => text.length >= 3);
+    .concat(about.commit ?? "", about.buildDate ?? "")
+    .filter((text) => text.length >= 3 && text !== "unknown");
+  // How many answers the query cache keeps and how often it was hit grows with the run.
+  const cache = await ok<unknown>(await request.get("/api/admin/query-cache"), "read the cache");
   await ruleEvaluated(request, orgId, extras.ruleId);
   // Explore keeps what was run; the pages that run queries would add to it in any order.
   const history = await ok<unknown>(
@@ -204,7 +212,11 @@ export async function seedVisual(page: Page): Promise<Seed> {
     documentsSourceId,
     graphSourceId,
     publicToken,
-    frozen: { "/explore/history(\\?|$)": history, ...usage },
+    frozen: {
+      "/explore/history(\\?|$)": history,
+      "^/api/admin/query-cache$": cache,
+      ...usage,
+    },
     dynamic,
   };
   writeFileSync(SEED_FILE, JSON.stringify(seed, null, 2));

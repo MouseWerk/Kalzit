@@ -139,7 +139,8 @@ new route is photographed too), the four setup steps and Explore with each resul
   times the server stamps during the run are moved to that moment; counters that grow with the
   run (page views of public links, recent dashboards, the Explore history) are held still;
   animations, the caret and hover are off. What differs by machine (the run folder, the server's
-  port, the host name, ids the server makes up) is masked. Two runs on the same commit give no
+  port, the host name, ids the server makes up, measured times, the commit) is replaced by a
+  placeholder; text is drawn in grayscale. Two runs on the same commit give no
   difference.
 - **Threshold.** Per pixel, a color distance of 0.1 (YIQ, 0 to 1) counts as equal; one pixel
   beyond it fails the screen. The threshold is not raised to get a run green; a failing

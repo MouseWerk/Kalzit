@@ -1,11 +1,11 @@
 import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrowserContext, Locator, Page, Route } from "@playwright/test";
+import type { BrowserContext, Page, Route } from "@playwright/test";
 
 /**
  * What makes a page look the same in every run: a fixed moment, server times moved to it, no
- * counters that grow with the run, a seeded random number generator, and masks over the few
+ * counters that grow with the run, a seeded random number generator, and placeholders for the few
  * things that differ by machine (paths of the run folder, the server's port, the host name).
  */
 
@@ -172,57 +172,58 @@ export async function settle(page: Page): Promise<void> {
 }
 
 /**
- * Text that differs by machine or run, as regular expression sources: the run folder (data
- * directory, fixture paths), the server's address with its free port (link addresses), the
- * host name, ids the server makes up (`extra`: those the seed read) and measured times ("10 ms":
- * how long a query or a check took).
+ * Text that differs by machine or run, as regular expression sources: paths in the run folder
+ * (data directory, fixture files), the server's address with its free port (link addresses), the
+ * host name, ids the server makes up, what the seed read (`extra`: the instance id, the commit
+ * and the build date), measured times ("10 ms": how long a query or a check took) and the free
+ * disk space.
  */
 function dynamicText(extra: readonly string[]): string[] {
   const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const host = literal(hostname());
   return [
     ...extra.map((text) => `\\b${literal(text)}\\b`),
-    "[\\\\/]run-\\d{10,}-\\d+[\\\\/]",
+    "\\S*[\\\\/]run-\\d{10,}-\\d+[\\\\/]\\S*",
     "127\\.0\\.0\\.1:\\d{2,5}",
     "localhost:\\d{2,5}",
     "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
     ...(host.length >= 3 ? [`\\b${host}\\b`] : []),
     "\\b\\d[\\d,.]*\\s?ms\\b",
+    "\\b\\d[\\d,.]*\\s?[kMGT]?B free\\b",
   ];
 }
 
-/** The attribute that marks an element to mask; set fresh before every picture. */
-const MASK = "data-visual-mask";
+/** What stands in for text that differs by machine or run. */
+export const STEADY = "•••";
 
 /**
- * Marks the smallest elements whose text, value or title holds machine- or run-dependent text and
- * answers a locator for them, for the comparison's `mask` option.
+ * Replaces text that differs by machine or run (dynamicText) with the same placeholder in every
+ * run, in text and in fields, just before a picture. The placeholder keeps the boxes around it
+ * the same size in every run, which a mask over the varying text would not.
  */
-export async function dynamicRegions(
-  page: Page,
-  extra: readonly string[] = [],
-): Promise<Locator[]> {
+export async function steadyText(page: Page, extra: readonly string[] = []): Promise<void> {
   await page.evaluate(
-    ({ sources, attribute }) => {
-      const patterns = sources.map((source) => new RegExp(source, "i"));
-      const matches = (text: string | null | undefined) =>
-        text !== null && text !== undefined && patterns.some((pattern) => pattern.test(text));
-      for (const old of document.querySelectorAll(`[${attribute}]`)) {
-        old.removeAttribute(attribute);
-      }
+    ({ sources, placeholder }) => {
+      const patterns = sources.map((source) => new RegExp(source, "gi"));
+      const steady = (text: string) =>
+        patterns.reduce((result, pattern) => result.replace(pattern, placeholder), text);
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        if (matches(node.textContent)) {
-          node.parentElement?.setAttribute(attribute, "");
+        const text = node.textContent ?? "";
+        const replaced = steady(text);
+        if (replaced !== text) {
+          node.textContent = replaced;
         }
       }
-      for (const field of document.querySelectorAll("input, textarea")) {
-        if (matches((field as HTMLInputElement).value)) {
-          field.setAttribute(attribute, "");
+      for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+        "input, textarea",
+      )) {
+        const replaced = steady(field.value);
+        if (replaced !== field.value) {
+          field.value = replaced;
         }
       }
     },
-    { sources: dynamicText(extra), attribute: MASK },
+    { sources: dynamicText(extra), placeholder: STEADY },
   );
-  return [page.locator(`[${MASK}]`)];
 }

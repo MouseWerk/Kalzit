@@ -4,7 +4,7 @@ import { baseUrl, OWNER } from "../support/api";
 import { t } from "../support/i18n";
 import { expect, test } from "../support/test";
 import { seedVisual } from "./seed";
-import { STATE_FILE, settle, stageContext, stagePage, VISUAL_DIR } from "./stage";
+import { STATE_FILE, settle, stageContext, stagePage, steadyText, VISUAL_DIR } from "./stage";
 import {
   COMPARABLE,
   NOT_COMPARABLE,
@@ -33,6 +33,7 @@ async function shootStep(page: Page, step: string, widths: readonly Width[]): Pr
     for (const theme of THEMES) {
       await page.emulateMedia({ colorScheme: theme });
       await settle(page);
+      await steadyText(page);
       await expect(page).toHaveScreenshot(shotName(width, step, theme), {
         scale: width.scale === 2 ? "device" : "css",
       });

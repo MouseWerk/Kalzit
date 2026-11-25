@@ -61,6 +61,12 @@ export default defineConfig({
     locale: "en-US",
     timezoneId: "UTC",
     contextOptions: { reducedMotion: "reduce" },
+    // Grayscale text everywhere: Chromium draws text with colored subpixel edges on some layers
+    // and in gray on others, by compositing decisions that vary between runs. One color profile
+    // and no font hinting, so other Linux machines draw the same pixels.
+    launchOptions: {
+      args: ["--disable-lcd-text", "--force-color-profile=srgb", "--font-render-hinting=none"],
+    },
     trace: "retain-on-failure",
   },
   projects: [
