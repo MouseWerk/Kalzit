@@ -537,6 +537,8 @@ mod tests {
             variables: &variables,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         let sql = "SELECT $__timeEpoch(am), $__timeGroup(am, 1m) AS g FROM e ORDER BY am DESC";
         let prepared = sql::prepare(sql, Engine::Sqlite, &ctx).unwrap();
