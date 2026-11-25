@@ -257,6 +257,7 @@ describe("catalogs", () => {
       "TraceQL",
       "Operation",
       "Tag",
+      "Tags",
       // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
       "CORS",
       "Apps",
