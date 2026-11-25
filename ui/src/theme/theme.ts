@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { withoutBase } from "../lib/basePath";
 import { readPreference, writePreference } from "../lib/storage";
 
 /**
@@ -21,6 +22,10 @@ export type DarkVariant = (typeof DARK_VARIANTS)[number];
 export const THEME_STORAGE_KEY = "kalzit.theme";
 export const LIGHT_VARIANT_STORAGE_KEY = "kalzit.themeLight";
 export const DARK_VARIANT_STORAGE_KEY = "kalzit.themeDark";
+// The server's default variants as last seen on a page before sign-in: a cache for the first
+// paint there, not a preference, never adopted by an account.
+export const DEFAULT_LIGHT_CACHE_KEY = "kalzit.defaultThemeLight";
+export const DEFAULT_DARK_CACHE_KEY = "kalzit.defaultThemeDark";
 
 export function isTheme(value: unknown): value is Theme {
   return (THEMES as readonly unknown[]).includes(value);
@@ -43,9 +48,38 @@ function readStored<T extends string>(
   return is(stored) ? stored : fallback;
 }
 
+/**
+ * The pages before sign-in (sign in, setup, the pages behind mailed links), as the routes in
+ * app/baseRoutes.tsx name them; each also covers the paths below it. They show the server's
+ * default variants, never one an account stored. public/theme-boot.js keeps the same list.
+ */
+export const PRE_SIGN_IN_PATHS = [
+  "/login",
+  "/anmelden",
+  "/setup",
+  "/invite",
+  "/reset-password",
+  "/register",
+  "/confirm-email",
+] as const;
+
+/** Whether a path of the app (without the server's sub-path) is a page before sign-in. */
+export function isPreSignInPath(path: string): boolean {
+  return PRE_SIGN_IN_PATHS.some((page) => path === page || path.startsWith(`${page}/`));
+}
+
+function onPreSignInPage(): boolean {
+  return typeof window !== "undefined" && isPreSignInPath(withoutBase(window.location.pathname));
+}
+
 let current: Theme = readStored(THEME_STORAGE_KEY, isTheme, "system");
-let lightVariant: LightVariant = readStored(LIGHT_VARIANT_STORAGE_KEY, isLightVariant, "light");
-let darkVariant: DarkVariant = readStored(DARK_VARIANT_STORAGE_KEY, isDarkVariant, "dark");
+// Before sign-in the server's default variants as last seen, so no account's variant flashes.
+let lightVariant: LightVariant = onPreSignInPage()
+  ? readStored(DEFAULT_LIGHT_CACHE_KEY, isLightVariant, "light")
+  : readStored(LIGHT_VARIANT_STORAGE_KEY, isLightVariant, "light");
+let darkVariant: DarkVariant = onPreSignInPage()
+  ? readStored(DEFAULT_DARK_CACHE_KEY, isDarkVariant, "dark")
+  : readStored(DARK_VARIANT_STORAGE_KEY, isDarkVariant, "dark");
 // A theme shown on top of the current one without being remembered (the setup's defaults).
 let preview: Theme | null = null;
 const listeners = new Set<() => void>();
@@ -127,21 +161,33 @@ export function previewTheme(theme: Theme | null): void {
 }
 
 /**
- * The server's default theme and variants on the pages before sign-in. The mode applies only for a
- * visitor who never chose one in this browser. The variants always apply there: they are chosen
- * only in the account settings (board Themes, frame 7), and a variant an account stored in this
- * browser stays stored for its next visit. Nothing is remembered, so a later default reaches the
- * visitor too.
+ * The server's default theme and variants, from the pages around sign-in (and help). The mode
+ * applies only for a visitor who never chose one in this browser, and so do the variants on other
+ * pages (help, for someone signed in). On the pages before sign-in (`PRE_SIGN_IN_PATHS`) the
+ * variants apply over a variant an account stored: they are chosen only in
+ * the account settings (board Themes, frame 7), and the account's variant stays stored for its
+ * next visit. No preference is written, so a later default reaches the visitor too; the default
+ * variants only go to their cache keys, for the first paint of the next page before sign-in.
  */
 export function applyDefaultTheme(theme: unknown, light?: unknown, dark?: unknown): void {
+  if (isLightVariant(light)) {
+    writePreference(DEFAULT_LIGHT_CACHE_KEY, light);
+  }
+  if (isDarkVariant(dark)) {
+    writePreference(DEFAULT_DARK_CACHE_KEY, dark);
+  }
+  const preSignIn = onPreSignInPage();
   change(() => {
     if (isTheme(theme) && readPreference(THEME_STORAGE_KEY) === null) {
       current = theme;
     }
-    if (isLightVariant(light)) {
+    if (
+      isLightVariant(light) &&
+      (preSignIn || readPreference(LIGHT_VARIANT_STORAGE_KEY) === null)
+    ) {
       lightVariant = light;
     }
-    if (isDarkVariant(dark)) {
+    if (isDarkVariant(dark) && (preSignIn || readPreference(DARK_VARIANT_STORAGE_KEY) === null)) {
       darkVariant = dark;
     }
   });

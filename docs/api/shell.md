@@ -150,7 +150,9 @@ and one dark variant, both always kept: Light shows the light variant, Dark the 
 switches between the two with the device, High contrast has no variants. A variant changes only
 the neutral surfaces, text, lines, focus and the monochrome chart colors. `<html>` carries the
 mode in `data-theme` and the variants in `data-light` and `data-dark`; `public/theme-boot.js`
-sets all three from the browser's storage before the first paint.
+sets all three from the browser's storage before the first paint. On the pages before sign-in it
+takes the variants from `kalzit.defaultThemeLight` and `kalzit.defaultThemeDark` instead: the
+server's default variants as last seen there, a cache that is never a preference.
 
 **Language and theme in the browser.** The UI decides in this order, for the language, the mode
 and each variant alike:

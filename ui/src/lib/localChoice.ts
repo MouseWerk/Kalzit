@@ -3,11 +3,12 @@ import { THEMES, type Theme } from "../theme/theme";
 import { readPreference, writePreference } from "./storage";
 
 /**
- * Language and theme mode someone chose explicitly in this browser while no account's preferences
- * applied: on the sign-in and setup pages (the variants are chosen only in the account settings). Kept apart from the values the UI applies (which also
- * come from an account's preferences or the server's default), so signing in adopts only a real
- * choice, never what the previous user of a shared browser had. Tagged with the account it
- * belongs to (none on the sign-in page) and cleared on sign-out.
+ * Language and theme mode someone chose explicitly in this browser while no account's
+ * preferences applied: on the sign-in and setup pages (the variants are chosen only in the
+ * account settings). Kept apart from the values the UI applies (which also come from an
+ * account's preferences or the server's default), so signing in adopts only a real choice, never
+ * what the previous user of a shared browser had. Tagged with the account it belongs to (none on
+ * the sign-in page) and cleared on sign-out.
  */
 export interface LocalChoice {
   language?: Language;

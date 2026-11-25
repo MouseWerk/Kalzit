@@ -810,12 +810,15 @@ describe("language and theme chosen before signing in", () => {
     server.state.signedIn = false;
     server.state.branding.defaultThemeDark = "night";
     setDarkVariant("graphite");
+    // The tests route in memory; the theme reads the page's address, as in a browser.
+    window.history.replaceState(null, "", "/login");
     try {
       renderApp("/login");
       await waitFor(() => expect(document.documentElement.dataset.dark).toBe("night"));
       // The account's own variant stays stored for its next visit.
       expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("graphite");
     } finally {
+      window.history.replaceState(null, "", "/");
       setDarkVariant("dark");
     }
   });
