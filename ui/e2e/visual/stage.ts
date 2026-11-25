@@ -181,15 +181,17 @@ export async function settle(page: Page): Promise<void> {
 function dynamicText(extra: readonly string[]): string[] {
   const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const host = literal(hostname());
+  // Whole ids and paths first: the instance id's short form is also the start of every id made
+  // in the same moment, and replacing it first would leave the rest of those ids behind.
   return [
-    ...extra.map((text) => `\\b${literal(text)}\\b`),
     "\\S*[\\\\/]run-\\d{10,}-\\d+[\\\\/]\\S*",
+    "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
     "127\\.0\\.0\\.1:\\d{2,5}",
     "localhost:\\d{2,5}",
-    "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
     ...(host.length >= 3 ? [`\\b${host}\\b`] : []),
     "\\b\\d[\\d,.]*\\s?ms\\b",
     "\\b\\d[\\d,.]*\\s?[kMGT]?B free\\b",
+    ...extra.map((text) => `\\b${literal(text)}\\b`),
   ];
 }
 
