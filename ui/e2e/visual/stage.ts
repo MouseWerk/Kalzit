@@ -221,6 +221,16 @@ export async function settle(page: Page): Promise<void> {
         element.scrollTo(Math.round(element.scrollLeft), Math.round(element.scrollTop));
       }
     }
+    // A page scrolled to its very end (a result scrolled into view) pushes the sticky sidebar up
+    // by the fraction of a pixel the page's height has beyond a whole one, drawn a pixel apart
+    // from run to run. One pixel short of the end, the sidebar stays at the top.
+    const page = document.scrollingElement;
+    if (page !== null) {
+      const end = page.scrollHeight - page.clientHeight;
+      if (page.scrollTop > 0 && page.scrollTop >= end - 1) {
+        page.scrollTo(page.scrollLeft, Math.max(0, end - 2));
+      }
+    }
   });
   // No hover state and no tooltip from where the pointer happened to be.
   await page.mouse.move(0, 0);
