@@ -5,8 +5,8 @@ import { runAnalysis } from "../analyses/api";
 import { runQuery } from "../datasources/api";
 import { useSourceKinds } from "../datasources/useSourceKinds";
 import { runPanelQuery } from "./api";
+import { queryLimits } from "./queryLimits";
 import { appendPages, outcomesOf, type TargetOutcome } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { type DistributionRoute, type PanelQueryInput, panelRequest } from "./usePanelResults";
 
@@ -120,12 +120,9 @@ export function usePanelPages(
     const controller = new AbortController();
     abort.current = controller;
     const { range, variables, targets, graphSteps } = request;
-    const common = {
-      timeRange: range,
-      variables,
-      maxDataPoints: MAX_DATA_POINTS,
-      intervalMs: intervalFor(range),
-    };
+    // A later page asks with the same points and interval as the first one.
+    const { maxDataPoints, intervalMs } = queryLimits(input.panel, range);
+    const common = { timeRange: range, variables, maxDataPoints, intervalMs };
     try {
       let response: Awaited<ReturnType<typeof runQuery>>;
       if (input.source === "stored" && input.route?.kind === "analysis") {
@@ -135,8 +132,8 @@ export function usePanelPages(
           input.route.analysisId,
           {
             timeRange: range,
-            maxDataPoints: MAX_DATA_POINTS,
-            intervalMs: intervalFor(range),
+            maxDataPoints,
+            intervalMs,
             cursors: { [refId]: cursor },
           },
           controller.signal,

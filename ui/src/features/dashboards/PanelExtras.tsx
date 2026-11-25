@@ -6,6 +6,7 @@ import { isCompleteLink, parseDataLinks } from "../../panels/dataLinks";
 import { isAllowedUrl } from "./links";
 import type { PanelLink, PanelModel, PanelRepeat, RowModel, VariableModel } from "./model";
 import { isTimeFrom, isTimeShift } from "./panelTime";
+import { queryOptionsProblem } from "./queryLimits";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import "./ui/shared.css";
@@ -35,6 +36,8 @@ interface PanelExtrasProps {
 export function panelExtrasProblem(panel: PanelModel): string | null {
   if (panel.timeFrom !== undefined && !isTimeFrom(panel.timeFrom)) return "timeFrom";
   if (panel.timeShift !== undefined && !isTimeShift(panel.timeShift)) return "timeShift";
+  const query = queryOptionsProblem(panel);
+  if (query !== null) return query;
   if ((panel.links ?? []).some((l) => l.title.trim() === "" || !isAllowedUrl(l.url)))
     return "links";
   // Data links of document and graph panels: one still being typed would fail the whole save.

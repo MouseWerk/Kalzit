@@ -22,7 +22,7 @@ async function retitle(page: Page, title: string): Promise<void> {
 async function save(page: Page): Promise<void> {
   await page.getByRole("button", { name: t("dashboards.save") }).click();
   const dialog = page.getByRole("dialog", { name: t("dashboards.save.title") });
-  await dialog.getByRole("button", { name: t("dashboards.save.submit") }).click();
+  await dialog.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
 }
 
 test("two pages save the same dashboard: the second sees the conflict dialog", async ({
@@ -54,7 +54,9 @@ test("two pages save the same dashboard: the second sees the conflict dialog", a
 
   await save(page);
   await expect(page.getByRole("heading", { name: `${original} A` })).toBeVisible();
-  await expect(page.getByRole("button", { name: t("dashboards.edit") }).first()).toBeVisible();
+  // Saving keeps edit mode, with nothing left to save.
+  await expect(page.getByRole("dialog", { name: t("dashboards.save.title") })).toBeHidden();
+  await expect(page.getByRole("button", { name: t("dashboards.doneEditing") })).toBeVisible();
 
   await save(other);
   const conflict = other.getByRole("dialog", { name: t("dashboards.conflict.title") });

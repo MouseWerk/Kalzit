@@ -775,6 +775,41 @@ describe("editing a dashboard", () => {
     expect(await screen.findByRole("button", { name: "Finish editing" })).toBeTruthy();
   });
 
+  it("selects a dragged panel with the drop and takes the click that follows the release", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const card = panelOf("Orders");
+    expect(card.getAttribute("aria-current")).toBeNull();
+    const header = card.querySelector(".panel-card__header") as HTMLElement;
+    // Anything listening for clicks on the page, as React's own listener does.
+    const clicks = vi.fn();
+    document.addEventListener("click", clicks);
+    try {
+      fireEvent.pointerDown(header, { button: 0, buttons: 1, pointerId: 1, clientX: 10 });
+      fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientX: 300 });
+      fireEvent.pointerUp(window, { button: 0, pointerId: 1, clientX: 300 });
+      // The browser's click after the release, where the press began: a drag is not a click,
+      // and a click here drew the whole dashboard at once while the drop was still pending.
+      fireEvent.click(header);
+      expect(clicks).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("click", clicks);
+    }
+    // The drop selected the panel.
+    await waitFor(() => expect(panelOf("Orders").getAttribute("aria-current")).toBe("true"));
+    // Only that one click was taken: the next one is a click again.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const later = vi.fn();
+    document.addEventListener("click", later);
+    try {
+      fireEvent.click(header);
+      expect(later).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("click", later);
+    }
+  });
+
   it("stays in edit mode after Save, with nothing left unsaved", async () => {
     const server = setup("editor");
     const { user } = renderApp("/dashboards/d-sales");
@@ -951,7 +986,7 @@ describe("editing a dashboard", () => {
       name: "Saved by others in the meantime",
     });
     expect(within(mine).getByText("Panel “Slow” removed")).toBeTruthy();
-    expect(within(others).getByText("Panel “Orders by day” changed")).toBeTruthy();
+    expect(within(others).getByText("Panel “Orders by day”: title")).toBeTruthy();
 
     await user.click(
       within(conflict).getByRole("button", { name: "Save mine as the newest version" }),

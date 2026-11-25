@@ -18,18 +18,35 @@ import { HELP_PAGES, type HelpPageName } from "./helpPages";
  */
 export { HELP_PAGES, type HelpPageName };
 
-const text = (module: { default: string }) => module.default;
+/**
+ * Loads a guide chunk once and keeps its text, like the language catalogs and lazy pages: a page
+ * shown again does not import its chunk again. A failed load is not kept, so the next visit tries
+ * again. Exported for tests.
+ */
+export function once(load: () => Promise<{ default: string }>): () => Promise<string> {
+  let source: Promise<string> | undefined;
+  return () => {
+    source ??= load().then(
+      (module) => module.default,
+      (error: unknown) => {
+        source = undefined;
+        throw error;
+      },
+    );
+    return source;
+  };
+}
 
 // Each page and language is a chunk of its own, fetched when it is first shown, like the
 // language catalogs (src/i18n/i18n.ts). Exported for tests.
 export const GUIDE_SOURCES: Record<Language, Record<HelpPageName, () => Promise<string>>> = {
   en: {
-    "getting-started": () => import("../../../docs/guide/getting-started.md?raw").then(text),
-    installation: () => import("../../../docs/guide/installation.md?raw").then(text),
+    "getting-started": once(() => import("../../../docs/guide/getting-started.md?raw")),
+    installation: once(() => import("../../../docs/guide/installation.md?raw")),
   },
   de: {
-    "getting-started": () => import("../../../docs/guide/de/getting-started.md?raw").then(text),
-    installation: () => import("../../../docs/guide/de/installation.md?raw").then(text),
+    "getting-started": once(() => import("../../../docs/guide/de/getting-started.md?raw")),
+    installation: once(() => import("../../../docs/guide/de/installation.md?raw")),
   },
 };
 

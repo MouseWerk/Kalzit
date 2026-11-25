@@ -61,7 +61,7 @@
     "Start.dc.html": {
       "expand": "fill",
       "h": 1040,
-      "title": "Start page",
+      "title": "Start page (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 2360
@@ -274,6 +274,14 @@
       "x": 36480,
       "y": 0
     },
+    "StartRedesign.dc.html": {
+      "expand": "fill",
+      "h": 14000,
+      "title": "Start, redesigned",
+      "w": 1440,
+      "x": 38000,
+      "y": 0
+    },
     "Panels.dc.html": {
       "expand": "fill",
       "h": 8960,
@@ -336,6 +344,7 @@
     "ParityEditors.dc.html",
     "Logs.dc.html",
     "XYMapTrend.dc.html",
+    "StartRedesign.dc.html",
     "Panels.dc.html"
   ],
   "pages": [],
