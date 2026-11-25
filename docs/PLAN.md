@@ -678,7 +678,17 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
       Betrachter führen nur gespeicherte Abfragen aus, und ein Upload erreicht nie Dateien außerhalb
       des Speichers (Kalzits übrige Daten bleiben gesperrt). Intern ein einfacher Speicher, kein
       Datenbankprodukt.
-    - Board vor dem Bau; die Reihenfolge der beiden Teile entscheidet der Inhaber zu Beginn von M11.
+    - Vollständige Zabbix-Unterstützung (Entscheidung des Inhabers vom 25.11.2026): eine Quelle für
+      Zabbix über dessen API (JSON-RPC, API-Token, nur lesende `*.get`-Methoden; Schreibmethoden
+      werden serverseitig abgelehnt). Jede Antwort behält ihre Form: Verlauf und Trends von Items
+      als `frame`, Probleme, Ereignisse und Host-Inventar als `documents`, Netzwerkkarten und
+      Trigger-Abhängigkeiten als `graph`. Auswahl über Gruppe, Host, Anwendung oder Tag und Item
+      (mit Mustern und Variablen), Annotationen aus Ereignissen, Alerting-Regeln auf Items und
+      Problemen. Der Grafana-Import übernimmt Panels des Zabbix-Plugins für Grafana mit Notizen.
+      Unterstützt werden die aktuellen LTS-Versionen von Zabbix; getestet gegen aufgezeichnete
+      Antworten und einen Zabbix-Container in der CI. Die Quelle kommt beim Bau in die Tabelle in
+      Abschnitt 3.
+    - Board vor dem Bau; die Reihenfolge der drei Teile entscheidet der Inhaber zu Beginn von M11.
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.
