@@ -252,7 +252,7 @@ const ADDRESSES = ".share-address .input, .admin-sa-secret__text";
 const HOSTS = ".instances__server .updates-strong, .updates-strip__value .updates-strong";
 /** How long a query took: Explore's result bar, the panel editor's query stats. */
 const DURATIONS = ".explore__size, .target__stats";
-/** Free space in the data folder: the update checks. */
+/** Free space in the data folder and the size of the database: the update checks. */
 const DISK = ".updates-checks__item .updates-muted";
 /** The instance id, commit and build date: the instances table and About. */
 const BUILD = ".updates-mono, .about-facts dd";
@@ -273,8 +273,8 @@ const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * The places that show text differing by machine or run: paths in the run folder (data directory,
  * fixture files), the server's address with its free port, the host name, ids the server makes
  * up, what the seed read (`extra`: the instance id, the commit and the build date), measured
- * times ("10 ms") and the free disk space. Whole ids and paths come first: the instance id's short
- * form is also the start of every id made in the same moment.
+ * times ("10 ms") and the disk and database sizes. Whole ids and paths come first: the instance
+ * id's short form is also the start of every id made in the same moment.
  *
  * A new place shows up as a flaky picture; `KALZIT_VISUAL_DISCOVER=1 npm run visual` lists every
  * match outside these selectors in e2e/.output/visual-discover.jsonl.
@@ -297,7 +297,7 @@ function steadyRules(extra: readonly string[]): SteadyRule[] {
       ? [{ what: "host name", selector: HOSTS, pattern: `(?<![\\w.-])${literal(host)}(?![\\w.-])` }]
       : []),
     { what: "measured time", selector: DURATIONS, pattern: "\\b\\d[\\d,.]*\\s?ms\\b" },
-    { what: "free disk space", selector: DISK, pattern: "\\b\\d[\\d,.]*\\s?[kMGT]?B free\\b" },
+    { what: "disk or database size", selector: DISK, pattern: "\\b\\d[\\d,.]*\\s?[kMGT]?B\\b" },
     ...extra.map((text) => ({
       what: "build or instance",
       selector: BUILD,
