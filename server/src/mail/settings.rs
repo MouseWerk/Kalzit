@@ -31,7 +31,8 @@ pub enum Security {
     Starttls,
     /// TLS from the first byte (usually port 465).
     Tls,
-    /// No encryption: only for a relay on this machine, and only from `kalzit.toml`.
+    /// No encryption: plain SMTP (usually port 25), never STARTTLS. For a trusted relay in the
+    /// own network; mails, the server address and a sign-in travel unencrypted.
     None,
 }
 
@@ -127,9 +128,8 @@ pub fn is_loopback_host(host: &str) -> bool {
     host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.to_canonical().is_loopback())
 }
 
-/// The checks that need no network. `from_ui`: settings from the settings page, which offers
-/// STARTTLS and TLS only.
-pub fn check(settings: &SmtpSettings, from_ui: bool) -> ApiResult<()> {
+/// The checks that need no network.
+pub fn check(settings: &SmtpSettings) -> ApiResult<()> {
     let host = settings.host.trim_start_matches('[').trim_end_matches(']');
     let host_ok = !host.is_empty()
         && host.chars().count() <= MAX_HOST_CHARS
@@ -141,23 +141,8 @@ pub fn check(settings: &SmtpSettings, from_ui: bool) -> ApiResult<()> {
     if settings.port == 0 {
         return Err(field_error("port", "mail.port_invalid", "the port is 1 to 65535"));
     }
-    match settings.security {
-        Security::None if from_ui => {
-            return Err(field_error(
-                "security",
-                "mail.unencrypted_only_in_file",
-                "a mail server without encryption can only be set in kalzit.toml, for a relay on this machine",
-            ));
-        }
-        Security::None if !is_loopback_host(&settings.host) => {
-            return Err(field_error(
-                "security",
-                "mail.unencrypted_not_local",
-                "without encryption Kalzit only talks to a relay on this machine (localhost)",
-            ));
-        }
-        _ => {}
-    }
+    // No encryption is allowed towards any host and port, with or without a sign-in: the admin's
+    // choice for a relay in the own network; the settings page warns about it.
     // The usual ports speak one way; the other one hangs or fails without a useful answer.
     if settings.security == Security::Starttls && settings.port == 465 {
         return Err(field_error(
@@ -224,7 +209,7 @@ pub fn check_config(config: &SmtpConfig) -> anyhow::Result<()> {
         }
         return Ok(());
     };
-    check(&settings, false)
+    check(&settings)
         .map_err(|e| anyhow::anyhow!("smtp.{}: {}", e.field.map(camel_to_snake).unwrap_or_default(), e.message))?;
     if config.password.chars().count() > MAX_PASSWORD_CHARS {
         anyhow::bail!("smtp.password is longer than {MAX_PASSWORD_CHARS} characters");
@@ -369,10 +354,10 @@ mod tests {
 
     #[test]
     fn valid_settings_pass_and_the_port_follows_the_encryption() {
-        check(&valid(), true).unwrap();
+        check(&valid()).unwrap();
         let tls = SmtpSettings { port: 0, security: Security::Tls, ..valid() }.normalized();
         assert_eq!(tls.port, 465);
-        check(&tls, true).unwrap();
+        check(&tls).unwrap();
     }
 
     #[test]
@@ -384,20 +369,36 @@ mod tests {
             (SmtpSettings { from_address: "kalzit@".into(), ..valid() }, "fromAddress", "mail.address_invalid"),
             (SmtpSettings { reply_to: "a <b@c.de>".into(), ..valid() }, "replyTo", "mail.address_invalid"),
             (SmtpSettings { from_name: "a\r\nBcc: x@y.de".into(), ..valid() }, "fromName", "mail.from_name_invalid"),
-            (SmtpSettings { security: Security::None, ..valid() }, "security", "mail.unencrypted_only_in_file"),
         ];
         for (settings, field, code) in cases {
-            assert_eq!(reason(check(&settings, true).unwrap_err()), (field.to_string(), code.to_string()));
+            assert_eq!(reason(check(&settings).unwrap_err()), (field.to_string(), code.to_string()));
         }
     }
 
     #[test]
-    fn unencrypted_is_for_a_local_relay_from_the_file_only() {
-        let local = SmtpSettings { host: "127.0.0.1".into(), port: 25, security: Security::None, ..valid() };
-        check(&local, false).unwrap();
-        let remote = SmtpSettings { port: 25, security: Security::None, ..valid() };
-        assert_eq!(reason(check(&remote, false).unwrap_err()).1, "mail.unencrypted_not_local");
+    fn unencrypted_goes_to_any_host_and_port_with_or_without_a_sign_in() {
+        let relay = SmtpSettings { host: "relay.intern.example".into(), port: 0, security: Security::None, ..valid() }
+            .normalized();
+        assert_eq!(relay.port, 25, "the usual port without encryption");
+        check(&relay).unwrap();
+        check(&SmtpSettings { username: String::new(), ..relay.clone() }).unwrap();
+        for port in [25, 465, 587, 2525] {
+            check(&SmtpSettings { port, ..relay.clone() }).unwrap();
+        }
+        for host in ["10.0.0.25", "127.0.0.1", "localhost", "[::1]"] {
+            check(&SmtpSettings { host: host.into(), ..relay.clone() }).unwrap();
+        }
         assert!(is_loopback_host("[::1]") && is_loopback_host("LOCALHOST") && !is_loopback_host("10.0.0.1"));
+    }
+
+    #[test]
+    fn the_port_checks_stay_for_the_encrypted_modes() {
+        let starttls_on_465 = SmtpSettings { port: 465, ..valid() };
+        assert_eq!(reason(check(&starttls_on_465).unwrap_err()).1, "mail.port_speaks_tls");
+        for port in [25, 587] {
+            let tls = SmtpSettings { port, security: Security::Tls, ..valid() };
+            assert_eq!(reason(check(&tls).unwrap_err()).1, "mail.port_speaks_starttls");
+        }
     }
 
     #[test]
@@ -414,6 +415,11 @@ mod tests {
         check_config(&config).unwrap();
         config.security = "ssl".into();
         assert!(check_config(&config).is_err());
+        // A plain relay in the network from the file, with a sign-in.
+        config.security = "none".into();
+        config.host = "relay.intern.example".into();
+        config.username = "kalzit".into();
+        check_config(&config).unwrap();
     }
 
     #[test]
