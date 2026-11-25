@@ -61,7 +61,7 @@
     "Start.dc.html": {
       "expand": "fill",
       "h": 1040,
-      "title": "Start page",
+      "title": "Start page (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 2360
@@ -273,6 +273,14 @@
       "w": 1440,
       "x": 36480,
       "y": 0
+    },
+    "StartRedesign.dc.html": {
+      "expand": "fill",
+      "h": 14000,
+      "title": "Start, redesigned",
+      "w": 1440,
+      "x": 38000,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -327,7 +335,8 @@
     "Mails.dc.html",
     "ParityEditors.dc.html",
     "Logs.dc.html",
-    "XYMapTrend.dc.html"
+    "XYMapTrend.dc.html",
+    "StartRedesign.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
