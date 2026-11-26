@@ -194,7 +194,9 @@ four setup steps and Explore with each result shape.
      written; a removed screen's pictures are deleted by hand (a test fails on pictures without
      a screen).
   2. A pull request in `kalzit-visual` with the changed pictures, named after the Kalzit pull
-     request; merged once reviewed.
+     request; merged once reviewed, always with a merge commit (never squash or rebase) and
+     without deleting its branch first: the lock names the pull request's own commit, which must
+     stay reachable from `main` there.
   3. In the Kalzit pull request, `ui/e2e/visual/baselines.lock` set to that merged commit. Its
      CI then compares against the new pictures.
 - **Review.** The reviewer opens every changed picture in the `kalzit-visual` pull request
