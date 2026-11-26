@@ -1,6 +1,7 @@
 import { valueAxis } from "./axis";
 import { type ScaleSpec, skippedCount, valueScale } from "./axisScale";
 import { type AxisOptions, scaleSpecOf } from "./fieldConfig/axisOptions";
+import "./panels.css";
 
 /**
  * The one value axis of the bar chart and the histogram, from the panel's default field options
