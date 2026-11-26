@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value, json};
 
 use super::{ImportNote, note, text, truncate};
-use crate::dashboards::panel_options::{self, MAX_MAPPINGS, MAX_OVERRIDES, MAX_TEXT_CHARS};
+use crate::dashboards::panel_options::{
+    self, MAX_AXIS_LABEL_CHARS, MAX_AXIS_WIDTH, MAX_MAPPINGS, MAX_OVERRIDES, MAX_TEXT_CHARS, MIN_AXIS_WIDTH,
+};
 
 /// The field option groups a Kalzit panel type shows in its editor (`fieldOptions` of the panel
 /// plugins in `ui/src/panels/`). The standard ones (unit, decimals, display name, no value) go
@@ -24,6 +26,8 @@ pub(super) struct Groups {
     pub color: bool,
     /// The time series' graph style, colour scheme, free colours and threshold display.
     pub graph: bool,
+    /// The value axis: placement, label, width, grid, scale and soft limits (`axisOptions.ts`).
+    pub axes: bool,
     /// Cell display, link and width of tables.
     pub table: bool,
 }
@@ -31,12 +35,14 @@ pub(super) struct Groups {
 pub(super) fn groups(kind: &str) -> Groups {
     let all = Groups { frame: true, range: true, thresholds: true, mappings: true, color: true, ..Groups::default() };
     match kind {
-        "timeseries" => Groups { graph: true, ..all },
-        "stat" | "gauge" | "bargauge" | "bar" => all,
+        "timeseries" => Groups { graph: true, axes: true, ..all },
+        "trend" => Groups { graph: true, ..all },
+        "bar" => Groups { axes: true, ..all },
+        "stat" | "gauge" | "bargauge" | "xy" => all,
         "table" => Groups { table: true, ..all },
         "piechart" => Groups { range: false, thresholds: false, ..all },
         "state-timeline" | "status-history" => Groups { range: false, ..all },
-        "histogram" => Groups { thresholds: false, mappings: false, ..all },
+        "histogram" => Groups { thresholds: false, mappings: false, axes: true, ..all },
         "heatmap" => Groups { thresholds: false, mappings: false, color: false, ..all },
         _ => Groups::default(),
     }
@@ -502,6 +508,81 @@ fn not_shown(option: &str, notes: &mut Vec<ImportNote>) {
     }
 }
 
+/// One value axis option of a field's custom options (`axisPlacement`, `scaleDistribution`, ...)
+/// in Kalzit's form (`axisOptions.ts`); unknown keys and values are ignored.
+fn axis(key: &str, v: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
+    match key {
+        "axisPlacement" => {
+            if let Some(p) = v.as_str().filter(|p| ["auto", "left", "right", "hidden"].contains(p)) {
+                out.insert("axisPlacement".into(), json!(p));
+            }
+        }
+        "axisLabel" => {
+            if let Some(label) = v.as_str() {
+                let label: String = label.chars().filter(|c| !c.is_control()).take(MAX_AXIS_LABEL_CHARS).collect();
+                if !label.trim().is_empty() {
+                    out.insert("axisLabel".into(), json!(label));
+                }
+            }
+        }
+        "axisWidth" => {
+            if let Some(width) = v.as_u64().filter(|w| (MIN_AXIS_WIDTH as u64..=MAX_AXIS_WIDTH as u64).contains(w)) {
+                out.insert("axisWidth".into(), json!(width));
+            }
+        }
+        "axisGridShow" => {
+            if let Some(grid) = v.as_bool() {
+                out.insert("axisGrid".into(), json!(if grid { "on" } else { "off" }));
+            }
+        }
+        "axisColorMode" => {
+            if v.as_str() == Some("series") {
+                out.insert("axisColor".into(), json!("series"));
+            }
+        }
+        "axisBorderShow" => {
+            if v.as_bool() == Some(true) {
+                out.insert("axisLine".into(), json!(true));
+            }
+        }
+        "axisCenteredZero" => {
+            if v.as_bool() == Some(true) {
+                out.insert("axisCenteredZero".into(), json!(true));
+            }
+        }
+        "axisSoftMin" | "axisSoftMax" => {
+            if let Some(n) = v.as_f64().filter(|n| n.is_finite()) {
+                out.insert(key.into(), json!(n));
+            }
+        }
+        "scaleDistribution" => {
+            let base = v.get("log").and_then(Value::as_u64).filter(|b| matches!(b, 2 | 10));
+            match text(v, "type").as_deref() {
+                Some("log") => {
+                    out.insert("axisScale".into(), json!("log"));
+                    if base == Some(2) {
+                        out.insert("axisLogBase".into(), json!(2));
+                    }
+                }
+                Some("symlog") => {
+                    out.insert("axisScale".into(), json!("symlog"));
+                    if base == Some(2) {
+                        out.insert("axisLogBase".into(), json!(2));
+                    }
+                    if v.get("linearThreshold").and_then(Value::as_f64).is_some_and(|t| t != 1.0) {
+                        notes.push(note(
+                            "axis_symlog",
+                            "the linear range of the log around zero is not carried; Kalzit's is fixed",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Fields<'_> {
     /// Sets one Grafana field property (`unit`, `custom.lineWidth`, ...) in `out`. Returns
     /// whether it is known; unknown ones are reported for overrides only, since the defaults of
@@ -619,14 +700,14 @@ impl Fields<'_> {
                     notes.push(note("hide_from", "hiding series from the legend, tooltip or chart is not taken over"));
                 }
             }
-            "custom.axisLabel" | "custom.scaleDistribution" | "custom.transform" => {
-                let changed = match id {
-                    "custom.axisLabel" => str_of(v).is_some(),
-                    "custom.scaleDistribution" => text(v, "type").is_some_and(|t| t != "linear"),
-                    _ => str_of(v).is_some_and(|t| t != "constant"),
-                };
-                if changed && g.graph {
-                    notes.push(note("axis_options", "axis label, log scale and transforms are not taken over"));
+            "custom.transform" => {
+                if str_of(v).is_some_and(|t| t != "constant") && g.graph {
+                    notes.push(note("axis_options", "series transforms are not taken over"));
+                }
+            }
+            _ if id.starts_with("custom.axis") || id == "custom.scaleDistribution" => {
+                if g.axes {
+                    axis(&id["custom.".len()..], v, out, notes);
                 }
             }
             _ if id.starts_with("custom.") => return self.graph_style(&id["custom.".len()..], v, out, notes),

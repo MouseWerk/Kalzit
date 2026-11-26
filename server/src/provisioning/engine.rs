@@ -426,17 +426,25 @@ fn dash_spec(folder: &[String], model: &Value) -> Value {
     spec
 }
 
-/// Applies `f` to every data source reference of a model: panel queries, query variables and
-/// annotation queries.
+/// Applies `f` to every data source reference of a model: panel queries (a `$name` of a data
+/// source variable stays as it is), query and ad hoc variables, a data source variable's default
+/// and annotation queries.
 fn map_sources(model: &mut DashboardModel, mut f: impl FnMut(&str) -> Result<String, String>) -> Result<(), String> {
     for panel in &mut model.panels {
         for target in &mut panel.targets {
-            target.datasource_id = f(&target.datasource_id)?;
+            if crate::dashboards::model::source_variable(&target.datasource_id).is_none() {
+                target.datasource_id = f(&target.datasource_id)?;
+            }
         }
     }
     for variable in &mut model.variables {
         if let Some(id) = &variable.datasource_id {
             variable.datasource_id = Some(f(id)?);
+        }
+        if variable.kind == crate::dashboards::model::VariableType::Datasource
+            && let Some(Value::String(id)) = &variable.current
+        {
+            variable.current = Some(Value::String(f(id)?));
         }
     }
     for annotation in &mut model.annotations {
@@ -1985,8 +1993,8 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
             }
             ResourceKind::Datasource => {
                 sqlx::query(
-                    "UPDATE datasources SET deleted_at = $1, updated_at = $1, trash_days = $4 WHERE id = $2 \
-                     AND org_id = $3 AND deleted_at IS NULL",
+                    "UPDATE datasources SET deleted_at = $1, updated_at = $1, trash_days = $4, is_default = 0 \
+                     WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL",
                 )
                 .bind(now)
                 .bind(&s.id)

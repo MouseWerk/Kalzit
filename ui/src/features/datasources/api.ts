@@ -104,6 +104,8 @@ export interface DatasourceSummary {
   deletedAt?: number;
   /** Items of the trash: when they are deleted for good at the earliest. */
   purgeAt?: number;
+  /** The organization's default data source: Explore and new panels start with it. */
+  isDefault?: boolean;
   /** Always sent by the server; `sourceAccess` covers an answer without it. */
   access?: DatasourceAccess;
   /** The list's columns, on live sources the caller may read (docs/api/datasources.md). */
@@ -191,6 +193,8 @@ export interface Datasource {
   createdAt?: number;
   /** The last connection test since the settings last changed, kept by the server for everyone. */
   lastTest?: LastTest;
+  /** The organization's default data source. */
+  isDefault?: boolean;
 }
 
 /** A stored connection test: whether it passed, its warnings and when it ran. */
@@ -520,6 +524,9 @@ function parseSummary(value: unknown): DatasourceSummary | null {
   if (typeof value.purgeAt === "number") {
     summary.purgeAt = value.purgeAt;
   }
+  if (value.isDefault === true) {
+    summary.isDefault = true;
+  }
   const access = parseAccess(value.access);
   if (access !== undefined) {
     summary.access = access;
@@ -552,6 +559,7 @@ function parseDatasource(value: unknown): Datasource {
     ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
     createdAt: summary.createdAt,
     ...lastTestOf(value.lastTest),
+    ...(summary.isDefault === true ? { isDefault: true } : {}),
   };
 }
 
@@ -815,6 +823,27 @@ function parseHealth(value: unknown): Health {
     result.warnings = warnings;
   }
   return result;
+}
+
+/**
+ * Makes the source the organization's default data source (the previous one stops being it), or
+ * stops it being the default (docs/api/datasources.md, "Default data source").
+ */
+export async function setDefaultDatasource(
+  orgId: string,
+  id: string,
+  isDefault: boolean,
+): Promise<Datasource> {
+  return parseDatasource(
+    await send("PUT", orgPath(orgId, "datasources", id, "default"), { default: isDefault }),
+  );
+}
+
+/** The source new work starts with when none is chosen: the default, else the first. */
+export function preferredSource<T extends { isDefault?: boolean }>(
+  sources: readonly T[],
+): T | undefined {
+  return sources.find((source) => source.isDefault === true) ?? sources[0];
 }
 
 export async function checkHealth(orgId: string, id: string): Promise<Health> {

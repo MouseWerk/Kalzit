@@ -33,6 +33,53 @@ pub const MAX_BAR_WIDTH: u32 = 100;
 /// Gap durations in ms: a millisecond to a year.
 pub const MAX_GAP_DURATION_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 pub const MAX_STACK_GROUP_CHARS: usize = 50;
+/// A value axis' label, and its fixed width in px (`ui/src/panels/fieldConfig/axisOptions.ts`).
+pub const MAX_AXIS_LABEL_CHARS: usize = 200;
+pub const MIN_AXIS_WIDTH: u32 = 20;
+pub const MAX_AXIS_WIDTH: u32 = 400;
+/// Values a legend shows per series, its width beside the drawing and the series it names
+/// (`ui/src/panels/fieldConfig/legendOptions.ts`).
+pub const MAX_LEGEND_VALUES: usize = 6;
+pub const MIN_LEGEND_WIDTH: u32 = 80;
+pub const MAX_LEGEND_WIDTH: u32 = 1000;
+pub const MAX_LEGEND_LIMIT: u32 = 1000;
+/// A tooltip's largest width and height in px.
+pub const MIN_TOOLTIP_SIZE: u32 = 100;
+pub const MAX_TOOLTIP_SIZE: u32 = 2000;
+/// The calculations a legend can show (`ui/src/panels/calcs.ts`); percentiles are `p1` to `p99`.
+pub const CALCS: &[&str] = &[
+    "last",
+    "min",
+    "max",
+    "mean",
+    "sum",
+    "first",
+    "delta",
+    "deltaPercent",
+    "range",
+    "median",
+    "stddev",
+    "variance",
+    "count",
+    "distinct",
+    "gaps",
+    "lastRow",
+    "firstRow",
+    "maxTime",
+];
+
+/// Whether a stored calculation name is one of `CALCS` or a percentile `p1` to `p99`.
+pub fn is_calc(name: &str) -> bool {
+    // `stdDev` is the older spelling of `stddev`; the UI reads it as that.
+    CALCS.contains(&name)
+        || name == "stdDev"
+        || name.strip_prefix('p').is_some_and(|n| {
+            (1..=2).contains(&n.len())
+                && !n.starts_with('0')
+                && n.bytes().all(|b| b.is_ascii_digit())
+                && n.parse::<u32>().is_ok_and(|n| (1..=99).contains(&n))
+        })
+}
 /// A dotted field path of the document panels, as for projection columns.
 pub const MAX_FIELD_PATH_CHARS: usize = 500;
 /// Property keys, captions and variable names of the graph panels.
@@ -69,6 +116,12 @@ pub const MIN_ELK_LAYER_SPACING: u32 = 10;
 pub const MAX_ELK_LAYER_SPACING: u32 = 400;
 /// The deepest level from which a trace panel's waterfall may start closed.
 pub const MAX_TRACE_COLLAPSE_DEPTH: u32 = 50;
+/// Point sizes of the XY chart in px (`XY_SIZE` in the UI).
+pub const MIN_XY_POINT_SIZE: u32 = 1;
+pub const MAX_XY_POINT_SIZE: u32 = 40;
+/// Fill strength of the XY chart's points in percent.
+pub const MIN_XY_OPACITY: u32 = 5;
+pub const MAX_XY_OPACITY: u32 = 100;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -81,6 +134,8 @@ pub const PANEL_TYPES: &[&str] = &[
     "piechart",
     "heatmap",
     "histogram",
+    "xy",
+    "trend",
     "state-timeline",
     "status-history",
     "text",
@@ -244,6 +299,27 @@ struct FieldOptions {
     bar_width: Option<u32>,
     #[allow(dead_code)]
     comparison: Option<bool>,
+    // The value axis (`ui/src/panels/fieldConfig/axisOptions.ts`): field options too, so an
+    // override puts one field on the right axis. The choices are checked by parsing.
+    #[allow(dead_code)]
+    axis_placement: Option<AxisPlacement>,
+    axis_label: Option<String>,
+    axis_width: Option<u32>,
+    #[allow(dead_code)]
+    axis_grid: Option<AxisGrid>,
+    #[allow(dead_code)]
+    axis_color: Option<AxisColor>,
+    #[allow(dead_code)]
+    axis_line: Option<bool>,
+    #[allow(dead_code)]
+    axis_scale: Option<AxisScale>,
+    axis_log_base: Option<u32>,
+    #[allow(dead_code)]
+    axis_centered_zero: Option<bool>,
+    #[allow(dead_code)]
+    axis_soft_min: Option<f64>,
+    #[allow(dead_code)]
+    axis_soft_max: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,8 +367,12 @@ macro_rules! choice {
 
 choice!(LegendMode { List = "list", Table = "table", Hidden = "hidden" });
 choice!(Placement { Bottom = "bottom", Right = "right" });
-choice!(LegendValue { Last = "last", Min = "min", Max = "max", Mean = "mean" });
 choice!(TooltipMode { Single = "single", All = "all", Hidden = "hidden" });
+choice!(TooltipSort { None = "none", Asc = "asc", Desc = "desc" });
+choice!(AxisPlacement { Auto = "auto", Left = "left", Right = "right", Hidden = "hidden" });
+choice!(AxisGrid { Auto = "auto", On = "on", Off = "off" });
+choice!(AxisColor { Text = "text", Series = "series" });
+choice!(AxisScale { Linear = "linear", Log = "log", Symlog = "symlog" });
 choice!(Reducer { Last = "last", Mean = "mean", Min = "min", Max = "max", Sum = "sum" });
 choice!(ColorMode { None = "none", Value = "value", Background = "background" });
 choice!(GraphMode { None = "none", Area = "area" });
@@ -346,8 +426,13 @@ struct Legend {
     mode: LegendMode,
     #[allow(dead_code)]
     placement: Placement,
+    /// Calculations per series (`CALCS` or `p1` to `p99`), each once, at most six.
     #[serde(default)]
-    values: Vec<LegendValue>,
+    values: Vec<String>,
+    /// Width in px beside the drawing.
+    width: Option<u32>,
+    /// At most this many series named.
+    limit: Option<u32>,
 }
 
 /// A time series stored its series name template under `legend` before the legend options.
@@ -359,10 +444,16 @@ enum LegendOrTemplate {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Tooltip {
     #[allow(dead_code)]
     mode: TooltipMode,
+    #[allow(dead_code)]
+    sort: Option<TooltipSort>,
+    #[allow(dead_code)]
+    hide_zeros: Option<bool>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -440,10 +531,11 @@ struct FooterColumn {
 /// Columns a footer names one by one.
 const MAX_FOOTER_COLUMNS: usize = 100;
 
-/// The calculations that reduce many values to one, by the names the legend, the footer and the
-/// steps share (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and
-/// `lastRow` take the row, `stddev` and `variance` are the sample measures, `p1` to `p99`.
-const CALCS: &[&str] = &[
+/// The calculations a table footer takes, by the names the legend, the footer and the steps share
+/// (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and `lastRow` take the
+/// row, `stddev` and `variance` are the sample measures, `p1` to `p99`. The legend's own list
+/// (`CALCS`) adds `maxTime`, which a footer row has no place for.
+const FOOTER_CALCS: &[&str] = &[
     "last",
     "min",
     "max",
@@ -463,8 +555,8 @@ const CALCS: &[&str] = &[
     "firstRow",
 ];
 
-fn is_calc(text: &str) -> bool {
-    CALCS.contains(&text)
+fn is_footer_calc(text: &str) -> bool {
+    FOOTER_CALCS.contains(&text)
         || text.strip_prefix('p').is_some_and(|n| {
             !n.starts_with('0') && n.len() <= 2 && n.parse::<u8>().is_ok_and(|p| (1..=99).contains(&p))
         })
@@ -473,7 +565,7 @@ fn is_calc(text: &str) -> bool {
 fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
     let Some(footer) = footer else { return Ok(()) };
     if let Some(calc) = &footer.numbers
-        && !is_calc(calc)
+        && !is_footer_calc(calc)
     {
         return Err(format!("options.footer.numbers: {calc} is not a calculation"));
     }
@@ -489,7 +581,7 @@ fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
         if !seen.insert(c.column.as_str()) {
             return Err(format!("options.footer.columns[{i}]: {} has a calculation already", c.column));
         }
-        if !is_calc(&c.calc) {
+        if !is_footer_calc(&c.calc) {
             return Err(format!("options.footer.columns[{i}].calc: {} is not a calculation", c.calc));
         }
     }
@@ -563,6 +655,50 @@ struct HeatmapOptions {
     x_buckets: Option<u32>,
     y_buckets: Option<u32>,
     scale: Option<HeatmapScale>,
+    tooltip: Option<Tooltip>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum XYMapping {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum XYShow {
+    Points,
+    Lines,
+    Both,
+}
+
+/// The XY chart: fields by name, point sizes and how points are shown.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct XYOptions {
+    mapping: Option<XYMapping>,
+    x: Option<String>,
+    y: Option<String>,
+    series_by: Option<String>,
+    size_by: Option<String>,
+    color_by: Option<String>,
+    size_min: Option<u32>,
+    size_max: Option<u32>,
+    show: Option<XYShow>,
+    point_opacity: Option<u32>,
+    legend: Option<Legend>,
+    tooltip: Option<Tooltip>,
+}
+
+/// The Trend panel: a time series over an ascending number field.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct TrendOptions {
+    x_field: Option<String>,
+    legend: Option<Legend>,
     tooltip: Option<Tooltip>,
 }
 
@@ -879,7 +1015,27 @@ fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
         }
     }
     check_range(&format!("{at}.width"), o.width, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)?;
-    check_graph_style(at, o)
+    check_graph_style(at, o)?;
+    check_axis(at, o)
+}
+
+/// The value axis' label, width and log base: the UI's bounds (`AXIS_LIMITS`).
+fn check_axis(at: &str, o: &FieldOptions) -> Result<(), String> {
+    if let Some(label) = &o.axis_label {
+        check_text(&format!("{at}.axisLabel"), label, MAX_AXIS_LABEL_CHARS, false)?;
+    }
+    check_range(&format!("{at}.axisWidth"), o.axis_width, MIN_AXIS_WIDTH, MAX_AXIS_WIDTH)?;
+    if let Some(base) = o.axis_log_base
+        && !matches!(base, 2 | 10)
+    {
+        return Err(format!("{at}.axisLogBase must be 2 or 10"));
+    }
+    for (name, value) in [("axisSoftMin", o.axis_soft_min), ("axisSoftMax", o.axis_soft_max)] {
+        if value.is_some_and(|v| !v.is_finite()) {
+            return Err(format!("{at}.{name} must be a number"));
+        }
+    }
+    Ok(())
 }
 
 /// The graph style's numbers and its stack group: the UI's bounds (`GRAPH_LIMITS`).
@@ -933,12 +1089,26 @@ fn check_graph_texts(texts: &[(&str, &Option<String>)]) -> Result<(), String> {
 }
 
 fn check_legend(legend: Option<&Legend>) -> Result<(), String> {
-    if let Some(legend) = legend
-        && legend.values.len() > 4
-    {
-        return Err("options.legend.values takes at most 4 entries".into());
+    let Some(legend) = legend else { return Ok(()) };
+    if legend.values.len() > MAX_LEGEND_VALUES {
+        return Err(format!("options.legend.values takes at most {MAX_LEGEND_VALUES} entries"));
     }
-    Ok(())
+    for (i, value) in legend.values.iter().enumerate() {
+        if !is_calc(value) {
+            return Err(format!("options.legend.values[{i}] is not a known calculation"));
+        }
+        if legend.values[..i].contains(value) {
+            return Err("options.legend.values takes each value once".into());
+        }
+    }
+    check_range("options.legend.width", legend.width, MIN_LEGEND_WIDTH, MAX_LEGEND_WIDTH)?;
+    check_range("options.legend.limit", legend.limit, 1, MAX_LEGEND_LIMIT)
+}
+
+fn check_tooltip(tooltip: Option<&Tooltip>) -> Result<(), String> {
+    let Some(tooltip) = tooltip else { return Ok(()) };
+    check_range("options.tooltip.maxWidth", tooltip.max_width, MIN_TOOLTIP_SIZE, MAX_TOOLTIP_SIZE)?;
+    check_range("options.tooltip.maxHeight", tooltip.max_height, MIN_TOOLTIP_SIZE, MAX_TOOLTIP_SIZE)
 }
 
 /// Checks a panel's `options` and `fieldConfig` when its type is one of `PANEL_TYPES`. Errors
@@ -965,6 +1135,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 Some(LegendOrTemplate::Legend(l)) => check_legend(Some(l))?,
                 None => {}
             }
+            check_tooltip(o.tooltip.as_ref())?;
             if let Some(w) = o.line_width
                 && !(1..=3).contains(&w)
             {
@@ -979,6 +1150,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         "bar" => {
             let o: BarOptions = parse("options", options)?;
             check_legend(o.legend.as_ref())?;
+            check_tooltip(o.tooltip.as_ref())?;
             unit(&o.unit)
         }
         "table" => {
@@ -1014,10 +1186,12 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                     return Err("options.legendValues takes each value once".into());
                 }
             }
+            check_tooltip(o.tooltip.as_ref())?;
             check_legend(o.legend.as_ref())
         }
         "heatmap" => {
             let o: HeatmapOptions = parse("options", options)?;
+            check_tooltip(o.tooltip.as_ref())?;
             check_range("options.xBuckets", o.x_buckets, 2, 200)?;
             check_range("options.yBuckets", o.y_buckets, 2, 100)
         }
@@ -1029,10 +1203,38 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             {
                 return Err("options.bucketSize must be above 0".into());
             }
+            check_tooltip(o.tooltip.as_ref())?;
+            check_legend(o.legend.as_ref())
+        }
+        "xy" => {
+            let o: XYOptions = parse("options", options)?;
+            for (name, field) in
+                [("x", &o.x), ("y", &o.y), ("seriesBy", &o.series_by), ("sizeBy", &o.size_by), ("colorBy", &o.color_by)]
+            {
+                if let Some(field) = field {
+                    check_text(&format!("options.{name}"), field, MAX_TEXT_CHARS, false)?;
+                }
+            }
+            check_range("options.sizeMin", o.size_min, MIN_XY_POINT_SIZE, MAX_XY_POINT_SIZE)?;
+            check_range("options.sizeMax", o.size_max, MIN_XY_POINT_SIZE, MAX_XY_POINT_SIZE)?;
+            if let (Some(min), Some(max)) = (o.size_min, o.size_max)
+                && min > max
+            {
+                return Err("options.sizeMin must not be above options.sizeMax".into());
+            }
+            check_range("options.pointOpacity", o.point_opacity, MIN_XY_OPACITY, MAX_XY_OPACITY)?;
+            check_legend(o.legend.as_ref())
+        }
+        "trend" => {
+            let o: TrendOptions = parse("options", options)?;
+            if let Some(field) = &o.x_field {
+                check_text("options.xField", field, MAX_TEXT_CHARS, false)?;
+            }
             check_legend(o.legend.as_ref())
         }
         "state-timeline" | "status-history" => {
             let o: StateOptions = parse("options", options)?;
+            check_tooltip(o.tooltip.as_ref())?;
             check_legend(o.legend.as_ref())
         }
         "text" => {
@@ -1549,6 +1751,17 @@ mod tests {
             ("heatmap", json!({ "yBuckets": 500 }), "options.yBuckets"),
             ("histogram", json!({ "bucketSize": 0 }), "options.bucketSize"),
             ("histogram", json!({ "bucketCount": 1000 }), "options.bucketCount"),
+            ("xy", json!({ "sizeMin": 0 }), "options.sizeMin"),
+            ("xy", json!({ "sizeMax": MAX_XY_POINT_SIZE + 1 }), "options.sizeMax"),
+            ("xy", json!({ "sizeMin": 9, "sizeMax": 3 }), "options.sizeMin"),
+            ("xy", json!({ "pointOpacity": 0 }), "options.pointOpacity"),
+            ("xy", json!({ "show": "bars" }), "options"),
+            ("xy", json!({ "mapping": "guess" }), "options"),
+            ("xy", json!({ "x": "x".repeat(MAX_TEXT_CHARS + 1) }), "options.x"),
+            ("xy", json!({ "colorBy": "a\u{0}" }), "control characters"),
+            ("xy", json!({ "zoom": true }), "unknown field"),
+            ("trend", json!({ "xField": "x".repeat(MAX_TEXT_CHARS + 1) }), "options.xField"),
+            ("trend", json!({ "sortX": true }), "unknown field"),
             (
                 "bar",
                 json!({ "legend": { "mode": "list", "placement": "bottom", "values": ["last", "min", "max", "mean", "last"] } }),
@@ -1567,6 +1780,85 @@ mod tests {
         ] {
             let err = check(kind, &options, &json!({})).unwrap_err();
             assert!(err.contains(expect), "{kind} {options}: {err}");
+        }
+    }
+
+    #[test]
+    fn legend_values_tooltip_details_and_axes_pass_at_their_bounds() {
+        let legend = json!({
+            "mode": "table", "placement": "right", "width": MAX_LEGEND_WIDTH, "limit": 1,
+            "values": ["last", "sum", "p95", "p1", "p99", "lastRow"],
+        });
+        let tooltip = json!({ "mode": "all", "sort": "desc", "hideZeros": true, "maxWidth": MIN_TOOLTIP_SIZE, "maxHeight": MAX_TOOLTIP_SIZE });
+        for kind in ["timeseries", "bar"] {
+            check(kind, &json!({ "legend": legend, "tooltip": tooltip }), &json!({})).unwrap();
+        }
+        for calc in CALCS {
+            check(
+                "timeseries",
+                &json!({ "legend": { "mode": "list", "placement": "bottom", "values": [calc] } }),
+                &json!({}),
+            )
+            .unwrap();
+        }
+        let axes = json!({
+            "axisPlacement": "right", "axisLabel": "a".repeat(MAX_AXIS_LABEL_CHARS), "axisWidth": MIN_AXIS_WIDTH,
+            "axisGrid": "off", "axisColor": "series", "axisLine": true, "axisScale": "symlog", "axisLogBase": 2,
+            "axisCenteredZero": true, "axisSoftMin": -5.5, "axisSoftMax": 100,
+        });
+        let config = json!({
+            "defaults": { "axisScale": "log", "axisLogBase": 10, "axisWidth": MAX_AXIS_WIDTH },
+            "overrides": [{ "matcher": { "type": "name", "value": "Bestellungen" }, "properties": axes }],
+        });
+        for kind in ["timeseries", "bar", "histogram"] {
+            check(kind, &json!({}), &config).unwrap();
+        }
+        let cleared = json!({ "overrides": [{ "matcher": { "type": "name", "value": "a" }, "properties": { "axisPlacement": null, "axisScale": null } }] });
+        check("timeseries", &json!({}), &cleared).unwrap();
+    }
+
+    #[test]
+    fn invalid_legend_values_tooltips_and_axes_are_refused_with_the_place() {
+        let legend = |extra: Value| {
+            let mut l = json!({ "mode": "list", "placement": "right" });
+            l.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            json!({ "legend": l })
+        };
+        for (options, expect) in [
+            (legend(json!({ "values": ["last", "min", "max", "mean", "sum", "first", "range"] })), "at most 6"),
+            (legend(json!({ "values": ["sum", "sum"] })), "each value once"),
+            (legend(json!({ "values": ["total"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["p0"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["p100"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["p095"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["p+5"] })), "legend.values[0]"),
+            (legend(json!({ "values": ["lastNotNull"] })), "legend.values[0]"),
+            (legend(json!({ "width": MIN_LEGEND_WIDTH - 1 })), "options.legend.width"),
+            (legend(json!({ "limit": 0 })), "options.legend.limit"),
+            (legend(json!({ "limit": MAX_LEGEND_LIMIT + 1 })), "options.legend.limit"),
+            (json!({ "tooltip": { "mode": "all", "sort": "random" } }), "options"),
+            (json!({ "tooltip": { "mode": "all", "maxWidth": MIN_TOOLTIP_SIZE - 1 } }), "options.tooltip.maxWidth"),
+            (json!({ "tooltip": { "mode": "all", "maxHeight": MAX_TOOLTIP_SIZE + 1 } }), "options.tooltip.maxHeight"),
+            (json!({ "tooltip": { "mode": "all", "glow": true } }), "unknown field"),
+        ] {
+            let err = check("timeseries", &options, &json!({})).unwrap_err();
+            assert!(err.contains(expect), "{options}: {err}");
+        }
+        for (key, value, expect) in [
+            ("axisPlacement", json!("top"), "fieldConfig"),
+            ("axisLabel", json!("a".repeat(MAX_AXIS_LABEL_CHARS + 1)), "defaults.axisLabel"),
+            ("axisLabel", json!("a\nb"), "control characters"),
+            ("axisWidth", json!(MIN_AXIS_WIDTH - 1), "defaults.axisWidth"),
+            ("axisWidth", json!(MAX_AXIS_WIDTH + 1), "defaults.axisWidth"),
+            ("axisGrid", json!(true), "fieldConfig"),
+            ("axisColor", json!("accent"), "fieldConfig"),
+            ("axisScale", json!("sqrt"), "fieldConfig"),
+            ("axisLogBase", json!(3), "defaults.axisLogBase"),
+            ("axisSoftMin", json!("low"), "fieldConfig"),
+        ] {
+            let config = json!({ "defaults": { key: value.clone() } });
+            let err = check("timeseries", &json!({}), &config).unwrap_err();
+            assert!(err.contains(expect), "{key} = {value}: {err}");
         }
     }
 

@@ -443,7 +443,7 @@ describe("dashboard view", () => {
     expect(screen.getByRole("combobox", { name: "region" })).toHaveProperty("value", "us");
   });
 
-  it("runs a changed query variable through the free query route in edit mode", async () => {
+  it("runs a changed query variable through the preview route in edit mode", async () => {
     const server = setup("editor", []);
     const stored = storedSales(server);
     latest(stored).model = {
@@ -466,8 +466,9 @@ describe("dashboard view", () => {
     // The fake answers that SQL with a table whose first field is ids and second names.
     await waitForOption(screen.getByRole("combobox", { name: "city" }), "Ada");
     expect(server.areas.dashboards.variableRequests).toHaveLength(1);
-    expect(server.areas.datasources.queries.at(-1)).toMatchObject({
-      queries: [{ refId: "A", query: { sql: "SELECT name, score FROM customers" } }],
+    // The variable as edited, so the server applies its regex, order and extras as on save.
+    expect(server.areas.datasources.variablePreviews.at(-1)).toMatchObject({
+      variable: { name: "city", query: { sql: "SELECT name, score FROM customers" } },
     });
   });
 

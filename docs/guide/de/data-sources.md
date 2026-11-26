@@ -390,6 +390,22 @@ N ms“) oder den Grund für das Scheitern. Ein Login mit Administratorrechten (
 PostgreSQL-Benutzer mit allen Rechten, ein SQL-Server-Sysadmin) wird gemeldet, mit dem Rat, einen nur lesenden Login
 zu verwenden.
 
+Hat der letzte Test im Formular bestanden und speicherst du genau das Getestete, wird die
+gespeicherte Quelle noch einmal getestet und dieses Ergebnis ist ihr letzter Test; die Liste zeigt
+sie also sofort als getestet.
+
+## Standard-Datenquelle
+
+Eine Datenquelle der Organisation kann ihre Standard-Datenquelle sein: **Als Standard festlegen**
+im Menü einer Quelle in der Liste oder **Standard-Datenquelle** im Formular, für alle, die die
+Quelle ändern dürfen. Die Liste markiert sie mit **Standard**. Explore und neue Panels beginnen
+damit, wenn keine Quelle gewählt ist, und ein Grafana-Import schlägt sie für Grafanas
+Standardquelle vor. Wird eine andere Quelle Standard, wechselt er dorthin; eine Quelle im
+Papierkorb ist nie Standard.
+
+Grafanas Adressen führen zu denselben Seiten: `/datasources` und `/connections/datasources` zu den
+Datenquellen, `/connections/datasources/new` zum Hinzufügen.
+
 ## Zugriff je Team
 
 Über ihre Rolle hinaus bekommen Mitglieder, Teams oder Rollen Zugriff auf eine einzelne Datenquelle

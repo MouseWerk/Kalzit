@@ -1054,3 +1054,56 @@ async fn scheduled_runs_waiting_too_long_are_skipped() {
     );
     t.finish().await;
 }
+
+/// A report whose values pick another source of a data source variable checks that pick as a
+/// share does: when it is saved, and at every run, where a pick gone to the trash suspends it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_report_holds_on_to_the_source_its_values_pick() {
+    let mut t = TestApp::new().await;
+    let dir = t.sources.path().to_string_lossy().to_string();
+    t.server_setting("datasources.sqlite_dirs", json!([dir])).await;
+    let path = t.sources.path().join("quellen.db");
+    let pool = sqlx::SqlitePool::connect(&kalzit::config::sqlite_url(&path)).await.unwrap();
+    sqlx::raw_sql("CREATE TABLE umsatz (region TEXT); INSERT INTO umsatz VALUES ('Nord');")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let source = |name: &str| json!({ "name": name, "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+    let r = t.call(&Who::Owner, Method::POST, "/datasources", Some(source("Produktion"))).await;
+    let main = r.body["id"].as_str().unwrap().to_string();
+    let r = t.call(&Who::Owner, Method::POST, "/datasources", Some(source("Staging"))).await;
+    let other = r.body["id"].as_str().unwrap().to_string();
+    let model = json!({ "schemaVersion": 2, "title": "Quellen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "quelle", "type": "datasource", "datasourceKind": "sqlite", "current": main } ],
+        "panels": [ { "id": "p1", "type": "table", "title": "Regionen", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                      "targets": [ { "refId": "A", "datasourceId": "$quelle", "query": { "sql": "SELECT region FROM umsatz" } } ] } ] });
+    let r = t.call(&Who::Owner, Method::POST, "/dashboards", Some(json!({ "model": model }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let owner_id = t.owner_id.clone();
+    let mut body = t.report_body(&dashboard, json!([{ "userId": owner_id }]));
+    body["formats"] = json!(["pdf"]);
+    // A pick of no source of the organization is refused when the report is saved.
+    body["variables"] = json!({ "quelle": "unbekannt" });
+    let r = t.create(&Who::Owner, body.clone()).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    body["variables"] = json!({ "quelle": other });
+    let r = t.create(&Who::Owner, body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    // The picked source goes to the trash: the next run is suspended, nothing is sent.
+    let r = t.call(&Who::Owner, Method::DELETE, &format!("/datasources/{other}"), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let fake = Fake::default();
+    t.advance(HOUR);
+    assert_eq!(t.run(&fake).await, 1);
+    assert!(fake.take().is_empty());
+    let run = &t.runs(&id).await[0];
+    assert_eq!(
+        (run["status"].as_str(), run["error"]["code"].as_str()),
+        (Some("suspended"), Some("reports.creator_no_source")),
+        "{run}"
+    );
+    t.finish().await;
+}

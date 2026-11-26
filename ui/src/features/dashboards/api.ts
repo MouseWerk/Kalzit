@@ -8,6 +8,7 @@ import type {
   QueryResponse,
   VariableOptionsRequest,
   VariableOptionsResponse,
+  VariablePreviewRequest,
 } from "../../api/generated/shapes";
 import { type AnalysisModel, parseAnalysisModel } from "../analyses/api";
 import { isFieldDistribution, orgPath, send } from "../datasources/api";
@@ -694,6 +695,19 @@ function isVariableOptions(value: unknown): value is VariableOptionsResponse {
       (o) => isRecord(o) && typeof o.value === "string" && typeof o.label === "string",
     )
   );
+}
+
+/**
+ * The choices a variable being edited would offer, from `POST .../query/variable-options`: its
+ * query runs as a free query, and the server applies its regex, order and fixed options.
+ */
+export async function previewVariableOptions(
+  orgId: string,
+  body: VariablePreviewRequest,
+  signal?: AbortSignal,
+): Promise<VariableOptionsResponse> {
+  const path = orgPath(orgId, "query", "variable-options");
+  return expectShape(await send("POST", path, body, signal), isVariableOptions, "variable options");
 }
 
 /** The choices of a saved query variable, from `POST .../variables/{name}/options`. */

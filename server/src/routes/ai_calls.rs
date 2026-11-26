@@ -231,6 +231,7 @@ async fn summarize(
         language: body.language,
         steps: Vec::new(),
         hidden: BTreeSet::new(),
+        unfiltered: BTreeSet::new(),
     };
     summarize_run(&state, &ctx, &caller, request).await
 }
@@ -266,7 +267,7 @@ async fn summarize_panel(
     let title = panel.title.clone();
     let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
     let panel = linked.as_ref().unwrap_or(panel);
-    let run = super::query::stored_items(&model, panel, &body.variables, None, &BTreeMap::new())?;
+    let run = super::query::stored_items(&state, &ctx, &model, panel, &body.variables, None, &BTreeMap::new()).await?;
     if run.items.is_empty() {
         return Err(ApiError::validation("the panel has no query to summarize").because("ai.query_empty"));
     }
@@ -289,6 +290,7 @@ async fn summarize_panel(
         language: body.language,
         steps: steps.into_iter().filter(|s| !s.disabled).collect(),
         hidden,
+        unfiltered: run.unfiltered,
     };
     summarize_run(&state, &ctx, &caller, request).await
 }
@@ -313,6 +315,9 @@ struct SummaryRun {
     steps: Vec<Step>,
     /// Queries the panel does not show (they only feed a step).
     hidden: BTreeSet<String>,
+    /// Queries that ran on a picked source without the dashboard's ad hoc filters
+    /// (`query::PanelRun::unfiltered`); the summary is told so.
+    unfiltered: BTreeSet<String>,
 }
 
 /// Refuses a source closed to AI. Its name and id are said only to someone who may read the
@@ -355,6 +360,19 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         }
         kinds.insert(ds.id.clone(), ds.kind.clone());
         policies.insert(ds.id, policy);
+    }
+    // Results are redacted by field name; an ad hoc filter on an excluded field would still tell
+    // its values through which rows are kept, so such a run is refused as a query naming it.
+    for item in &run.items {
+        if let Some(field) = crate::ai::tools::filters_name_excluded(&policies[&item.datasource_id], &item.filters) {
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "ai_unavailable",
+                format!("a filter of this panel names {field}, a field excluded from AI"),
+            )
+            .because("ai.query_names_excluded_field")
+            .param("field", field));
+        }
     }
     let row = service::precheck(state, caller).await?;
     let order: Vec<String> = run.items.iter().map(|i| i.ref_id.clone()).collect();
@@ -455,9 +473,20 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         });
     }
     let range = format!("{} to {}", iso(run.range.from), iso(run.range.to));
-    let message = prompts::summarize_message(run.title.as_deref(), &range, &parts);
+    let mut message = prompts::summarize_message(run.title.as_deref(), &range, &parts);
+    // A pick of another data source left the dashboard's ad hoc filters behind: the summary must
+    // not describe the results as filtered.
+    if !run.unfiltered.is_empty() {
+        let names: Vec<String> = run.unfiltered.iter().map(|r| prompts::identifier(r)).collect();
+        message.push_str(&format!(
+            "\n\nNote: the dashboard's ad hoc filters belong to another data source than the one these \
+             queries ran on, so they did not narrow the results of {}.",
+            names.join(", ")
+        ));
+    }
     let request = prompts::SUMMARIZE.request(run.language, message);
-    let meta = json!({ "provider": provider_meta(&row), "results": sent, "title": run.title.is_some() });
+    let meta = json!({ "provider": provider_meta(&row), "results": sent, "title": run.title.is_some(),
+                       "filtersNotApplied": !run.unfiltered.is_empty() });
     respond(state, caller, &request, meta, Finish::Text).await
 }
 

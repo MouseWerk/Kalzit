@@ -45,7 +45,7 @@ import {
 import { DataSourceDrawer, type DrawerTab } from "./DataSourceDrawer";
 import { KindLabel, KindMark } from "./kindMarks";
 import { ChangedCell, StatusCell, TeamCell, UsageCell } from "./listCells";
-import { BulkBar, RowMenu, useTrash } from "./SourceActions";
+import { BulkBar, RowMenu, useSetDefault, useTrash } from "./SourceActions";
 import {
   filterSources,
   forgetHealth,
@@ -476,6 +476,7 @@ function SourceOverview({
   // The selection keeps to the shown rows: a filter hides nothing that stays selected.
   const chosen = rows.filter((source) => checked.has(source.id));
   const trash = useTrash(orgId);
+  const setDefault = useSetDefault(orgId);
 
   async function testAll(ids: readonly string[] = testable) {
     const signal = leaving.current?.signal;
@@ -837,6 +838,9 @@ function SourceOverview({
                             {aiReadable.has(source.id) ? (
                               <span className="ds-tag">{t("ai.source.badge")}</span>
                             ) : null}
+                            {source.isDefault === true ? (
+                              <span className="ds-tag">{t("datasources.default.badge")}</span>
+                            ) : null}
                           </span>
                         </td>
                         <td {...STACK_ROLES.cell} data-label={t("datasources.column.team")}>
@@ -894,6 +898,7 @@ function SourceOverview({
                             access={access}
                             onTest={() => void testOne(source)}
                             onShare={() => select(source.id, "access")}
+                            onDefault={(isDefault) => void setDefault(source, isDefault)}
                             onTrash={() => {
                               void trash([source]).then((done) => {
                                 if (done && source.id === selected) {

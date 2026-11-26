@@ -13,6 +13,9 @@ export const TIME_LABEL_OVERHANG = 32;
  */
 export const PX_PER_TIME_TICK = 110;
 
+/** Roughly one value label per this many px, so labels never collide. */
+export const PX_PER_VALUE_TICK = 40;
+
 /** Width of the value axis while its labels are not known yet, and where text cannot be measured. */
 export const VALUE_AXIS_SIZE = 56;
 
