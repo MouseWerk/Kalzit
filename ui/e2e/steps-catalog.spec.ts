@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { Api, fixturesDir, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 const STEP_MS = 15_000;
@@ -13,6 +14,8 @@ test("the step catalog finds two new table steps by keyword and adds them", asyn
   await signInOwner(page);
   await page.goto(`/explore?source=${id}`);
   const start = page.getByRole("region", { name: t("explore.guide.title", { kind: "SQLite" }) });
+  // The fixture holds two tables; the steps below work on the sales table's fields.
+  await selectOption(start.getByLabel(t("help.pick.table")), "sales");
   await start.getByRole("button", { name: t("help.starter.sql.rows") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });
   await expect(result.getByLabel(t("explore.visualization"))).toBeVisible({ timeout: STEP_MS });
