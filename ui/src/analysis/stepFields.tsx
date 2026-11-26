@@ -1,6 +1,8 @@
 import { useId } from "react";
 import type { Field } from "../api/generated/shapes";
 import { Select } from "../components/Select";
+import "../features/dashboards/ui/shared.css";
+import "./analysis.css";
 
 /*
  * The small form fields the step forms share: text, numbers, a choice, a field of the input and

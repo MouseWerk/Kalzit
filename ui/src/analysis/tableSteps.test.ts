@@ -127,7 +127,7 @@ describe("table steps", () => {
     const long = `${"a".repeat(MAX_MATCH_CHARS)}x`;
     expect(fieldPattern("x$").test(long)).toBe(true);
     expect(fieldPattern("x$").test(matchHead(long))).toBe(false);
-    expect(Array.from(matchHead("😀".repeat(300))).length).toBe(MAX_MATCH_CHARS);
+    expect(Array.from(matchHead("\u{1F600}".repeat(300))).length).toBe(MAX_MATCH_CHARS);
     expect(fieldPattern("x\\.*").test("x")).toBe(true);
     expect(parseTime(`2026-01-01T00:00:00.${"0".repeat(60)}`, undefined)).toBeNull();
   });

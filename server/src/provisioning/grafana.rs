@@ -1453,8 +1453,6 @@ impl Converter<'_> {
     }
 }
 
-/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
-/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 /// Grafana's calculation names and Kalzit's; the others have no counterpart.
 fn reducer(name: &str) -> Option<String> {
     Some(match name {
@@ -1827,6 +1825,8 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
     out
 }
 
+/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
+/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 fn options_default(detail: &str) -> ImportNote {
     let field: String = detail
         .split_whitespace()

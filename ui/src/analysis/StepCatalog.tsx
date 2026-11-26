@@ -9,6 +9,7 @@ import { formatValue } from "../panels/frame";
 import type { StepType } from "./steps";
 import "../features/dashboards/ui/shared.css";
 import "../components/iconButton.css";
+import "../shell/shellUx.css";
 import "./analysis.css";
 
 export type ShapeName = "graph" | "frame" | "documents" | "trace";
