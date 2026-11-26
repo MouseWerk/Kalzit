@@ -245,6 +245,19 @@ describe("radial layout", () => {
     expect([...result.rings]).toEqual([1, 0]);
     expect(radialLayout(request("radial", 0)).positions).toHaveLength(0);
   });
+
+  it("ignores centres below zero or between two nodes", () => {
+    const edges: [number, number][] = [
+      [0, 1],
+      [1, 2],
+    ];
+    // A typed array cannot hold them; a request built by hand can.
+    const centers = [-1, 0.5, 2] as unknown as Uint32Array;
+    const result = radialLayout(request("radial", 3, edges, { centers }));
+    expect(result.centers).toEqual([2]);
+    expect([...result.rings]).toEqual([2, 1, 0]);
+    expect(finite(result.positions)).toBe(true);
+  });
 });
 
 describe("circular layout", () => {
@@ -430,6 +443,32 @@ describe("timeline layout", () => {
     for (const node of [1, 3]) {
       expect(at(result.positions, node)[0]).toBeGreaterThanOrEqual(result.width + STRIP_GAP);
     }
+  });
+
+  it("gives pinned nodes no row, so the others leave no gap for them", () => {
+    const count = 6;
+    const times = new Float64Array(count).fill(1 * DAY);
+    times[count - 1] = 2 * DAY;
+    const fixed = Uint8Array.of(1, 1, 0, 0, 0, 0);
+    const start = seedPositions(count);
+    start[0] = 900;
+    start[1] = 900;
+    start[2] = -900;
+    start[3] = -900;
+    const result = timelineLayout(request("timeline", count, [], { times, fixed, start }));
+    const bare = timelineLayout(request("timeline", count - 2, [], { times: times.slice(2) }));
+    // The pinned nodes stay where they were.
+    expect(at(result.positions, 0)).toEqual([900, 900]);
+    expect(at(result.positions, 1)).toEqual([-900, -900]);
+    // The free nodes fill the rows from the top, as if the pinned ones were not there.
+    expect(result.lanes).toEqual(bare.lanes);
+    expect(result.lanes[0]?.rows).toBe(3);
+    const ys = [2, 3, 4].map((node) => at(result.positions, node)[1]).sort((a, b) => b - a);
+    const bareYs = [0, 1, 2].map((node) => at(bare.positions, node)[1]).sort((a, b) => b - a);
+    expect(ys).toEqual(bareYs);
+    // Their time still counts for the axis.
+    expect(result.placed).toBe(count);
+    expect(result.range).toEqual([1 * DAY, 2 * DAY]);
   });
 
   it("stays fast when thousands of nodes share one time", () => {

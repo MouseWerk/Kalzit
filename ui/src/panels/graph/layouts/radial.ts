@@ -77,7 +77,7 @@ export function radialLayout(request: LayoutRequest, work?: Work): RadialLayout 
   const centers: number[] = [];
   const isCenter = new Set<number>();
   for (const center of request.centers ?? []) {
-    if (center < count && !isCenter.has(center)) {
+    if (Number.isInteger(center) && center >= 0 && center < count && !isCenter.has(center)) {
       isCenter.add(center);
       centers.push(center);
     }
