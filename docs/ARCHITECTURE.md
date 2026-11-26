@@ -2130,7 +2130,11 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `npx playwright install-deps`). `KALZIT_E2E_BROWSERS=chromium` limits the browsers,
   `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
   `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
-  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`); `KALZIT_E2E_OUTPUT` moves
+  them, `KALZIT_E2E_WORKERS` sets the workers and `KALZIT_E2E_BLOB=1` adds a blob report for
+  `playwright merge-reports` (the local CI's parallel shards use all three). The tests tagged
+  `@smoke` are the 30 core flows of the CI's fast gate (`npm run e2e -- --project chromium
+  --grep @smoke`); a new core flow gets the tag, the rest run in the full suite.
 
   Known runner fault, not fixed (tracked in
   [#42](https://github.com/MouseWerk/Kalzit/issues/42)): on the Windows CI runner a page load

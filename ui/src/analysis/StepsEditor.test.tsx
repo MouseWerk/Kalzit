@@ -2,7 +2,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { optionLabels, pickOption } from "../test/select";
+import { pickOption } from "../test/select";
+import { addStep, offeredSteps } from "../test/stepCatalog";
 import { StepsEditor } from "./StepsEditor";
 import { type NamedFrame, runSteps, type Step } from "./steps";
 
@@ -53,7 +54,7 @@ describe("steps editor", () => {
   it("adds a calculated field and previews the result after it", async () => {
     const { user, seen } = setup();
     expect(screen.getByText("No steps yet.")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await addStep(user, "Calculated field");
     expect(seen.steps).toHaveLength(1);
     expect(seen.steps[0]).toMatchObject({ type: "calculate", frame: "A", expression: "betrag" });
 
@@ -124,8 +125,7 @@ describe("steps editor", () => {
 
   it("groups by a field with summaries picked from the fields", async () => {
     const { user, seen } = setup();
-    await pickOption(user, screen.getByLabelText("Kind of step"), "Group");
-    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await addStep(user, "Group");
     expect(seen.steps[0]).toMatchObject({
       type: "group",
       by: ["land"],
@@ -140,7 +140,8 @@ describe("steps editor", () => {
     expect(seen.steps[0]).toMatchObject({ aggregations: [{ field: "betrag", op: "sum" }] });
   });
 
-  it("shows a projection of documents, and the steps after it work on its frame", () => {
+  it("shows a projection of documents, and the steps after it work on its frame", async () => {
+    const user = userEvent.setup();
     const steps: Step[] = [
       {
         id: "p",
@@ -177,8 +178,8 @@ describe("steps editor", () => {
     const calculated = screen.getByRole("listitem", { name: "Step 2" });
     expect(within(calculated).getByText("2 rows, 3 fields")).toBeTruthy();
     // Not offered to add here: the query's editor makes projections.
-    const kinds = optionLabels(screen.getByLabelText("Kind of step"));
-    expect(kinds).not.toContain("Project into a table");
+    const { names } = await offeredSteps(user);
+    expect(names).not.toContain("Project into a table");
   });
 
   it("keeps focus and the preview with a moved step and says where it went", async () => {
@@ -207,7 +208,7 @@ describe("steps editor", () => {
     expect(screen.getByText("Step 2 removed.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Remove step 2" }));
     await user.click(screen.getByRole("button", { name: "Remove step 1" }));
-    expect(document.activeElement).toBe(screen.getByLabelText("Kind of step"));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add step" }));
   });
 
   it("shows each step its own result when the run is of the list before a move", () => {
@@ -241,10 +242,61 @@ describe("steps editor", () => {
     expect(second).not.toBe(first);
   });
 
-  it("offers joins only when there is a second query", () => {
-    setup();
-    const kinds = optionLabels(screen.getByLabelText("Kind of step"));
-    expect(kinds).not.toContain("Join queries");
-    expect(kinds).toContain("Compare with previous period");
+  it("offers joins only when there is a second query", async () => {
+    const { user } = setup();
+    const { names, unavailable } = await offeredSteps(user);
+    expect(unavailable).toContain("Join queries");
+    expect(unavailable).toContain("Stack tables");
+    expect(names).toContain("Compare with previous period");
+    expect(unavailable).not.toContain("Compare with previous period");
+  });
+
+  it("arranges, hides and renames fields in the step's own list", async () => {
+    const { user, seen } = setup();
+    await addStep(user, "Arrange and rename fields");
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    await user.click(within(step).getByRole("button", { name: "Move betrag up" }));
+    expect(seen.steps[0]).toMatchObject({ type: "organize", order: ["betrag", "land"] });
+    await user.click(within(step).getByRole("checkbox", { name: "Show land" }));
+    expect(seen.steps[0]).toMatchObject({ hide: ["land"] });
+    await user.type(within(step).getByRole("textbox", { name: "New name for betrag" }), "Betrag");
+    expect(seen.steps[0]).toMatchObject({ rename: { betrag: "Betrag" } });
+    expect(within(step).getByText("3 rows, 1 fields")).toBeTruthy();
+  });
+
+  it("filters rows by conditions and says how many rows stay", async () => {
+    const { user, seen } = setup();
+    await addStep(user, "Filter rows");
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    expect(seen.steps[0]).toMatchObject({
+      type: "filterRows",
+      conditions: [{ field: "betrag", op: "notEmpty" }],
+    });
+    await pickOption(user, within(step).getByLabelText("Comparison"), "greater than");
+    await user.type(within(step).getByLabelText("Value"), "15");
+    expect(seen.steps[0]).toMatchObject({
+      conditions: [{ field: "betrag", op: "gt", value: "15" }],
+    });
+    expect(within(step).getByText("Keeps 2 of 3 rows")).toBeTruthy();
+    await pickOption(user, within(step).getByLabelText("These rows"), "Leave out");
+    expect(within(step).getByText("Keeps 1 of 3 rows")).toBeTruthy();
+  });
+
+  it("converts a field and reduces the series, each with its help", async () => {
+    const { user, seen } = setup();
+    await addStep(user, "Convert type");
+    const convert = screen.getByRole("listitem", { name: "Step 1" });
+    expect(within(convert).getByText(/Turns a field into another type in its place/)).toBeTruthy();
+    expect(seen.steps[0]).toMatchObject({ conversions: [{ field: "land", to: "number" }] });
+    await pickOption(user, within(convert).getByLabelText("Into"), "time");
+    await user.type(within(convert).getByLabelText("Time format, optional"), "YYYY");
+    expect(seen.steps[0]).toMatchObject({
+      conversions: [{ field: "land", to: "time", format: "YYYY" }],
+    });
+    await addStep(user, "Reduce");
+    const reduce = screen.getByRole("listitem", { name: "Step 2" });
+    expect(seen.steps[1]).toMatchObject({ mode: "rows", calculations: ["last", "mean", "max"] });
+    await user.click(within(reduce).getByRole("checkbox", { name: "Sum" }));
+    expect(seen.steps[1]).toMatchObject({ calculations: ["sum", "mean", "max", "last"] });
   });
 });

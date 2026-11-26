@@ -13,7 +13,7 @@ import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { pickOption, waitForOption } from "../test/select";
-import { getTheme } from "../theme/theme";
+import { DARK_VARIANT_STORAGE_KEY, getTheme, setDarkVariant } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
 import { SETUP_DISMISSED_KEY } from "./setupSteps";
@@ -26,7 +26,6 @@ async function chooseBeforeSignIn(
   option: string,
 ) {
   await user.click(await screen.findByRole("button", { name: menu }));
-  // The theme menu names Light and Dark as a mode and as a variant; the mode comes first.
   const [first] = screen.getAllByRole("menuitemradio", { name: option });
   if (first === undefined) throw new Error(`no menu item ${option}`);
   await user.click(first);
@@ -780,7 +779,15 @@ describe("language and theme chosen before signing in", () => {
     const { user } = renderApp("/login");
     await chooseBeforeSignIn(user, /^Language:/, "Deutsch");
     await chooseBeforeSignIn(user, /^Darstellung:/, "Dunkel");
-    await chooseBeforeSignIn(user, /^Darstellung:/, "Papier");
+    // Only the mode before sign-in: the variants are chosen in the account settings alone.
+    await user.click(screen.getByRole("button", { name: /^Darstellung:/ }));
+    expect(screen.getAllByRole("menuitemradio").map((item) => item.textContent?.trim())).toEqual([
+      "System",
+      "Hell",
+      "Dunkel",
+      "Hoher Kontrast",
+    ]);
+    await user.keyboard("{Escape}");
     await user.click(screen.getByLabelText("E-Mail-Adresse"));
     await user.paste(TEST_USER.email);
     await user.click(screen.getByLabelText("Passwort"));
@@ -788,7 +795,7 @@ describe("language and theme chosen before signing in", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(server.state.preferences.language).toBe("de"));
     expect(server.state.preferences.theme).toBe("dark");
-    expect(server.state.preferences.themeLight).toBe("paper");
+    expect(server.state.preferences.themeLight).toBeUndefined();
     expect(server.state.preferences.themeDark).toBeUndefined();
     expect(getLanguage()).toBe("de");
     const adoptions = server.calls.filter(
@@ -796,6 +803,24 @@ describe("language and theme chosen before signing in", () => {
     );
     expect(adoptions).toHaveLength(1);
     expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
+  });
+
+  it("show the server's default variants, not one an account left in this browser", async () => {
+    const server = setup();
+    server.state.signedIn = false;
+    server.state.branding.defaultThemeDark = "night";
+    setDarkVariant("graphite");
+    // The tests route in memory; the theme reads the page's address, as in a browser.
+    window.history.replaceState(null, "", "/login");
+    try {
+      renderApp("/login");
+      await waitFor(() => expect(document.documentElement.dataset.dark).toBe("night"));
+      // The account's own variant stays stored for its next visit.
+      expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("graphite");
+    } finally {
+      window.history.replaceState(null, "", "/");
+      setDarkVariant("dark");
+    }
   });
 
   it("are not what the browser applied for someone: the server's default applies", async () => {

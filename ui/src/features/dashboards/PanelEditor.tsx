@@ -16,9 +16,9 @@ import {
 import { createPortal } from "react-dom";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import { asSteps, stepFrames, withUnknown } from "../../analysis/steps";
+import { asSteps, type StepKind, stepFrames, withUnknown } from "../../analysis/steps";
 import { isRecord } from "../../api/client";
-import type { Shape, TimeRange } from "../../api/generated/shapes";
+import type { FieldType, Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { Splitter } from "../../components/Splitter";
@@ -62,7 +62,7 @@ import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { type StyleSources, StyleSourcesContext } from "../../panels/styleSources";
 import { useStyleVars } from "../../panels/styleVars";
-import type { TableColumn } from "../../panels/types";
+import type { PanelField, TableColumn } from "../../panels/types";
 import { useElementSize } from "../../panels/useElementSize";
 import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
 import { shortcutAria, shortcutText } from "../../shortcuts/registry";
@@ -74,7 +74,7 @@ import {
   type PanelStart,
   PanelStartChoice,
 } from "../analyses/PanelSources";
-import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
+import { datasourcesQuery, kindsQuery, preferredSource, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
@@ -82,6 +82,7 @@ import { emptyQuery, familyOf, queryText } from "../datasources/queryKinds";
 import type { LinkedAnalysis } from "./api";
 import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
+  MAX_DESCRIPTION_CHARS,
   nextRefId,
   type PanelModel,
   type RowModel,
@@ -374,6 +375,16 @@ export function PanelEditor({
     }),
     [outcomes, otherPanels],
   );
+  // The fields the panel reads now, each name once, for the field choices of panel options.
+  const fieldChoices = useMemo(() => {
+    const seen = new Map<string, FieldType>();
+    for (const { frame } of stepsRun.frames) {
+      for (const field of frame.fields) {
+        if (!seen.has(field.name)) seen.set(field.name, field.type);
+      }
+    }
+    return [...seen].map(([name, type]) => ({ name, type }));
+  }, [stepsRun]);
   // The columns of the tables the panel shows now (after its steps), each name once, for options
   // set per column (the table footer).
   const tableColumns = useMemo((): TableColumn[] => {
@@ -585,7 +596,8 @@ export function PanelEditor({
   }, [run]);
 
   const addTarget = useCallback(() => {
-    const first = queryable[0];
+    // A new query starts with the source of the one above it, else the default, else the first.
+    const first = preferredSource(queryable);
     const kindOf = (datasourceId: string) =>
       datasources.data?.find((d) => d.id === datasourceId)?.kind;
     setTargets((list) => [
@@ -601,6 +613,11 @@ export function PanelEditor({
     (next: ReturnType<typeof asSteps>) => setSteps((current) => withUnknown(current, next)),
     [],
   );
+  // A panel's hint adds the step that makes the data fit; the step list shows it afterwards.
+  const addStep = useCallback((step: StepKind) => {
+    setSteps((current) => [...current, { id: crypto.randomUUID(), ...step }]);
+    setTab("steps");
+  }, []);
   // Switching the type keeps the old type's options for a way back.
   const changeType = useCallback(
     (next: string) =>
@@ -845,7 +862,11 @@ export function PanelEditor({
   );
 
   const previewSection = (
-    <EditablePreview onOptions={(options) => setLook((p) => ({ ...p, options }))}>
+    <EditablePreview
+      onOptions={(options) => setLook((p) => ({ ...p, options }))}
+      onAddStep={addStep}
+      onType={changeType}
+    >
       <EditorPreview
         notice={filterError}
         tableView={tableView}
@@ -899,6 +920,7 @@ export function PanelEditor({
         libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
         seriesNames={seriesNames}
         graphLabels={graphLabels}
+        fields={fieldChoices}
         tableColumns={tableColumns}
         onLook={setLook}
         onType={changeType}
@@ -981,14 +1003,22 @@ export function PanelEditor({
  */
 function EditablePreview({
   onOptions,
+  onAddStep,
+  onType,
   children,
 }: {
   onOptions: (options: Record<string, unknown>) => void;
+  onAddStep: (step: StepKind) => void;
+  onType: (type: string) => void;
   children: ReactNode;
 }) {
   const host = usePanelHost();
   return (
-    <PanelHostContext value={{ ...host, editOptions: onOptions }}>{children}</PanelHostContext>
+    <PanelHostContext
+      value={{ ...host, editOptions: onOptions, addStep: onAddStep, changeType: onType }}
+    >
+      {children}
+    </PanelHostContext>
   );
 }
 
@@ -1332,6 +1362,7 @@ function OptionsPane({
   libraryName,
   seriesNames,
   graphLabels,
+  fields,
   tableColumns,
   onLook,
   onType,
@@ -1348,6 +1379,7 @@ function OptionsPane({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  fields: readonly PanelField[];
   tableColumns: readonly TableColumn[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onType: (type: string) => void;
@@ -1419,6 +1451,7 @@ function OptionsPane({
                 libraryName={undefined}
                 seriesNames={seriesNames}
                 graphLabels={graphLabels}
+                fields={fields}
                 tableColumns={tableColumns}
                 onLook={ignoreChange}
                 onMakeLibrary={onMakeLibrary}
@@ -1482,6 +1515,7 @@ function OptionsPane({
             libraryName={libraryName}
             seriesNames={seriesNames}
             graphLabels={graphLabels}
+            fields={fields}
             tableColumns={tableColumns}
             onLook={onLook}
             onMakeLibrary={onMakeLibrary}
@@ -1509,6 +1543,7 @@ function OptionGroups({
   libraryName,
   seriesNames,
   graphLabels,
+  fields,
   tableColumns,
   onLook,
   onMakeLibrary,
@@ -1521,6 +1556,7 @@ function OptionGroups({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  fields: readonly PanelField[];
   tableColumns: readonly TableColumn[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onMakeLibrary: (() => void) | undefined;
@@ -1544,6 +1580,65 @@ function OptionGroups({
             }}
           />
         </OptionField>
+        <OptionField
+          label={t("dashboards.editor.panelDescription")}
+          value={look.description}
+          className="field"
+        >
+          <label className="field__label" htmlFor={`${titleId}-description`}>
+            {t("dashboards.editor.panelDescription")}
+          </label>
+          <p className="field__hint" id={`${titleId}-description-hint`}>
+            {t("dashboards.editor.panelDescriptionHint")}
+          </p>
+          <textarea
+            id={`${titleId}-description`}
+            className="input panel-editor__description"
+            rows={3}
+            maxLength={MAX_DESCRIPTION_CHARS}
+            aria-describedby={`${titleId}-description-hint`}
+            value={look.description ?? ""}
+            // White space alone is no description: the server refuses it, so it is left out.
+            onChange={(event) => {
+              const text = event.currentTarget.value;
+              onLook((p) => {
+                const next = { ...p };
+                if (text.trim() === "") delete next.description;
+                else next.description = text;
+                return next;
+              });
+            }}
+          />
+        </OptionField>
+        <OptionField
+          label={t("dashboards.editor.panelTransparent")}
+          value={look.transparent === true}
+          className="field"
+        >
+          <label className="checkbox" htmlFor={`${titleId}-transparent`}>
+            <input
+              id={`${titleId}-transparent`}
+              type="checkbox"
+              role="switch"
+              aria-checked={look.transparent === true}
+              checked={look.transparent === true}
+              aria-describedby={`${titleId}-transparent-hint`}
+              onChange={(event) => {
+                const on = event.currentTarget.checked;
+                onLook((p) => {
+                  const next = { ...p };
+                  if (on) next.transparent = true;
+                  else delete next.transparent;
+                  return next;
+                });
+              }}
+            />
+            {t("dashboards.editor.panelTransparent")}
+          </label>
+          <p className="field__hint" id={`${titleId}-transparent-hint`}>
+            {t("dashboards.editor.panelTransparentHint")}
+          </p>
+        </OptionField>
       </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (
         <OptionGroup id={`${titleId}-panel-options`} title={t("dashboards.editor.panelOptions")}>
@@ -1551,6 +1646,7 @@ function OptionGroups({
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
             graphLabels={graphLabels}
+            fields={fields}
             tableColumns={tableColumns}
           />
         </OptionGroup>

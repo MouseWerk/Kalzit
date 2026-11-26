@@ -129,6 +129,7 @@
   "shortcuts.ask.stop": "Stop the answer",
   "shortcuts.area.providers": "Sign-in providers",
   "shortcuts.area.fields": "Text fields",
+  "shortcuts.area.handbook": "Handbook",
   "shortcuts.providers.move": "Move the provider up or down",
   "shortcuts.explore.aiStop": "Stop the AI answer",
   "shortcuts.explore.aiStopNote": "while it is being written",
@@ -136,5 +137,7 @@
   "shortcuts.explore.logsLevelNote": "on a level in the legend of the logs volume",
   "shortcuts.field.confirm": "Confirm: save a name, add an address",
   "shortcuts.field.cancel": "Cancel editing a name",
+  "shortcuts.handbook.search": "Search the handbook",
+  "shortcuts.handbook.pages": "Previous and next page of the handbook",
   "shortcuts.chart.readoutEnd": "End reading values"
 }

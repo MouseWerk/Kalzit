@@ -10,10 +10,16 @@ import type { DistributionAsk, DistributionSource } from "../../panels/types";
 import { fetchDistribution, runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
+import type { AdhocFilter } from "./adhoc";
 import { fetchAnalysisDistribution, fetchPanelDistribution, runPanelQuery } from "./api";
 import {
+  filtersFor,
+  holdOf,
   type PanelModel,
+  panelUses,
   storedQueryVariables,
+  type Target,
+  targetSource,
   type VariableModel,
   type VariableValues,
 } from "./model";
@@ -29,6 +35,11 @@ export interface PanelQueryInput {
   panel: PanelModel;
   range: TimeRange;
   variables: VariableValues;
+  /**
+   * Query variables at "All" whose values are not there yet (`heldVariables`): a panel that
+   * uses one does not run until they are, and shows why it waits (`holdOf`).
+   */
+  held?: Readonly<Record<string, string | null>> | undefined;
   /** The saved dashboard's variables, which decide what the panel route may be sent. */
   saved?: readonly VariableModel[];
   /**
@@ -71,9 +82,10 @@ export function usePanelResults(input: PanelQueryInput) {
   const kindOf = useSourceKinds(orgId);
   const { variables, targets, refIds, queryKey, graphSteps, maxDataPoints, intervalMs } =
     panelRequest(input, kindOf);
+  const waiting = holdOf(panelUses(panel), input.held) !== null;
   return useQuery<TargetOutcome[]>({
     queryKey,
-    enabled: targets.length > 0,
+    enabled: targets.length > 0 && !waiting,
     // Results belong to one time range; a newer range replaces them instead of serving them old.
     staleTime: Number.POSITIVE_INFINITY,
     // A refresh, a new range or new variables keep the panel's last answer on screen until the
@@ -112,6 +124,7 @@ export function usePanelResults(input: PanelQueryInput) {
                     refId: t.refId,
                     datasourceId: t.datasourceId,
                     query: t.query,
+                    ...(t.filters === undefined ? {} : { filters: t.filters }),
                     // Graph steps run with their query, as the panel route runs the stored ones.
                     ...(graphSteps.has(t.refId) ? { steps: graphSteps.get(t.refId) ?? [] } : {}),
                   })),
@@ -145,12 +158,26 @@ export function panelRequest(
     asSteps(panel.transformations).flatMap((s) => (s.disabled === true ? [] : stepFrames(s))),
   );
   const shown = panel.targets.filter((t) => t.hide !== true || read.has(t.refId));
-  const targets =
+  // A draft runs on the free route: a `$name` target on the source its data source variable
+  // picks, with the ad hoc filters of that source, as the server does for the stored panel.
+  const defined = input.saved ?? [];
+  const targets: (Target & { filters?: AdhocFilter[] })[] =
     source === "stored"
       ? shown
       : shown
+          .map((t) => ({
+            ...t,
+            datasourceId: targetSource(t.datasourceId, input.variables, defined),
+          }))
           .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
-          .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
+          .map((t) => {
+            const filters = filtersFor(t.datasourceId, input.variables, defined);
+            return {
+              ...t,
+              query: normalizeQuery(t.query, kindOf(t.datasourceId)),
+              ...(filters.length > 0 ? { filters } : {}),
+            };
+          });
   const refIds = targets.map((t) => t.refId);
   // A draft sends its graph steps with the queries: another step is another request.
   const graphSteps = graphStepsByQuery(asSteps(panel.transformations));
@@ -243,12 +270,11 @@ export function panelDistribution(
     if (target === undefined) {
       return Promise.reject(new Error(`no query ${refId}`));
     }
-    const query = normalizeQuery(target.query, kindOf(target.datasourceId));
-    return fetchDistribution(
-      orgId,
-      { datasourceId: target.datasourceId, query, ...common },
-      signal,
-    );
+    // A `$name` target asks the source its data source variable picks. Ad hoc filters do not
+    // reach the free distribution route yet (the server takes none there).
+    const datasourceId = targetSource(target.datasourceId, input.variables, input.saved ?? []);
+    const query = normalizeQuery(target.query, kindOf(datasourceId));
+    return fetchDistribution(orgId, { datasourceId, query, ...common }, signal);
   }
 }
 

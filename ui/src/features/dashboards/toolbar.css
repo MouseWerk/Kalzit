@@ -33,14 +33,17 @@
   /*
    * From tablet width up it sticks right under the top bar, covering what scrolls beneath it. On
    * phones its two rows would take too much of the screen, so only the top bar sticks there.
+   * Its top padding takes over the room below the top bar, so at rest it already touches the bar
+   * where it sticks: nothing moves before it holds, and the rail and pane below it (whose sticky
+   * offset counts its height) rest where they stick too.
    */
   @media (min-width: 48rem) {
     .dash-toolbar {
       position: sticky;
       inset-block-start: var(--top-bar-height, 0px);
       z-index: var(--z-bar);
-      margin-block: calc(var(--space-2) * -1);
-      padding-block: var(--space-2);
+      margin-block: calc(var(--space-top-bar-after) * -1) calc(var(--space-2) * -1);
+      padding-block: var(--space-top-bar-after) var(--space-2);
       background: var(--bg);
     }
   }
@@ -233,10 +236,15 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  /*
+   * The rail reaches into the page's bottom padding, down to what sticky columns leave free, so
+   * its column can run to the window's lower edge and is not pushed up at the page's end.
+   */
   .dash-rail {
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
+    margin-block-end: calc(var(--space-sticky-reach) * -1);
   }
 
   .dash-rail__column {
@@ -249,21 +257,28 @@
     display: flex;
     flex-direction: column;
     /*
-     * As tall as the window below the bars, less the page's bottom padding (or the canvas, when
-     * that is shorter), so it sticks and never gets pushed under the toolbar at the page's end.
+     * As tall as the window below its sticky top, less what sticky columns leave free at the
+     * bottom (or as the canvas, when that is shorter), so it sticks and never gets pushed under
+     * the toolbar at the page's end. A low window scrolls its buttons inside it, but it never
+     * shrinks below the least height of a sticky column. The padding leaves room for the focus
+     * rings of the buttons at its edges (the contrast theme's included), which it would clip.
      */
     align-self: flex-start;
     height: min(
-      100%,
-      calc(
-        100dvh -
-        var(--top-bar-height, 0px) -
-        var(--dash-toolbar-height, 0px) -
-        var(--space-4) -
-        var(--space-page-bottom)
+      calc(100% - var(--space-sticky-reach)),
+      max(
+        var(--size-sticky-column-min),
+        calc(
+          100dvh -
+          var(--top-bar-height, 0px) -
+          var(--dash-toolbar-height, 0px) -
+          var(--space-2) -
+          var(--space-sticky-bottom)
+        )
       )
     );
-    padding: var(--space-1);
+    overflow-y: auto;
+    padding: var(--space-ring-room);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
@@ -296,12 +311,15 @@
     align-content: start;
     gap: var(--space-2);
     width: var(--size-column);
-    max-height: calc(
-      100dvh -
-      var(--top-bar-height, 0px) -
-      var(--dash-toolbar-height, 0px) -
-      var(--space-4) -
-      var(--space-page-bottom)
+    max-height: max(
+      var(--size-sticky-column-min),
+      calc(
+        100dvh -
+        var(--top-bar-height, 0px) -
+        var(--dash-toolbar-height, 0px) -
+        var(--space-2) -
+        var(--space-sticky-bottom)
+      )
     );
     overflow-y: auto;
     padding: var(--space-3);
@@ -730,8 +748,10 @@
    * width that shows a short value whole ("Nord") where the row is tight.
    */
   .dash-filters .variables__item > .select {
-    min-width: var(--size-label);
+    min-width: var(--size-variable-chip);
+    max-width: var(--size-column);
     padding-inline-end: var(--space-8);
+    text-overflow: ellipsis;
   }
 
   .dash-filters .variables__item > .variables__input {
@@ -765,8 +785,10 @@
   .variables__picker {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-1);
-    min-width: 0;
+    /* A choice keeps its width when the value gets shorter; the bar does not jump. */
+    min-width: var(--size-variable-chip);
     max-width: var(--size-column);
     padding-inline: 0 var(--space-2);
     border: 0;
@@ -1397,5 +1419,130 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     white-space: nowrap;
+  }
+
+  /*
+   * Ad hoc filters in the bar (board ParityEditors, frame 10): chips of field, comparison and
+   * value in one quiet surface, the value in bold; no colored frame. Each part is a button of its
+   * own; the remove button sits at the chip's end.
+   */
+
+  /* Many chips wrap inside their box instead of being cut off; the box grows with them. */
+  .dash-filters .variables__item.variables__filters {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--control-height);
+    padding-block: var(--space-1);
+  }
+
+  .filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .filter-chip {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    max-width: var(--size-column);
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    font-size: var(--font-size-sm);
+  }
+
+  .filter-chip__part,
+  .filter-chip__remove,
+  .filter-chips__add {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .filter-chip__part {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .filter-chip__operator {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .filter-chip__value {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .filter-chip__remove {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .filter-chips__add {
+    flex: none;
+    color: var(--text-muted);
+    margin-inline-end: var(--space-2);
+  }
+
+  .filter-chip__part:hover,
+  .filter-chip__remove:hover,
+  .filter-chips__add:hover {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .filter-chips__add[aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  .filter-chip__part:focus-visible,
+  .filter-chip__remove:focus-visible,
+  .filter-chips__add:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* The editor of one filter: field, comparison and value side by side, then the buttons. */
+
+  .filter-editor.menu {
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .filter-editor__fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: var(--space-2);
+    width: min(var(--size-form), 100vw - 4 * var(--space-4));
+  }
+
+  .filter-editor__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  @media (max-width: 48rem) {
+    .filter-editor__fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* A switch variable: its label and the app's one switch. */
+
+  .dash-filters .variables__switch {
+    padding-inline-end: var(--space-3);
   }
 }

@@ -7,10 +7,13 @@
 #
 # It computes the tree that merging the heads onto the current main would make (git merge-tree,
 # one pull request after another) and looks for a pass of exactly that tree on every head, from
-# the local CI (run.sh) or a GitHub run (gh-run.sh): `passed tree <tree> ...`. So a result stays
-# good when main moved in a way that leaves the merged content the same, for example a batch
-# tested ahead on top of another that has merged since, and covers nothing else. Without such a
-# pass, the local CI runs first (run.sh with the same arguments); a failure of that tree stops.
+# the local CI (run.sh) or a GitHub run (gh-run.sh): `passed gate tree <tree> ...` from the fast
+# gate, or `passed tree <tree> ...` from the full suite; either is enough to merge, since the full
+# suite runs on main after the merges (main-watch.sh) and reverts a merge that breaks it. So a
+# result stays good when main moved in a way that leaves the merged content the same, for
+# example a batch tested ahead on top of another that has merged since, and covers nothing else.
+# Without such a pass, the fast gate runs first (run.sh with the same arguments); a failure of
+# that tree stops.
 #
 # The merges name the head commits that were checked, so a push made in between is refused.
 # Before each merge after the first, main must be exactly the commit the merge before it made;
@@ -20,6 +23,7 @@
 set -euo pipefail
 
 REPO_SLUG=MouseWerk/Kalzit
+CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 [ $# -ge 1 ] || { echo "usage: merge.sh PR [PR...]" >&2; exit 2; }
 prs=()
 for n in "$@"; do
@@ -58,18 +62,40 @@ predict() {
   tree=${steps[-1]}
 }
 
-# 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed.
+# 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed; 3: the
+# only failure of that tree is one leg that died (no job failed), and one rerun is allowed.
+LEG_DIED=": the leg itself"
+LEG_RERUN_NOTE="rerun after a failed leg"
 check() {
-  local verdict=0 i context line
+  local verdict=0 i context line failures tests_failed legs_died want
   for i in "${!prs[@]}"; do
+    # Every failure of exactly this tree, in either stage and on either leg, also an older one
+    # under a newer pass: a second run does not turn a failure into a pass.
+    failures="$(gh api --paginate "repos/$REPO_SLUG/commits/${heads[$i]}/statuses" \
+      --jq ".[] | select(.context == \"local/linux\" or .context == \"local/windows\")
+        | select(.state == \"failure\" or .state == \"error\")
+        | select(.description | startswith(\"failed tree ${tree:0:12} \") or startswith(\"failed gate tree ${tree:0:12} \"))
+        | \"\(.context): \(.description)\"")"
+    tests_failed="$(printf '%s\n' "$failures" | sed '/^$/d' | grep -vF "$LEG_DIED" || true)"
+    legs_died="$(printf '%s\n' "$failures" | grep -cF "$LEG_DIED" || true)"
+    if [ -n "$tests_failed" ] || [ "$legs_died" -gt 1 ]; then
+      printf '%s\n' "$failures" | sed '/^$/d' | sed "s/^/PR ${prs[$i]} /"
+      verdict=2
+      continue
+    fi
+    # A leg that died (WSL gone, disk full) is no test result: one rerun, named in its statuses.
+    want=1
+    if [ "$legs_died" -eq 1 ]; then
+      printf '%s\n' "$failures" | sed "s/^/PR ${prs[$i]} (one rerun allowed) /"
+      want=3
+    fi
     for context in local/linux local/windows; do
       line="$(gh api "repos/$REPO_SLUG/commits/${heads[$i]}/status" \
         --jq ".statuses[] | select(.context == \"$context\") | \"\(.state) \(.description)\"" | head -1)"
       case "$line" in
-        "success passed tree ${tree:0:12} "*) ;;
-        "failure failed tree ${tree:0:12} "*) echo "PR ${prs[$i]} $context: $line"; verdict=2 ;;
-        "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=1 ;;
-        *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=1 ;;
+        "success passed tree ${tree:0:12} "* | "success passed gate tree ${tree:0:12} "*) ;;
+        "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=$want ;;
+        *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=$want ;;
       esac
     done
   done
@@ -83,9 +109,14 @@ if [ "$verdict" -eq 2 ]; then
   echo "The CI failed for exactly this content; not merging." >&2
   exit 1
 fi
-if [ "$verdict" -eq 1 ]; then
-  echo "No pass for tree ${tree:0:12} yet; running the local CI first."
-  "$here/run.sh" "${prs[@]}" || true
+if [ "$verdict" -eq 1 ] || [ "$verdict" -eq 3 ]; then
+  if [ "$verdict" -eq 3 ]; then
+    echo "A leg died on tree ${tree:0:12} without a failed job; one rerun of the fast gate."
+    "$here/run.sh" "${prs[@]}" --note "$LEG_RERUN_NOTE" || true
+  else
+    echo "No pass for tree ${tree:0:12} yet; running the fast gate first."
+    "$here/run.sh" "${prs[@]}" || true
+  fi
   predict || exit 1
   verdict=0
   check || verdict=$?
@@ -99,6 +130,12 @@ if [ "$expected" != "$main" ]; then
   exit 1
 fi
 
+# Tells main-watch.sh that merges landed, so the full suite runs on main now instead of within
+# the hour; also when a batch stops partway.
+tell_main_watch() {
+  { mkdir -p "$CI_HOME" && echo "$* at $(date '+%Y-%m-%d %H:%M:%S')" > "$CI_HOME/main-watch.trigger"; } || true
+}
+
 # Through the API, so a local branch or worktree of a PR stays untouched (remove it yourself).
 # `sha` makes GitHub refuse a merge if the head moved after the check.
 stop() {
@@ -106,6 +143,7 @@ stop() {
   echo "$why" >&2
   if [ "$i" -gt 0 ]; then
     echo "Merged: ${prs[*]:0:$i}. Not merged: ${prs[*]:$i}; run merge.sh ${prs[*]:$i} for them." >&2
+    tell_main_watch "${prs[*]:0:$i}"
   fi
   exit 1
 }
@@ -132,3 +170,4 @@ for i in "${!prs[@]}"; do
   echo "PR $n merged as ${made:0:9} (head ${heads[$i]:0:9}); branch $branch deleted."
 done
 echo "Merged tree ${tree:0:12}, tested as such."
+tell_main_watch "${prs[*]}"

@@ -276,6 +276,13 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // The variable editor of the parity wave: "Regex" is the German word too (board ParityEditors).
+      "Regex (optional)",
+      // The legend's calculations and the axis' automatic choices keep their short names in
+      // German (board ParityEditors.dc.html, frames 2, 3 and 18).
+      "Min",
+      "Max",
+      "Auto",
       // Logs keep the names the sources use, as do the level words (board Logs.dc.html).
       "Logs",
       "Level",

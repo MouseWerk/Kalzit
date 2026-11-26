@@ -2,13 +2,7 @@ import { ApiError, expectShape, isRecord } from "../../api/client";
 import type { Page, QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { orgPath, send } from "../datasources/api";
 import { parseLibraryContent } from "./api";
-import {
-  type DashboardModel,
-  type PanelModel,
-  parseModel,
-  SCHEMA_VERSION,
-  type VariableValues,
-} from "./model";
+import { type DashboardModel, type PanelModel, parseModel, SCHEMA_VERSION } from "./model";
 
 /*
  * Annotations, playlists, library panels and the model check, as docs/api/dashboard-features.md
@@ -138,7 +132,7 @@ export async function runAnnotationQuery(
   orgId: string,
   dashboardId: string,
   queryId: string,
-  body: { timeRange: TimeRange; variables: VariableValues },
+  body: { timeRange: TimeRange; variables: Record<string, unknown> },
   signal?: AbortSignal,
 ): Promise<QueryResponse> {
   const path = orgPath(orgId, "dashboards", dashboardId, "annotation-queries", queryId, "query");

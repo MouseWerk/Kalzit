@@ -80,6 +80,7 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { useHeldResults } from "../../api/resultCache";
 import { withBase } from "../../lib/basePath";
+import { decodeFilters } from "./adhoc";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
 import { DashboardLinks } from "./DashboardLinks";
@@ -99,9 +100,12 @@ import {
   BROWSER_ZONE,
   clickTargets,
   type DashboardModel,
+  heldVariables,
+  type LoadedOptions,
   newPanelId,
   type PanelModel,
   type RowModel,
+  sentValues,
   type VariableValue,
   type VariableValues,
   valueList,
@@ -676,6 +680,28 @@ function DashboardView({
     setValues((v) => ({ ...v, [name]: value }));
     if (!auto) setChosen((names) => (names.has(name) ? names : new Set([...names, name])));
   };
+  // The values each query variable offered last, by name: what "All" stands for; or why its
+  // options query failed while it has none.
+  const [loadedOptions, setLoadedOptions] = useState<Record<string, LoadedOptions>>({});
+  const noteOptions = (name: string, loaded: LoadedOptions) =>
+    setLoadedOptions((known) =>
+      JSON.stringify(known[name] ?? null) === JSON.stringify(loaded)
+        ? known
+        : { ...known, [name]: loaded },
+    );
+  // What the queries, links and repeats run with: "All" as every value or its custom value.
+  const sent = useMemo(
+    () => sentValues(values, model.variables, loadedOptions),
+    [values, model.variables, loadedOptions],
+  );
+  // The query variables at "All" whose values are not there yet: what uses one waits for them
+  // (or shows why they failed) instead of running with an empty list and again once they load.
+  // Kept by its content, so an unrelated change (a panel moved) hands the panels the same object.
+  const heldKey = JSON.stringify(heldVariables(values, model.variables, loadedOptions));
+  const held = useMemo(
+    (): Readonly<Record<string, string | null>> => JSON.parse(heldKey),
+    [heldKey],
+  );
   // Rows opened or closed while viewing; not saved.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
@@ -941,7 +967,8 @@ function DashboardView({
         )
       : [],
     saved: dashboard.model,
-    values,
+    values: sent,
+    held,
     run: clock.run,
   });
 
@@ -1569,7 +1596,7 @@ function DashboardView({
   const host = {
     orgId,
     dashboardId: dashboard.id,
-    linkValues: values,
+    linkValues: sent,
     openInExplore: (datasourceId: string, query: unknown) => {
       handOffToExplore({ datasourceId, query });
       void navigate({ to: "/explore", search: {} });
@@ -1606,7 +1633,8 @@ function DashboardView({
       orgId,
       dashboardId: dashboard.id,
       range: resolved.ok ? resolved.range : { from: 0, to: 0 },
-      variables: values,
+      variables: sent,
+      held,
       saved: dashboard.model.variables,
       source: "stored" as const,
       run: clock.run,
@@ -1617,7 +1645,8 @@ function DashboardView({
       orgId,
       dashboard.id,
       resolved,
-      values,
+      sent,
+      held,
       dashboard.model.variables,
       clock.run,
       clock.manual,
@@ -1736,10 +1765,11 @@ function DashboardView({
               run={clock.manual}
               stored={dashboard.model.variables}
               onChange={pick}
+              onOptions={noteOptions}
             />
           }
           range={resolved.range}
-          variables={editorValues(edited, rows, values)}
+          variables={editorValues(edited, rows, sent)}
           stored={(() => {
             const saved = dashboard.model.panels.find((p) => p.id === edited.id);
             return saved === undefined
@@ -1821,7 +1851,15 @@ function DashboardView({
         dashboard: dashboard.id,
         from: textRange.from,
         to: textRange.to,
-        vars: variableTexts(values),
+        // "All" stays the marker: each run reads the values anew (`expand_all`). Ad hoc
+        // filters are no text; a report runs with the dashboard's saved ones.
+        vars: variableTexts(
+          Object.fromEntries(
+            Object.entries(values).filter(
+              ([name]) => model.variables.find((v) => v.name === name)?.type !== "adhoc",
+            ),
+          ),
+        ),
       },
     });
   const toolbarActions = {
@@ -1871,15 +1909,38 @@ function DashboardView({
           run={clock.manual}
           stored={draft === null ? undefined : dashboard.model.variables}
           onChange={pick}
+          onOptions={noteOptions}
         />
         <DashboardLinks
           orgId={orgId}
           dashboardId={dashboard.id}
           links={model.links ?? []}
-          values={values}
+          values={sent}
+          held={held}
         />
       </div>
     );
+
+  // Without a filter bar on screen (kiosk mode, a panel shown alone, the bar hidden from the
+  // rail), query variables still read their options, so panels at "All" get their values or
+  // the reason they have none instead of waiting for ever.
+  const hiddenBar =
+    resolved.ok && (mode === "kiosk" || filters === null) ? (
+      <div hidden>
+        <VariablesBar
+          orgId={orgId}
+          dashboardId={dashboard.id}
+          variables={model.variables}
+          values={values}
+          textRange={textRange}
+          range={resolved.range}
+          run={clock.manual}
+          stored={draft === null ? undefined : dashboard.model.variables}
+          onChange={pick}
+          onOptions={noteOptions}
+        />
+      </div>
+    ) : null;
 
   // The rail at the canvas' right edge, on wide screens outside kiosk and TV mode.
 
@@ -1987,6 +2048,7 @@ function DashboardView({
     >
       {editorView ?? settingsView ?? (
         <>
+          {hiddenBar}
           {mode === "kiosk" ? (
             // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
             // lately (as TV mode shows its bar); keyboard focus always shows it.
@@ -2124,14 +2186,15 @@ function DashboardView({
                       orgId,
                       dashboardId: dashboard.id,
                       range: panelRange(alone, resolved.range, now),
-                      variables: editorValues(alone, rows, values),
+                      variables: editorValues(alone, rows, sent),
+                      held,
                       saved: dashboard.model.variables,
                       source: "stored",
                       run: clock.run,
                       manual: clock.manual,
                       live: liveOptions,
                     }}
-                    view={{ ...viewActions, values: editorValues(alone, rows, values) }}
+                    view={{ ...viewActions, values: editorValues(alone, rows, sent) }}
                   />
                 </PanelHostContext>
               </div>
@@ -2600,7 +2663,11 @@ function DashboardView({
                   variable.label === undefined || variable.label === ""
                     ? variable.name
                     : variable.label,
+                // "All" stays the marker, so a link or snapshot reads the values when it runs.
                 value: values[variable.name],
+                ...(variable.type === "adhoc"
+                  ? { filters: decodeFilters(valueList(values[variable.name])) }
+                  : {}),
               })),
             panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
             onClose: () => setDialog(null),

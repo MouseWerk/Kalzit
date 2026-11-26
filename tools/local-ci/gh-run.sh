@@ -14,6 +14,9 @@
 #   gh-run.sh --on PR... -- PR... tests the second list on top of main with the first list merged
 #                                 first (as the merge queue tested ahead); the statuses go to the
 #                                 heads of the second list only, for the tree main + first + second
+#   gh-run.sh --gate ...          the fast gate instead of the full suite (ci.yml with
+#                                 suite=gate), posted as `passed gate tree ...` like run.sh's gate;
+#                                 enough for merge.sh, as a local gate is
 #
 # It waits for the run and deletes the branch afterwards. No checkout is touched: the merges are
 # made with git merge-tree in the repository's object store.
@@ -23,6 +26,11 @@ set -euo pipefail
 REPO_SLUG=MouseWerk/Kalzit
 CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 
+suite=full
+if [ "${1:-}" = --gate ]; then
+  suite=gate
+  shift
+fi
 ahead=()
 prs=()
 if [ "${1:-}" = --on ]; then
@@ -53,6 +61,7 @@ tree="$(git rev-parse "$cur^{tree}")"
 targets=("${heads[@]:${#ahead[@]}}")
 
 base="tree ${tree:0:12} on main ${main:0:9}"
+[ "$suite" = gate ] && base="gate $base"
 if [ ${#all[@]} -gt 1 ]; then base="$base batch $(IFS=,; echo "${all[*]}")"; fi
 
 label="$(IFS=+; echo "${all[*]}")"
@@ -73,7 +82,7 @@ status() {
 
 git push --quiet origin "$cur:refs/heads/$branch"
 trap 'git push --quiet origin --delete "$branch" 2> /dev/null || true' EXIT
-gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" > /dev/null
+gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" -f suite="$suite" > /dev/null
 run=""
 for _ in $(seq 1 30); do
   sleep 5

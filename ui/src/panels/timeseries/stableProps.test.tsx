@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Frame } from "../../api/generated/shapes";
+import { parseFieldConfig } from "../fieldConfig/fieldConfig";
 import type { TimeSeriesChartProps } from "./ChartShell";
 
 /** The props each drawing of the chart got, in order. */
@@ -43,5 +44,39 @@ describe("time series panel", () => {
     expect(drawn.length).toBeGreaterThan(1);
     expect(last?.series).toBe(first?.series);
     expect(last?.axisFormat).toBe(first?.axisFormat);
+  });
+
+  it("formats each value axis with the unit and decimals of its own first series", () => {
+    const { Panel } = timeseriesPanel;
+    const options = timeseriesPanel.options({});
+    const twoUnits: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 60_000, 120_000] },
+        { name: "sales", type: "number", values: [1, 2, 3] },
+        { name: "share", type: "number", values: [10, 20, 30] },
+      ],
+    };
+    const fieldConfig = parseFieldConfig({
+      defaults: { unit: "short", decimals: 1 },
+      overrides: [{ matcher: { type: "name", value: "share" }, properties: { unit: "percent" } }],
+    });
+    render(
+      <Panel
+        frames={[twoUnits]}
+        options={options}
+        fieldConfig={fieldConfig}
+        timeRange={{ from: 0, to: 180_000 }}
+        title="P"
+      />,
+    );
+    const last = drawn.at(-1);
+    expect(last?.axes?.map((a) => [a.key, a.unit, a.decimals])).toEqual([
+      ["y", "short", 1],
+      ["y2", "percent", 1],
+    ]);
+    const ticks = [0, 10, 20];
+    // Each axis formats with its own unit: only the right one carries the percent sign.
+    expect(last?.axisFormat(10, "y2", ticks)).toContain("%");
+    expect(last?.axisFormat(10, "y", ticks)).not.toContain("%");
   });
 });

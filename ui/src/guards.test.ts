@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   DARK_VARIANT_STORAGE_KEY,
   DARK_VARIANTS,
+  DEFAULT_DARK_CACHE_KEY,
+  DEFAULT_LIGHT_CACHE_KEY,
   LIGHT_VARIANT_STORAGE_KEY,
   LIGHT_VARIANTS,
+  PRE_SIGN_IN_PATHS,
   THEME_STORAGE_KEY,
   THEMES,
 } from "./theme/theme";
@@ -215,15 +218,28 @@ describe("source hygiene", () => {
 
   it("keeps the theme boot script in step with the theme module", () => {
     const boot = readFileSync(resolve(UI_ROOT, "public/theme-boot.js"), "utf8");
-    for (const key of [THEME_STORAGE_KEY, LIGHT_VARIANT_STORAGE_KEY, DARK_VARIANT_STORAGE_KEY]) {
+    for (const key of [
+      THEME_STORAGE_KEY,
+      LIGHT_VARIANT_STORAGE_KEY,
+      DARK_VARIANT_STORAGE_KEY,
+      DEFAULT_LIGHT_CACHE_KEY,
+      DEFAULT_DARK_CACHE_KEY,
+    ]) {
       expect(boot).toContain(`"${key}"`);
     }
     const list = (name: string) =>
       (new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(boot)?.[1] ?? "")
         .split(",")
-        .map((entry) => entry.trim().replaceAll('"', ""));
+        .map((entry) => entry.trim().replaceAll('"', ""))
+        .filter((entry) => entry !== "");
     expect(list("themes")).toEqual([...THEMES]);
     expect(list("lightVariants")).toEqual([...LIGHT_VARIANTS]);
     expect(list("darkVariants")).toEqual([...DARK_VARIANTS]);
+    expect(list("preSignInPaths")).toEqual([...PRE_SIGN_IN_PATHS]);
+    // Each page before sign-in is a route of the app.
+    const routes = readFileSync(resolve(UI_ROOT, "src/app/baseRoutes.tsx"), "utf8");
+    for (const page of PRE_SIGN_IN_PATHS) {
+      expect(routes).toContain(`path: "${page}"`);
+    }
   });
 });

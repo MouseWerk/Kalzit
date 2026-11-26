@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useFloatingMenu } from "../../shell/useFloatingMenu";
 import { useMenuButton } from "../../shell/useMenuButton";
 import type { VariableOption } from "./api";
+import { ALL_VALUE } from "./model";
 import "../../components/iconButton.css";
 import "../../shell/shellUx.css";
 import "./dashboardTools.css";
@@ -32,6 +33,9 @@ export function multiSummary(
   if (picked.length === 0) {
     return text.none;
   }
+  if (picked.includes(ALL_VALUE)) {
+    return text.all;
+  }
   const labels = picked.map((value) => list.find((o) => o.value === value)?.label ?? value);
   if (list.length > 1 && list.every((o) => picked.includes(o.value))) {
     return truncated ? text.count(picked.length) : text.all;
@@ -42,9 +46,10 @@ export function multiSummary(
 
 /**
  * The picker of a multi-value variable: a button in the look of the single-value select (value
- * summary, chevron) that opens a menu of checkboxes, with "Select all", "None" and, for a long
- * list, a search that has the focus on opening. The menu stays open while values are toggled;
- * Escape closes it and returns focus to the button.
+ * summary, chevron) that opens a menu of checkboxes, with "Select all" (or "All", where the
+ * variable offers it), "None" and, for a long list, a search that has the focus on opening. With
+ * typed values allowed, a search that matches no value offers to use it. The menu stays open
+ * while values are toggled; Escape closes it and returns focus to the button.
  */
 export function VariableMultiSelect({
   id,
@@ -52,6 +57,8 @@ export function VariableMultiSelect({
   picked,
   options,
   truncated,
+  includeAll = false,
+  allowCustom = false,
   describedBy,
   onChange,
 }: {
@@ -60,6 +67,10 @@ export function VariableMultiSelect({
   picked: readonly string[];
   options: readonly VariableOption[];
   truncated: boolean;
+  /** "All" is an entry of its own: picked, it stands for every value (`sentValues`). */
+  includeAll?: boolean;
+  /** Values outside the list may be typed into the search and used. */
+  allowCustom?: boolean;
   describedBy?: string | undefined;
   onChange: (values: string[]) => void;
 }) {
@@ -70,9 +81,10 @@ export function VariableMultiSelect({
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Values the options no longer list (a stored value, a value set by a click) stay choosable.
-  const unknown = picked.filter((v) => !options.some((o) => o.value === v));
+  const allPicked = includeAll && picked.includes(ALL_VALUE);
+  const unknown = picked.filter((v) => v !== ALL_VALUE && !options.some((o) => o.value === v));
   const all: VariableOption[] = [...unknown.map((value) => ({ value, label: value })), ...options];
-  const searchable = all.length > SEARCH_FROM;
+  const searchable = all.length > SEARCH_FROM || allowCustom;
   const needle = query.trim().toLowerCase();
   const shown =
     needle === ""
@@ -87,8 +99,14 @@ export function VariableMultiSelect({
     count: (count) => t("dashboards.variables.count", { count }),
   });
 
+  // A typed value that no entry has yet, offered as an entry of its own.
+  const typed = query.trim();
+  const offerTyped = allowCustom && typed !== "" && !all.some((o) => o.value === typed);
+
   function toggle(value: string) {
-    const next = picked.includes(value) ? picked.filter((v) => v !== value) : [...picked, value];
+    // Picking a value leaves "All"; it is a choice of its own, not one more value.
+    const chosen = picked.filter((v) => v !== ALL_VALUE);
+    const next = chosen.includes(value) ? chosen.filter((v) => v !== value) : [...chosen, value];
     // Keep the options' order, not the order of clicking.
     const order = all.map((o) => o.value);
     onChange(next.sort((a, b) => order.indexOf(a) - order.indexOf(b)));
@@ -108,6 +126,12 @@ export function VariableMultiSelect({
     // Home, End and Up stay the field's: the caret moves, the menu's entries are not skipped to.
     if (event.key === "Home" || event.key === "End" || event.key === "ArrowUp") {
       event.stopPropagation();
+    }
+    // Enter uses a typed value where typed values are allowed.
+    if (event.key === "Enter" && offerTyped && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      toggle(typed);
+      setQuery("");
     }
   }
 
@@ -176,7 +200,20 @@ export function VariableMultiSelect({
                   aria-label={t("dashboards.variables.quick")}
                   className="variables__group"
                 >
-                  {truncated ? null : (
+                  {includeAll ? (
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={allPicked}
+                      className="menu__item"
+                      onClick={() => onChange(allPicked ? [] : [ALL_VALUE])}
+                    >
+                      <span className="toolbar-menu__check" aria-hidden="true">
+                        {allPicked ? <Icon name="check" /> : null}
+                      </span>
+                      <span className="toolbar-menu__label">{t("dashboards.variables.all")}</span>
+                    </button>
+                  ) : truncated ? null : (
                     <button
                       type="button"
                       role="menuitem"
@@ -200,7 +237,23 @@ export function VariableMultiSelect({
                 <hr className="toolbar-menu__separator" />
                 {/* biome-ignore lint/a11y/useSemanticElements: a group of menu items, not a field set */}
                 <div role="group" aria-label={label} className="variables__group">
-                  {shown.length === 0 ? (
+                  {offerTyped ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="menu__item"
+                      onClick={() => {
+                        toggle(typed);
+                        setQuery("");
+                      }}
+                    >
+                      <span className="toolbar-menu__check" aria-hidden="true" />
+                      <span className="toolbar-menu__label">
+                        {t("dashboards.variables.useTyped", { value: typed })}
+                      </span>
+                    </button>
+                  ) : null}
+                  {shown.length === 0 && !offerTyped ? (
                     <div className="menu__label" role="presentation">
                       {t("dashboards.variables.noMatch")}
                     </div>

@@ -951,6 +951,76 @@
     gap: var(--space-3);
   }
 
+  .variable-editor__group {
+    display: grid;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* A switch with its text before it, as the board's option rows ("„Alle“ anbieten"). */
+  .variable-editor__switch {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--control-height);
+    cursor: pointer;
+  }
+
+  /* The values a query variable offers while it is edited: name left, value right. */
+  .variable-preview {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .variable-preview__head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .variable-preview__meta {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .variable-preview__list {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .variable-preview__list.is-stale {
+    color: var(--text-muted);
+  }
+
+  .variable-preview__row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .variable-preview__row > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .variable-preview__value {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
   .variable-editor__actions {
     display: flex;
     flex-wrap: wrap;
@@ -1177,5 +1247,118 @@
       grid-column: 1 / -1;
       grid-row: auto / span var(--h, 8);
     }
+  }
+
+  /* The query behind a Prometheus helper: read-only, in the query's own font. */
+
+  .variable-helper__behind {
+    display: block;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
+  }
+
+  /* Variables: the list and its dependencies (board ParityEditors, frame 11). */
+
+  .settings__variables-tabs {
+    margin-block-end: var(--space-3);
+  }
+
+  .dependencies {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .dependencies__graph {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .dependencies__node {
+    fill: var(--bg-raised);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .dependencies__edge {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width-strong);
+  }
+
+  .dependencies__label {
+    fill: var(--text);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .dependencies__sub {
+    fill: var(--text-muted);
+    font-size: var(--font-size-2xs);
+  }
+
+  .dependencies__unknown {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .dependencies__wrap {
+    overflow-x: auto;
+  }
+
+  .dependencies__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .dependencies__table th,
+  .dependencies__table td {
+    padding: var(--space-2) var(--space-3);
+    border-block-end: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .dependencies__table thead th {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .dependencies__name,
+  .dependencies__names {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-weight: var(--font-weight-regular);
+    white-space: nowrap;
+  }
+
+  .dependencies__unused {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .dependencies__muted {
+    color: var(--text-muted);
+  }
+
+  /* A panel whose ad hoc filters belong to another source than the one picked. */
+
+  .panel-card__filters-note {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-3) var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 }

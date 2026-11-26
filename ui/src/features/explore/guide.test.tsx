@@ -5,6 +5,7 @@ import { resetActiveTip } from "../../help/tips";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { optionLabels, optionValues, pickOption } from "../../test/select";
+import { addStep } from "../../test/stepCatalog";
 import {
   addMongoSource,
   addNeo4jSource,
@@ -122,8 +123,8 @@ describe("Explore's start panel", () => {
     // AI is off in the fake server: no entry, no placeholder.
     expect(within(start).queryByRole("link", { name: "Ask in plain language" })).toBeNull();
     expect(
-      within(start).getByRole("link", { name: /Guide to PostgreSQL for beginners/ }),
-    ).toHaveProperty("href", expect.stringContaining("query-languages.md#postgresql"));
+      within(start).getByRole("link", { name: /In the handbook: PostgreSQL for beginners/ }),
+    ).toHaveProperty("href", expect.stringMatching(/\/handbook\/query-languages#postgresql$/));
   });
 });
 
@@ -276,8 +277,7 @@ describe("the query behind a group step", () => {
     await screen.findByText("Grace");
     const aside = screen.getByRole("complementary", { name: /Steps/ });
     // One "Add step" button opens the kinds of steps.
-    await user.click(within(aside).getByRole("button", { name: "Add step" }));
-    await user.click(screen.getByRole("menuitem", { name: "Group" }));
+    await addStep(user, "Group", { scope: aside });
     const show = await within(aside).findByText("Show the query of this step");
     await user.click(show);
     expect(within(aside).getByText(/FROM \( SELECT \*/)).toBeTruthy();
