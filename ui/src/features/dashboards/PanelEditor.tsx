@@ -39,6 +39,11 @@ import { openLayerCount } from "../../lib/layers";
 import { tabForKey } from "../../lib/tabKeys";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
+import {
+  displayNameOf,
+  fieldOptionsFor,
+  parseFieldConfig,
+} from "../../panels/fieldConfig/fieldConfig";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
 import { parseGraphStyle, ruleCount } from "../../panels/graph/style/schema";
@@ -57,6 +62,7 @@ import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { type StyleSources, StyleSourcesContext } from "../../panels/styleSources";
 import { useStyleVars } from "../../panels/styleVars";
+import type { TableColumn } from "../../panels/types";
 import { useElementSize } from "../../panels/useElementSize";
 import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
 import { shortcutAria, shortcutText } from "../../shortcuts/registry";
@@ -85,7 +91,8 @@ import {
   variableTexts,
 } from "./model";
 import { PanelBody } from "./PanelCard";
-import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
+import { PanelExtras, type PanelExtrasPart, panelExtrasProblem } from "./PanelExtras";
+import { QueryOptions } from "./QueryOptions";
 import { queryStats } from "./queryStats";
 import { documentsOf, type TargetOutcome } from "./results";
 import { usePanelPages } from "./usePanelPages";
@@ -292,7 +299,7 @@ export function PanelEditor({
   // The steps run a moment behind typing; the preview and the steps editor share one run.
   const deferredSteps = useDeferredValue(steps);
   // Only what the drawing reads: typing a title or a link leaves the preview alone.
-  const { id, type, options, fieldConfig, grid } = look;
+  const { id, type, options, fieldConfig, grid, maxDataPoints, minInterval } = look;
   const previewPanel = useMemo(
     (): PanelModel => ({
       id,
@@ -303,8 +310,22 @@ export function PanelEditor({
       transformations: deferredSteps,
       options: tableView ? {} : options,
       fieldConfig: tableView ? {} : fieldConfig,
+      // The query options shape the preview's runs as they shape the dashboard's.
+      ...(maxDataPoints === undefined ? {} : { maxDataPoints }),
+      ...(minInterval === undefined ? {} : { minInterval }),
     }),
-    [id, type, tableView, grid, preview.targets, deferredSteps, options, fieldConfig],
+    [
+      id,
+      type,
+      tableView,
+      grid,
+      preview.targets,
+      deferredSteps,
+      options,
+      fieldConfig,
+      maxDataPoints,
+      minInterval,
+    ],
   );
   const previewQuery: PanelQueryInput = {
     orgId,
@@ -353,6 +374,21 @@ export function PanelEditor({
     }),
     [outcomes, otherPanels],
   );
+  // The columns of the tables the panel shows now (after its steps), each name once, for options
+  // set per column (the table footer).
+  const tableColumns = useMemo((): TableColumn[] => {
+    const seen = new Map<string, TableColumn>();
+    for (const { frame } of stepsRun.frames) {
+      for (const field of frame.fields) {
+        const name = displayNameOf(
+          field,
+          fieldOptionsFor(field, parseFieldConfig(look.fieldConfig)),
+        );
+        if (!seen.has(name)) seen.set(name, { name, type: field.type });
+      }
+    }
+    return [...seen.values()];
+  }, [stepsRun.frames, look.fieldConfig]);
   // The number series the panel shows now, for the colours editor's rows, each name once.
   const seriesNames = useMemo(
     () => [
@@ -711,6 +747,7 @@ export function PanelEditor({
       tab={tab}
       onTab={setTab}
       counts={{ queries: targets.length, steps: stepCount }}
+      queryOptions={<QueryOptions panel={look} range={range} onChange={setLook} />}
       queries={
         linkedId !== undefined ? (
           <LinkedQueryHeader
@@ -862,6 +899,7 @@ export function PanelEditor({
         libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
         seriesNames={seriesNames}
         graphLabels={graphLabels}
+        tableColumns={tableColumns}
         onLook={setLook}
         onType={changeType}
         onMakeLibrary={makeLibrary}
@@ -1149,6 +1187,7 @@ function LowerPane({
   tab,
   onTab,
   counts,
+  queryOptions,
   queries,
   steps,
 }: {
@@ -1156,6 +1195,8 @@ function LowerPane({
   tab: LowerTab;
   onTab: (tab: LowerTab) => void;
   counts: Record<LowerTab, number>;
+  /** The query options, a row above the queries. */
+  queryOptions: ReactNode;
   queries: ReactNode;
   steps: ReactNode;
 }) {
@@ -1205,6 +1246,7 @@ function LowerPane({
         aria-labelledby={`${idPrefix}-queries-tab`}
         hidden={tab !== "queries"}
       >
+        {queryOptions}
         {queries}
       </div>
       <div
@@ -1290,6 +1332,7 @@ function OptionsPane({
   libraryName,
   seriesNames,
   graphLabels,
+  tableColumns,
   onLook,
   onType,
   onMakeLibrary,
@@ -1305,6 +1348,7 @@ function OptionsPane({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  tableColumns: readonly TableColumn[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onType: (type: string) => void;
   onMakeLibrary: (() => void) | undefined;
@@ -1375,6 +1419,7 @@ function OptionsPane({
                 libraryName={undefined}
                 seriesNames={seriesNames}
                 graphLabels={graphLabels}
+                tableColumns={tableColumns}
                 onLook={ignoreChange}
                 onMakeLibrary={onMakeLibrary}
               />
@@ -1437,6 +1482,7 @@ function OptionsPane({
             libraryName={libraryName}
             seriesNames={seriesNames}
             graphLabels={graphLabels}
+            tableColumns={tableColumns}
             onLook={onLook}
             onMakeLibrary={onMakeLibrary}
           />
@@ -1463,6 +1509,7 @@ function OptionGroups({
   libraryName,
   seriesNames,
   graphLabels,
+  tableColumns,
   onLook,
   onMakeLibrary,
 }: {
@@ -1474,6 +1521,7 @@ function OptionGroups({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  tableColumns: readonly TableColumn[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onMakeLibrary: (() => void) | undefined;
 }) {
@@ -1503,6 +1551,7 @@ function OptionGroups({
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
             graphLabels={graphLabels}
+            tableColumns={tableColumns}
           />
         </OptionGroup>
       )}
@@ -1517,8 +1566,12 @@ function OptionGroups({
         </OptionGroup>
       )}
       <OptionGroup id={`${titleId}-extras`} title={t("dashboards.editor.group.extras")}>
+        {/* The own range and shift moved to the query options; this note says where, for one
+            version (ParityEditors board, decision 9). */}
+        <p className="field__hint">{t("dashboards.queryOptions.moved")}</p>
         <PanelExtras
           panel={look}
+          parts={EDITOR_EXTRAS}
           onChange={onLook}
           rows={rows}
           variables={variables}
@@ -1529,6 +1582,9 @@ function OptionGroups({
     </>
   );
 }
+
+/** The panel's own options in the options pane; its range and shift are query options now. */
+const EDITOR_EXTRAS: readonly PanelExtrasPart[] = ["library", "row", "repeat", "links"];
 
 type OptionView = "all" | "changed" | "overrides";
 const OPTION_VIEWS: readonly OptionView[] = ["all", "changed", "overrides"];

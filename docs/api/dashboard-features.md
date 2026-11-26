@@ -31,6 +31,10 @@ interface Panel {                                // in addition to version 1
   repeat?: { variable: string; direction: "horizontal" | "vertical"; maxPerRow?: number };  // 1 to 24
   timeFrom?: string;                             // relative range of its own: "now-24h", "now-7d/d"
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
+  maxDataPoints?: number;                        // query options: 1 to 10000 points per series
+  minInterval?: string;                          // 1 to 5 digits and s, m, h or d, at most a day: "30s"
+  cacheTimeout?: string;                         // as minInterval, at most a day: "5m"
+  hideTimeNote?: boolean;                        // the header leaves out the own range and shift; true or absent
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
   analysisId?: string;                           // shows that saved analysis (docs/api/analyses.md, "Linked panels"); targets must be empty
@@ -64,6 +68,24 @@ order mark) and the line and paragraph separators U+2028 and U+2029, as appearan
 fields refused, so a server from before them refuses a dashboard that uses them: returning to such
 a version needs the database backup taken with the update, or those panels saved without them
 first.
+
+**Query options** (`maxDataPoints`, `minInterval`, `cacheTimeout`, `hideTimeNote`) came after
+version 0.7.5; a server from before them refuses a dashboard that uses them, as above. The server
+applies the first three to the panel's stored queries wherever they run (the panel query route,
+live updates, exports, field distributions, reports, public links and snapshots), whatever the
+request asks:
+
+- `maxDataPoints` is the most points per series: a request asking for more gets this many, and
+  `$__interval` is never finer than the range spread over them. A request may ask for fewer
+  points or a coarser interval.
+- `minInterval` raises a finer `$__interval` to it.
+- `cacheTimeout` shortens the query cache's time for the panel's answers to it; it never
+  lengthens what the data source sets, and sources without the cache ignore it. An answer kept
+  longer (by another panel with the same query) is not served to this panel past its time.
+- `hideTimeNote` only hides the note on an own range or shift in the panel's header.
+
+`timeFrom` and `timeShift` are resolved where "now" is known: the browser sends the panel's
+range with each request (`panelRange`), reports work it out on the server.
 
 Rules:
 

@@ -5,7 +5,6 @@ import type { LiveSpec } from "../../live/client";
 import { type LiveView, useLiveSubscription } from "../../live/useLive";
 import { useSourceKinds } from "../datasources/useSourceKinds";
 import { outcomesOf } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { PANEL_DATA_KEY, type PanelQueryInput, panelRequest } from "./usePanelResults";
 
 /**
@@ -37,7 +36,7 @@ export function usePanelLive(
   const client = useQueryClient();
   const kindOf = useSourceKinds(input.orgId);
   const { orgId, dashboardId, panel, range, source, live } = input;
-  const { variables, refIds, queryKey } = panelRequest(input, kindOf);
+  const { variables, refIds, queryKey, maxDataPoints, intervalMs } = panelRequest(input, kindOf);
   // A shifted panel looks at a past period, which does not move with each run.
   const moving = live?.moving === true && panel.timeShift === undefined;
   const length = range.to - range.from;
@@ -53,8 +52,8 @@ export function usePanelLive(
           panel: { dashboardId, panelId: panel.id },
           ...(moving ? { lastMs: length } : { timeRange: range }),
           variables,
-          maxDataPoints: MAX_DATA_POINTS,
-          intervalMs: intervalFor(range),
+          maxDataPoints,
+          intervalMs,
           ...(live.refreshMs === undefined ? {} : { refreshMs: live.refreshMs }),
         };
   const view = useLiveSubscription(orgId, spec, queryKey, (results, _at, key) => {

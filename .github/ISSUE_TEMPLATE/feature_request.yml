@@ -5,7 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please check docs/PLAN.md and the open issues first; the feature may already be planned.
+        Please check the roadmap in the README, docs/PLAN.md and the open issues first; the feature may
+        already be planned.
   - type: textarea
     id: problem
     attributes:
@@ -28,10 +29,16 @@ body:
         - Dashboards and panels
         - Explore
         - Documents (MongoDB, search, files)
-        - Graphs (Neo4j, Memgraph, TigerGraph)
+        - Graphs (Neo4j, Memgraph, TigerGraph, ArangoDB, Gremlin)
+        - Traces (Tempo, Jaeger)
         - Analysis steps and export
         - Data sources
-        - Organizations, roles and administration
+        - Alerting
+        - Sharing, snapshots and reports
+        - Provisioning and Grafana import
+        - Plugins, apps and SDKs
+        - AI
+        - Sign-in, organizations, roles and administration
         - Installation and operation
         - Other
     validations:

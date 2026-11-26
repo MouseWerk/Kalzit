@@ -986,7 +986,7 @@ describe("editing a dashboard", () => {
       name: "Saved by others in the meantime",
     });
     expect(within(mine).getByText("Panel “Slow” removed")).toBeTruthy();
-    expect(within(others).getByText("Panel “Orders by day” changed")).toBeTruthy();
+    expect(within(others).getByText("Panel “Orders by day”: title")).toBeTruthy();
 
     await user.click(
       within(conflict).getByRole("button", { name: "Save mine as the newest version" }),
