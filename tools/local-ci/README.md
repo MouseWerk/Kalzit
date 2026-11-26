@@ -167,7 +167,7 @@ under `.github/` or `tools/local-ci/` runs everything (of the stage).
 
 | Leg | Fast gate | Full suite adds |
 |---|---|---|
-| Linux (`linux.sh`) | changes test, server (fmt, clippy, unit and core integration tests), ui (with a DST zone), sdk, roadmap, devkit, devgen, audit (when a lock file changed), e2e (smoke, Chromium) | all Rust tests, plugins, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e (all in Chromium, the engine checks in Firefox and WebKit, sharded), packages (x64), docker, devgen proof |
+| Linux (`linux.sh`) | changes test, server (fmt, clippy, unit and core integration tests), ui (with a DST zone), sdk, roadmap, devkit, devgen, audit (when a lock file changed), e2e (smoke, Chromium), visual (the visual comparison, when the UI changed; the pictures of a failed run in `linux-visual-diffs/`) | all Rust tests, plugins, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e (all in Chromium, the engine checks in Firefox and WebKit, sharded), visual, packages (x64), docker, devgen proof |
 | Windows (`windows.sh`) | server, ui, sdk, devkit, devgen, e2e (smoke, Chromium) | all Rust tests, plugins, e2e (as on Linux), msi (with `--msi`) |
 
 The gate's integration tests are `GATE_RUST_TESTS` in `common.sh` (and the same list in
