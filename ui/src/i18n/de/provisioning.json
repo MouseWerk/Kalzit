@@ -270,6 +270,8 @@
   "provisioning.note.organize_hidden": "Spalten, die der Organize-Schritt ausblendet, werden gezeigt.",
   "provisioning.note.organize_order": "Die Spaltenreihenfolge des Organize-Schritts wird nicht übernommen.",
   "provisioning.note.all_values": "Kalzit hat noch keinen Eintrag „Alle“; die Variable startet mit allen Werten ausgewählt.",
+  "provisioning.import.orgDefault": "vorgeschlagen: Standard der Organisation",
+  "provisioning.note.uid_not_kept": "Die uid {uid} bezeichnet hier schon ein Dashboard; ihre Grafana-Adresse führt deshalb nicht zu diesem.",
   "provisioning.note.step_dropped": "Für Grafanas {kind} gibt es keinen Schritt in Kalzit; er wurde weggelassen.",
   "provisioning.note.step_first_query": "{kind} wirkt nur auf Abfrage {refId}.",
   "provisioning.note.step_merge": "Merge wurde zu „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zu einer zusammengefasst.",

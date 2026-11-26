@@ -79,8 +79,8 @@ abzufragen.
 
 **Dashboards > Aus Grafana importieren** führt durch drei Schritte. Zuerst die Datei: hochladen
 oder ihr JSON einfügen, das Dashboard benennen und seinen Ordner wählen. Dann die Datenquellen:
-Jede Quelle der Datei bekommt eine von Kalzit, vorgeschlagen nach Name und Art, oder wird
-weggelassen; ihre Panels entfallen dann. Zuletzt der Bericht, bevor etwas angelegt ist;
+Jede Quelle der Datei bekommt eine von Kalzit, vorgeschlagen nach Name und Art (Grafanas
+Standardquelle: die Standard-Datenquelle der Organisation), oder wird weggelassen; ihre Panels entfallen dann. Zuletzt der Bericht, bevor etwas angelegt ist;
 **Importieren** legt das Dashboard an und öffnet es mit einer Zeile, die zurück zum Bericht
 führt (die Adresse des Dashboards mit `/import-report`).
 
@@ -92,7 +92,8 @@ kalzit provision import-grafana lager.json --server https://kalzit.example.com -
 ```
 
 `kalzit import grafana` ist derselbe Befehl. `--map` ordnet eine Grafana-Datenquelle der ID einer Kalzit-Datenquelle zu: über ihre uid, ihren
-Namen, die Eingabe `${DS_X}` eines Exports oder `default` für Panels ohne Quelle. `--dry-run`
+Namen, die Eingabe `${DS_X}` eines Exports oder `default` für Panels ohne Quelle (fehlt
+`default`, gilt die Standard-Datenquelle der Organisation, wenn sie eine hat). `--dry-run`
 wandelt um und zeigt den Bericht, ohne zu speichern. Das Token kommt aus `KALZIT_API_TOKEN`, wie
 beim [Provisioning](provisioning.md); die Rolle braucht `dashboards:write` dort, wo das Dashboard
 hinkommt, und `datasources:query` auf den zugeordneten Quellen.

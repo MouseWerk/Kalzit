@@ -1015,6 +1015,151 @@ async fn stored_grafana_units_are_corrected_once_into_a_new_version() {
     t.finish().await;
 }
 
+/// Grafana's default data source (a panel without one) maps to the organization's default when
+/// the request does not map it, and the Grafana uid of an imported dashboard finds it again
+/// (`/d/<uid>`), only for who may read it.
+#[tokio::test]
+async fn grafana_import_takes_the_default_source_and_keeps_the_uid() {
+    let mut t = TestApp::new().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let ds = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/datasources",
+            Some(json!({ "name": "Lager", "kind": "sqlite", "settings": { "path": path } })),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // The fixture with its panels on Grafana's default source.
+    let mut dashboard = fixture("modern.json");
+    for panel in dashboard["panels"].as_array_mut().unwrap() {
+        panel["datasource"] = Value::Null;
+        if let Some(targets) = panel["targets"].as_array_mut() {
+            for target in targets {
+                target.as_object_mut().unwrap().remove("datasource");
+            }
+        }
+    }
+    let dry = json!({ "dashboard": dashboard, "dryRun": true });
+    let unmapped = |report: &Value| report.to_string().matches("no_mapping_default").count();
+    let before = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(dry.clone())).await;
+    assert!(unmapped(&before["report"]) > 0, "{}", before["report"]);
+    t.ok(&Who::Owner, Method::PUT, &format!("/datasources/{ds}/default"), Some(json!({ "default": true }))).await;
+    let after = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(dry)).await;
+    assert_eq!(unmapped(&after["report"]), 0, "{}", after["report"]);
+    assert!(after["model"].to_string().contains(&ds), "the panels query the default source");
+
+    // Before any import the uid names nothing; afterwards it names the imported dashboard.
+    let r = t.call(&Who::Owner, Method::GET, "/dashboards/by-uid/lager-im-blick", None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let saved = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/dashboards/import/grafana",
+            Some(json!({ "dashboard": fixture("modern.json"), "datasources": { "${DS_LAGER}": ds } })),
+        )
+        .await;
+    let id = saved["dashboard"]["id"].as_str().unwrap().to_string();
+    let found = t.ok(&Who::Owner, Method::GET, "/dashboards/by-uid/lager-im-blick", None).await;
+    assert_eq!(found["id"], id.as_str());
+    // A dashboard's own id works too; an unknown uid does not.
+    assert_eq!(t.ok(&Who::Owner, Method::GET, &format!("/dashboards/by-uid/{id}"), None).await["id"], id.as_str());
+    let r = t.call(&Who::Owner, Method::GET, "/dashboards/by-uid/gibt-es-nicht", None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    // In the trash it is not found any more.
+    let r = t.call(&Who::Owner, Method::DELETE, &format!("/dashboards/{id}"), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = t.call(&Who::Owner, Method::GET, "/dashboards/by-uid/lager-im-blick", None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    t.finish().await;
+}
+
+/// An importer who may not query the organization's default source does not get it mapped for
+/// Grafana's default: it stays unmapped, as without a default.
+#[tokio::test]
+async fn grafana_import_maps_the_default_only_for_who_may_query_it() {
+    let mut t = TestApp::new().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let ds = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/datasources",
+            Some(json!({ "name": "Lager", "kind": "sqlite", "settings": { "path": path } })),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    t.ok(&Who::Owner, Method::PUT, &format!("/datasources/{ds}/default"), Some(json!({ "default": true }))).await;
+    let permissions = ["dashboards:read", "dashboards:write", "folders:read", "datasources:read"];
+    let role = t
+        .ok(&Who::Owner, Method::POST, "/roles", Some(json!({ "name": "Gestalter", "permissions": permissions })))
+        .await;
+    let designer = t.token("gestalter", role["id"].as_str().unwrap()).await;
+    let mut dashboard = fixture("modern.json");
+    for panel in dashboard["panels"].as_array_mut().unwrap() {
+        panel["datasource"] = Value::Null;
+        if let Some(targets) = panel["targets"].as_array_mut() {
+            for target in targets {
+                target.as_object_mut().unwrap().remove("datasource");
+            }
+        }
+    }
+    let dry = json!({ "dashboard": dashboard, "dryRun": true });
+    let r = t.call(&designer, Method::POST, "/dashboards/import/grafana", Some(dry.clone())).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body["report"].to_string().contains("no_mapping_default"), "{}", r.body["report"]);
+    assert!(!r.body["model"].to_string().contains(&ds), "the default is not used");
+    // The owner may query it, so it is mapped for them.
+    let mine = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(dry)).await;
+    assert!(mine["model"].to_string().contains(&ds));
+    t.finish().await;
+}
+
+/// A crafted Grafana uid cannot take over an address that names something else: a dashboard's
+/// id and a provisioned uid come first, and an import does not keep a uid that names either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_imported_uid_cannot_take_over_another_dashboards_address() {
+    let mut t = TestApp::new().await;
+    let admin = t.token("ci", "admin").await;
+    let files = t.files();
+    let applied = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    let provisioned = id_of(&applied.body["plan"], "lager-board");
+    let ds = t.ok(&Who::Owner, Method::GET, "/datasources", None).await["items"][0]["id"].as_str().unwrap().to_string();
+    let import = |uid: &str| {
+        let mut dashboard = fixture("modern.json");
+        dashboard["uid"] = json!(uid);
+        dashboard["title"] = json!(format!("Import {uid}"));
+        json!({ "dashboard": dashboard, "datasources": { "${DS_LAGER}": ds } })
+    };
+    // The provisioned uid.
+    let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(import("lager-board"))).await;
+    assert!(saved["report"].to_string().contains("uid_not_kept"), "{}", saved["report"]);
+    let found = t.ok(&Who::Owner, Method::GET, "/dashboards/by-uid/lager-board", None).await;
+    assert_eq!(found["id"], provisioned.as_str());
+    // Another dashboard's id.
+    let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(import(&provisioned))).await;
+    assert!(saved["report"].to_string().contains("uid_not_kept"), "{}", saved["report"]);
+    let found = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/by-uid/{provisioned}"), None).await;
+    assert_eq!(found["id"], provisioned.as_str());
+    // Neither import kept the uid.
+    let kept: Vec<(Option<String>,)> =
+        sqlx::query_as("SELECT source_uid FROM dashboard_import_reports").fetch_all(&t.state.db).await.unwrap();
+    assert_eq!(kept, [(None,), (None,)]);
+    // "." and ".." name nothing.
+    for uid in ["%2E", "%2E%2E"] {
+        let r = t.call(&Who::Owner, Method::GET, &format!("/dashboards/by-uid/{uid}"), None).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{uid}: {}", r.body);
+    }
+    t.finish().await;
+}
+
 /// A dashboard with live public links changes through files only for people who hold
 /// `dashboards:public` (owner decision D1), refused at plan and at apply alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
