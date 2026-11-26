@@ -188,7 +188,8 @@ pub fn check_plugins_dir_own(dir: &Path) -> Result<()> {
     let link = meta.file_type().is_symlink();
     if link || !meta.is_dir() {
         bail!(
-            "the plugin folder {} is a link, a junction or a file, not a folder; point paths.plugins_dir at a              folder",
+            "the plugin folder {} is a link, a junction or a file, not a folder; point paths.plugins_dir at a \
+             folder",
             dir.display()
         );
     }
@@ -203,7 +204,8 @@ pub fn check_plugins_dir_own(dir: &Path) -> Result<()> {
         let system = is_file && name.to_str().is_some_and(|n| SYSTEM_FILES.iter().any(|f| n.eq_ignore_ascii_case(f)));
         if !own && !system {
             bail!(
-                "the plugin folder {} (paths.plugins_dir) holds {:?}, which is not Kalzit's: point it at a missing                  or empty folder of its own, not a folder that other files live in",
+                "the plugin folder {} (paths.plugins_dir) holds {:?}, which is not Kalzit's: point it at a missing \
+                 or empty folder of its own, not a folder that other files live in",
                 dir.display(),
                 name
             );
