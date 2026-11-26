@@ -11,8 +11,8 @@ import { embeddedFonts, imageFileName } from "../../image";
 import type { GraphPalette } from "../colors";
 import { countText } from "../plural";
 import {
-  dataCounts,
   type DataScope,
+  dataCounts,
   exportScope,
   type ScopeCounts,
   scopeCounts,

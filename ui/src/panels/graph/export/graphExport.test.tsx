@@ -73,7 +73,9 @@ describe("the export menu of a graph panel", () => {
       <PanelHostContext value={{ exportData: { allowed: true, stored: false, run: vi.fn() } }}>
         <GraphExport
           {...props}
-          model={{ nodes: ["a", "b", "c"].map((id) => ({ id })), edges: [] } as unknown as GraphModel}
+          model={
+            { nodes: ["a", "b", "c"].map((id) => ({ id })), edges: [] } as unknown as GraphModel
+          }
           view={
             {
               nodes: [0, 1, 2].map((node) => ({ node, members: 1 })),
