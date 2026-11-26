@@ -423,10 +423,28 @@ den nächsten Nachbarn eines Knotens weiter. **Als Abfrage in Explore öffnen** 
 Gezeigten eine lesende Cypher-Abfrage im Editor von Explore. Nachbarn zu laden braucht
 Abfragezugriff auf die Datenquelle; für TigerGraph-Quellen gibt es den Explorer nicht.
 
+Das Menü **Layout** eines Netzwerks bietet Kräfte, Hierarchie und fünf weitere Layouts, jedes mit
+einem kurzen Satz dazu, was es tut oder warum es für dieses Ergebnis nicht geht: **Radial** (Ringe
+um die gewählten Knoten oder, wenn nichts gewählt ist, um den Knoten mit den meisten Kanten),
+**Kreis**, **Raster**, **Koordinaten** (zwei Zahl-Properties oder eine `point`-Property) und
+**Zeitachse** (Knoten nach einer Zeit-Property, eine Bahn je Label oder eine für alle). Kreis und
+Raster ordnen die Knoten nach Label, Name oder Anzahl der Kanten. Alle Layouts rechnen in einem
+Web Worker, zeigen den Fortschritt mit **Abbrechen** und kommen bei gleichem Ergebnis immer gleich
+heraus. **Neu anordnen** (Umschalt+L) gibt es, wo das Ergebnis anders ausfallen kann: Kräfte
+beginnen an einer anderen Stelle, und Radial ordnet um die jetzt gewählten Knoten an; die anderen
+Layouts stehen durch ihre Eingabe fest. Ruhige Linien hinter dem Graphen zeigen Ringe, Achsen und
+Bahnen, und Knoten, für die ein Layout keinen Platz hat (kein Wert, keine Zeit), stehen in einem
+eigenen Streifen mit ihrer Zahl und dem Grund. Die Hilfslinien sind eine Sehhilfe: Sie gehören
+nicht zu einem exportierten Bild. Zeiten werden als Unix-Zeit oder aus Datumstext gelesen: Ein
+Datum allein (2021-03-14) gilt als Mitternacht UTC, ein Datum mit Uhrzeit, aber ohne Zone als Zeit
+in der Zone deines Browsers. Ein Ergebnis, das für die Hierarchie zu groß ist, bietet **Gruppen
+schließen** an. Angeheftete Knoten bleiben an ihrem Platz, und ein Wechsel des Layouts löst sie.
+Im Panel-Editor wird die Wahl mit dem Panel gespeichert.
+
 ![Explorer-Modus: die Bestellungen eines Kunden als Schritt in der Zeile Schritte geladen](../../screenshots/graph-explorer-dark.png)
 
-Eine **Hierarchie** ordnet höchstens 2.000 Knoten an; ein größeres Ergebnis bietet **Als Netzwerk
-zeigen** an. Kanten, die einen Kreis schließen, werden vermerkt. Standardmäßig nutzt sie das
+Eine **Hierarchie** ordnet höchstens 10.000 gezeichnete Knoten an (geschlossene Gruppen zählen als
+ein Knoten); ein größeres Ergebnis bietet **Als Netzwerk zeigen** an. Kanten, die einen Kreis schließen, werden vermerkt. Standardmäßig nutzt sie das
 eigene Schichten-Layout von Kalzit. Unter **Layout** kannst du stattdessen **ELK geschichtet**
 wählen (den Eclipse Layout Kernel), mit seiner **Richtung** (von oben nach unten, von links nach
 rechts, von unten nach oben, von rechts nach links), **Knotenabstand** und **Schichtabstand** in px
