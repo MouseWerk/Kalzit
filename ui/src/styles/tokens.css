@@ -175,6 +175,15 @@
      */
     --space-page-top: var(--space-5);
     --space-page-bottom: var(--space-10);
+    /*
+     * The room between the top bar and the page below it. The dashboard toolbar fills it with its
+     * own top padding, so it rests exactly where it sticks and never moves before it does.
+     */
+    --space-top-bar-after: var(--space-4);
+    /* What sticky side columns leave free below them, at the window's lower edge. */
+    --space-sticky-bottom: var(--space-4);
+    /* How far a sticky side column's container reaches into the page's bottom padding. */
+    --space-sticky-reach: calc(var(--space-page-bottom) - var(--space-sticky-bottom));
     --space-grid: var(--space-2);
     /* A small ghost button's inset; the pull takes a row of them back by it, so text lines up. */
     --space-ghost-inset: calc(var(--space-2) + var(--border-width));
@@ -493,6 +502,8 @@
     --size-sidebar-min: 12rem;
     --size-field: 14rem;
     --size-column: 16rem;
+    /* The least height of a sticky side column (the dashboard rail and pane) in a very low window. */
+    --size-sticky-column-min: 6rem;
     --size-list-max: 16rem;
     --size-tooltip-max: 20rem;
     --size-text-max: 24rem;

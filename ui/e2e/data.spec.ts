@@ -104,8 +104,13 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await save.getByLabel(t("dashboards.save.message")).fill("Region als Variable");
   await save.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
   await expect(save).toBeHidden();
-  // Saving keeps edit mode.
-  await expect(page.getByRole("button", { name: t("dashboards.doneEditing") })).toBeVisible();
+  // Saving keeps edit mode, on the new version with nothing left to save.
+  await expect(
+    page.getByRole("button", { name: t("dashboards.save"), exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: t("dashboards.doneEditing"), exact: true }),
+  ).toBeVisible();
 
   // Saved and reloaded: the variable lists the regions and the panel shows its series.
   await page.reload();
