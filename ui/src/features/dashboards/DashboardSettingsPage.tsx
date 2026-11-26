@@ -1031,6 +1031,7 @@ function VariableEditor({
               <VariablePreview
                 orgId={orgId}
                 variable={variable}
+                kind={datasource.kind}
                 timeRange={timeRange}
                 values={values}
                 dashboardId={dashboardId}

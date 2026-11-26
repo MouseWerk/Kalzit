@@ -20,8 +20,9 @@ test.beforeAll(async ({ world }) => {
   const owner = await Api.owner();
   const target = (sql: string) => [{ refId: "A", datasourceId: world.sourceId, query: { sql } }];
   try {
+    // Version 2: a panel's steps are analysis steps there (version 1 kept only projections).
     dashboardId = await owner.createDashboard({
-      schemaVersion: 1,
+      schemaVersion: 2,
       title: unique("XY and Trend"),
       timeRange: { from: "now-6h", to: "now" },
       variables: [],
@@ -115,12 +116,16 @@ test("the panel editor adds the Sort step the Trend hint offers, or switches to 
   await expect(preview.locator(".fit-hint")).toHaveCount(0);
   await expect(preview.locator(".ts__line").first()).toBeVisible();
 
-  await page.goto(`/dashboards/${dashboardId}/panels/falling/edit`);
-  await preview
+  // The editor's address opened again in the same tab comes back to the unsaved Sort step
+  // (draftStore.ts), so the other way out of the hint starts in a new tab.
+  const fresh = await page.context().newPage();
+  await fresh.goto(`/dashboards/${dashboardId}/panels/falling/edit`);
+  const freshPreview = fresh.locator(".panel-editor__preview");
+  await freshPreview
     .locator(".fit-hint")
     .getByRole("button", { name: t("panels.trend.showAsXY") })
     .click();
-  await expect(preview.locator(".xy__point").first()).toBeVisible();
+  await expect(freshPreview.locator(".xy__point").first()).toBeVisible();
 });
 
 test.describe("360 px wide", () => {
