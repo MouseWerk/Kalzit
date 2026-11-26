@@ -519,5 +519,9 @@
   "dashboards.empty.starredTitle": "No favorites yet",
   "dashboards.empty.starredText": "Star a dashboard to find it here.",
   "dashboards.empty.recentTitle": "Nothing opened yet",
-  "dashboards.empty.recentText": "The dashboards you open appear here, the last one first."
+  "dashboards.empty.recentText": "The dashboards you open appear here, the last one first.",
+  "dashboards.editor.panelDescription": "Description",
+  "dashboards.editor.panelDescriptionHint": "Shown behind the info sign in the panel header. Markdown for links and emphasis; variables such as $host are filled in.",
+  "dashboards.editor.panelTransparent": "Transparent background",
+  "dashboards.editor.panelTransparentHint": "Without surface and border; for text, figures and images over a calm grid."
 }

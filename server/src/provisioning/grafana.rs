@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::dashboards::model::{self, MAX_VARIABLE_TEXT_CHARS};
+use crate::dashboards::panel_options::{
+    MAX_LEGEND_VALUES, MAX_LEGEND_WIDTH, MAX_TOOLTIP_SIZE, MIN_LEGEND_WIDTH, MIN_TOOLTIP_SIZE, is_calc,
+};
 use crate::dashboards::variables::{ALL, OptionRegex};
 
 mod fields;
@@ -573,7 +576,88 @@ impl Converter<'_> {
         reducer
     }
 
-    /// The legend (`with_values`: the panel shows last, min, max and mean in it).
+    /// The XY chart's mapping from Grafana's xychart: the first series' X, Y, size and colour
+    /// fields (by name, in the older `dims`/`series` form or the matcher form), how points show
+    /// and their sizes.
+    fn xy_options(panel: &Value, o: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
+        // A field named as text, as `{ "field": name }` or as a matcher `{ "matcher": { "options": name } }`.
+        fn field_ref(v: Option<&Value>) -> Option<String> {
+            let v = v?;
+            let name = v
+                .as_str()
+                .or_else(|| v.get("field").and_then(Value::as_str))
+                .or_else(|| v.get("matcher").and_then(|m| m.get("options")).and_then(Value::as_str))?;
+            let name = name.trim();
+            (!name.is_empty()).then(|| truncate(name, 200))
+        }
+        let series = o.get("series").and_then(Value::as_array).cloned().unwrap_or_default();
+        let first = series.first();
+        let manual = text(o, "seriesMapping").or_else(|| text(o, "mapping")).as_deref() == Some("manual");
+        let x = first.and_then(|f| field_ref(f.get("x")));
+        let y = first.and_then(|f| field_ref(f.get("y")));
+        let auto_note =
+            || note("xy_auto", "the series mapping names no X and Y field; X and Y are chosen automatically");
+        if manual {
+            if let (Some(x), Some(y)) = (&x, &y) {
+                out.insert("mapping".into(), json!("manual"));
+                out.insert("x".into(), json!(x));
+                out.insert("y".into(), json!(y));
+            } else {
+                notes.push(auto_note());
+            }
+            if series.len() > 1 {
+                notes.push(
+                    note("xy_series", format!("only the first of {} series mappings was taken over", series.len()))
+                        .with("count", series.len()),
+                );
+            }
+        } else if o.get("dims").and_then(|d| d.get("x")).and_then(Value::as_str).is_some_and(|x| !x.is_empty()) {
+            notes.push(auto_note());
+        }
+        if let Some(field) = first.and_then(|f| field_ref(f.get("size")).or_else(|| field_ref(f.get("pointSize")))) {
+            out.insert("sizeBy".into(), json!(field));
+        }
+        if let Some(field) = first.and_then(|f| field_ref(f.get("color")).or_else(|| field_ref(f.get("pointColor")))) {
+            out.insert("colorBy".into(), json!(field));
+        }
+        let custom = panel.get("fieldConfig").and_then(|f| f.get("defaults")).and_then(|d| d.get("custom"));
+        let point_size = custom.and_then(|c| c.get("pointSize")).or_else(|| first.and_then(|f| f.get("pointSize")));
+        let raw = |key: &str| point_size.and_then(|p| p.get(key)).and_then(Value::as_f64).map(f64::round);
+        let px = |v: f64| v.clamp(1.0, 40.0) as u32;
+        let used: Vec<f64> = match (raw("min"), raw("max"), raw("fixed")) {
+            (Some(min), Some(max), _) => {
+                out.insert("sizeMin".into(), json!(px(min).min(px(max))));
+                out.insert("sizeMax".into(), json!(px(max).max(px(min))));
+                vec![min, max]
+            }
+            (_, _, Some(fixed)) => {
+                out.insert("sizeMin".into(), json!(px(fixed)));
+                out.insert("sizeMax".into(), json!(px(fixed)));
+                vec![fixed]
+            }
+            _ => Vec::new(),
+        };
+        if used.iter().any(|v| !(1.0..=40.0).contains(v)) {
+            notes.push(note("xy_point_size", "point sizes outside 1 to 40 px were fitted into that range"));
+        }
+        let show = custom.and_then(|c| text(c, "show")).or_else(|| first.and_then(|f| text(f, "show")));
+        match show.as_deref() {
+            Some("lines") => {
+                out.insert("show".into(), json!("lines"));
+            }
+            Some("points+lines") => {
+                out.insert("show".into(), json!("both"));
+            }
+            _ => {}
+        }
+        if let Some(opacity) = custom.and_then(|c| c.get("fillOpacity")).and_then(Value::as_f64) {
+            out.insert("pointOpacity".into(), json!(opacity.round().clamp(5.0, 100.0) as u32));
+        }
+    }
+
+    /// A legend in Kalzit's form: mode, placement, width and, where the panel shows values
+    /// (`with_values`), its calculations where Kalzit has them (`panel_options::CALCS`), at most
+    /// six; the others are named in a note.
     fn legend(o: &Value, with_values: bool, notes: &mut Vec<ImportNote>) -> Option<Value> {
         let legend = o.get("legend").filter(|l| l.is_object())?;
         let mode = match text(legend, "displayMode").as_deref() {
@@ -584,38 +668,74 @@ impl Converter<'_> {
         let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
         let placement = if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
         let mut out = json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement });
-        let mut values = Vec::new();
-        let mut other = Vec::new();
+        if let Some(width) = legend
+            .get("width")
+            .and_then(Value::as_u64)
+            .filter(|w| (MIN_LEGEND_WIDTH as u64..=MAX_LEGEND_WIDTH as u64).contains(w))
+        {
+            out["width"] = json!(width);
+        }
+        let mut values: Vec<String> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        let mut sample = false;
         for calc in legend.get("calcs").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-            let value = match calc {
-                "lastNotNull" | "last" => Some("last"),
-                "min" => Some("min"),
-                "max" => Some("max"),
-                "mean" => Some("mean"),
+            let mapped = match calc {
+                // Kalzit's "last" and "first" skip gaps; the row-exact ones are "lastRow" and
+                // "firstRow".
+                "lastNotNull" => Some("last".to_string()),
+                "firstNotNull" => Some("first".to_string()),
+                "last" => Some("lastRow".to_string()),
+                "first" => Some("firstRow".to_string()),
+                "diff" => Some("delta".to_string()),
+                // Grafana spreads over the population, Kalzit over a sample (n - 1).
+                "stdDev" | "variance" => {
+                    sample = true;
+                    Some(if calc == "stdDev" { "stddev" } else { "variance" }.to_string())
+                }
+                "diffperc" => Some("deltaPercent".to_string()),
+                "distinctCount" => Some("distinct".to_string()),
+                // Grafana's "delta" adds up a counter's increases; Kalzit's is last minus first.
+                "delta" => None,
+                other if is_calc(other) => Some(other.to_string()),
                 _ => None,
             };
-            match value.filter(|_| with_values) {
-                Some(v) if !values.contains(&v) => values.push(v),
+            match mapped.filter(|_| with_values) {
+                Some(m) if !values.contains(&m) => values.push(m),
                 Some(_) => {}
-                None => other.push(calc),
+                None => unknown.push(calc.to_string()),
             }
         }
-        if !values.is_empty() {
-            out["values"] = json!(values);
+        if sample && with_values {
+            notes.push(note(
+                "legend_sample",
+                "standard deviation and variance are calculated over a sample (n - 1) instead of the population",
+            ));
         }
-        if !other.is_empty() {
-            let list = other.join(", ");
+        if values.len() > MAX_LEGEND_VALUES {
+            notes.push(
+                note("legend_calcs_cut", format!("only the first {MAX_LEGEND_VALUES} legend values are kept"))
+                    .with("max", MAX_LEGEND_VALUES),
+            );
+            values.truncate(MAX_LEGEND_VALUES);
+        }
+        if !unknown.is_empty() {
+            let list = unknown.join(", ");
             notes.push(
                 note("legend_calcs", format!("the legend values {list} have no counterpart here and were dropped"))
                     .with("calcs", list),
             );
         }
+        if !values.is_empty() {
+            out["values"] = json!(values);
+        }
         Some(out)
     }
 
-    fn tooltip(o: &Value, notes: &mut Vec<ImportNote>) -> Option<Value> {
+    /// A tooltip in Kalzit's form: its mode and, where the panel shows them (`details`, the time
+    /// series), sort, hidden zeros and largest size; elsewhere a sort order is reported.
+    fn tooltip(o: &Value, details: bool, notes: &mut Vec<ImportNote>) -> Option<Value> {
         let tooltip = o.get("tooltip").filter(|t| t.is_object())?;
-        if text(tooltip, "sort").is_some_and(|s| s != "none") {
+        if !details && text(tooltip, "sort").is_some_and(|s| s != "none") {
             notes.push(note("tooltip_sort", "the tooltip's sort order is not taken over"));
         }
         let mode = match text(tooltip, "mode").as_deref() {
@@ -624,7 +744,26 @@ impl Converter<'_> {
             Some("single") => "single",
             _ => return None,
         };
-        Some(json!({ "mode": mode }))
+        let mut out = json!({ "mode": mode });
+        if !details {
+            return Some(out);
+        }
+        if let Some(sort) = text(tooltip, "sort").filter(|s| s == "asc" || s == "desc") {
+            out["sort"] = json!(sort);
+        }
+        if tooltip.get("hideZeros").and_then(Value::as_bool) == Some(true) {
+            out["hideZeros"] = json!(true);
+        }
+        for key in ["maxWidth", "maxHeight"] {
+            if let Some(size) = tooltip
+                .get(key)
+                .and_then(Value::as_u64)
+                .filter(|s| (MIN_TOOLTIP_SIZE as u64..=MAX_TOOLTIP_SIZE as u64).contains(s))
+            {
+                out[key] = json!(size);
+            }
+        }
+        Some(out)
     }
 
     /// The panel's options in Kalzit's form, as far as they have one. `legends` are the series
@@ -633,15 +772,25 @@ impl Converter<'_> {
         let o = panel.get("options").cloned().unwrap_or(Value::Null);
         let mut out = Map::new();
         let pick = |v: Option<&str>, allowed: &[&str]| v.filter(|v| allowed.contains(v)).map(|v| json!(v));
-        if matches!(kind, "timeseries" | "bar" | "piechart" | "histogram" | "state-timeline" | "status-history")
-            && let Some(l) = Self::legend(&o, matches!(kind, "timeseries" | "bar"), notes)
+        if matches!(
+            kind,
+            "timeseries" | "xy" | "trend" | "bar" | "piechart" | "histogram" | "state-timeline" | "status-history"
+        ) && let Some(l) = Self::legend(&o, matches!(kind, "timeseries" | "bar"), notes)
         {
             out.insert("legend".into(), l);
         }
         if matches!(
             kind,
-            "timeseries" | "bar" | "piechart" | "histogram" | "heatmap" | "state-timeline" | "status-history"
-        ) && let Some(t) = Self::tooltip(&o, notes)
+            "timeseries"
+                | "xy"
+                | "trend"
+                | "bar"
+                | "piechart"
+                | "histogram"
+                | "heatmap"
+                | "state-timeline"
+                | "status-history"
+        ) && let Some(t) = Self::tooltip(&o, kind == "timeseries", notes)
         {
             out.insert("tooltip".into(), t);
         }
@@ -672,6 +821,12 @@ impl Converter<'_> {
             ));
         }
         match kind {
+            "xy" => Self::xy_options(panel, &o, &mut out, notes),
+            "trend" => {
+                if let Some(x) = text(&o, "xField") {
+                    out.insert("xField".into(), json!(truncate(&x, 200)));
+                }
+            }
             "stat" => {
                 if let Some(r) = Self::reducer(&o, notes) {
                     out.insert("reducer".into(), json!(r));
@@ -1024,6 +1179,8 @@ impl Converter<'_> {
             "barchart" => "bar",
             "heatmap" => "heatmap",
             "histogram" => "histogram",
+            "xychart" => "xy",
+            "trend" => "trend",
             "state-timeline" => "state-timeline",
             "status-history" => "status-history",
             "text" => "text",
@@ -1056,9 +1213,16 @@ impl Converter<'_> {
             notes.push(note("grid_fitted", "its place was fitted into the 24 columns"));
         }
         let options = Self::options(kind, panel, &legends, &mut notes);
-        let transformations = panel.get("transformations").and_then(Value::as_array).cloned().unwrap_or_default();
-        let renamed = fields::renames(&transformations);
-        transformation_notes(&transformations, &mut notes);
+        let ref_ids: Vec<String> = targets.iter().filter_map(|t| t["refId"].as_str().map(str::to_string)).collect();
+        let steps = steps_of(panel, &ref_ids, &mut notes);
+        // An organize step taken over renames the fields itself, so overrides match the new names
+        // as in Grafana; without it, its names become display names on the fields' own names.
+        let renamed = if steps.iter().any(|s| s["type"] == "organize") {
+            BTreeMap::new()
+        } else {
+            let transformations = panel.get("transformations").and_then(Value::as_array).cloned().unwrap_or_default();
+            fields::renames(&transformations)
+        };
         let field_config = Self::field_config(kind, panel, &renamed, &mut notes);
         let id = self.panel_id(panel, index);
         let mut out = json!({
@@ -1072,6 +1236,9 @@ impl Converter<'_> {
         });
         if let Some(row) = row_id {
             out["rowId"] = json!(row);
+        }
+        if !steps.is_empty() {
+            out["transformations"] = json!(steps);
         }
         if let Some(d) = text(panel, "description") {
             let d: String = d
@@ -1487,6 +1654,378 @@ fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
     }
 }
 
+/// Grafana's calculation names and Kalzit's; the others have no counterpart.
+fn reducer(name: &str) -> Option<String> {
+    Some(match name {
+        "lastNotNull" => "last".into(),
+        "last" => "lastRow".into(),
+        "firstNotNull" => "first".into(),
+        "first" => "firstRow".into(),
+        "mean" | "sum" | "min" | "max" | "count" | "median" | "variance" => name.into(),
+        "stdDev" => "stddev".into(),
+        // Grafana's percentiles are p1 to p99.
+        p => crate::analysis::Agg::parse(p).filter(|a| matches!(a, crate::analysis::Agg::Percentile(_)))?.name(),
+    })
+}
+
+/// A note for a Grafana calculation that became a Kalzit one that differs in a detail.
+fn reducer_note(name: &str) -> Option<ImportNote> {
+    match name {
+        "last" | "first" => Some(
+            note(
+                "step_reducer_row",
+                format!("{name} became the cell of the {name} row, which may be empty; first and last value skip empty cells"),
+            )
+            .with("reducer", name),
+        ),
+        "stdDev" | "variance" => Some(
+            note(
+                "step_reducer_sample",
+                format!("Grafana computes {name} over all values (population); Kalzit uses the sample (n - 1)"),
+            )
+            .with("reducer", name),
+        ),
+        _ => None,
+    }
+}
+
+/// A Grafana name pattern as Kalzit reads it. As in Grafana (`stringToJsRegex`), the form
+/// `/body/flags` is found anywhere and loses its slashes, while a pattern without them must match
+/// the whole name: `cpu` becomes `^cpu$` (and `a|b` becomes `^a|b$`, as Grafana reads it). Flags
+/// change what matches and have no counterpart, so a pattern with them is not taken over.
+fn name_pattern(raw: &str) -> Result<String, String> {
+    if let Some(rest) = raw.strip_prefix('/')
+        && let Some(end) = rest.rfind('/')
+    {
+        let (body, flags) = (&rest[..end], &rest[end + 1..]);
+        if !flags.chars().all(|c| c == 'g') {
+            return Err(flags.to_string());
+        }
+        return Ok(body.to_string());
+    }
+    Ok(format!("^{raw}$"))
+}
+
+/// A pattern for a note: at most 80 characters, cut with an ellipsis.
+fn short_pattern(pattern: &str) -> String {
+    if pattern.chars().count() <= 80 {
+        return pattern.to_string();
+    }
+    let mut short: String = pattern.chars().take(79).collect();
+    short.push('\u{2026}');
+    short
+}
+
+/// Whether a Grafana date format uses only the parts Kalzit reads (`YYYY`, `MM`, `DD`, `HH`,
+/// `mm`, `ss`, `SSS`) besides characters that stand for themselves.
+fn plain_time_format(format: &str) -> bool {
+    let mut rest = format.to_string();
+    for token in ["YYYY", "SSS", "MM", "DD", "HH", "mm", "ss"] {
+        rest = rest.replace(token, "");
+    }
+    !rest.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// A Grafana value condition (`filterByValue`) as a Kalzit row condition.
+fn row_condition(filter: &Value, notes: &mut Vec<ImportNote>) -> Option<Value> {
+    let field = text(filter, "fieldName")?;
+    let config = filter.get("config")?;
+    let matcher = text(config, "id").unwrap_or_default();
+    let options = config.get("options").cloned().unwrap_or(json!({}));
+    let scalar = |key: &str| options.get(key).filter(|v| v.is_number() || v.is_string() || v.is_boolean()).cloned();
+    let op = match matcher.as_str() {
+        "isNull" => return Some(json!({ "field": field, "op": "empty" })),
+        "isNotNull" => return Some(json!({ "field": field, "op": "notEmpty" })),
+        "equal" => "eq",
+        "notEqual" => "ne",
+        "greater" => "gt",
+        "greaterOrEqual" => "gte",
+        "lower" => "lt",
+        "lowerOrEqual" => "lte",
+        "regex" => "matches",
+        "range" => {
+            if let (Some(from), Some(to)) = (scalar("from"), scalar("to"))
+                && !from.is_boolean()
+                && !to.is_boolean()
+            {
+                return Some(json!({ "field": field, "op": "between", "value": from, "to": to }));
+            }
+            ""
+        }
+        _ => "",
+    };
+    let value = scalar("value");
+    match (op, value) {
+        ("matches", Some(Value::String(p))) => {
+            if crate::analysis::table::field_pattern(&p).is_err() {
+                let short = short_pattern(&p);
+                notes.push(
+                    note(
+                        "step_condition_pattern",
+                        format!(
+                            "the condition on {field} with the pattern {short} is no regular expression Kalzit can read and was left out"
+                        ),
+                    )
+                    .with("field", &field)
+                    .with("pattern", &short),
+                );
+                return None;
+            }
+            Some(json!({ "field": field, "op": op, "value": p }))
+        }
+        ("matches", _) | ("", _) | (_, None) => {
+            notes.push(
+                note("step_matcher", format!("the condition {matcher} on {field} has no counterpart and was left out"))
+                    .with("matcher", &matcher)
+                    .with("field", &field),
+            );
+            None
+        }
+        (op, Some(v)) => Some(json!({ "field": field, "op": op, "value": v })),
+    }
+}
+
+/// The panel's Grafana transformations as Kalzit steps, each checked as a panel checks its steps;
+/// what has no counterpart is left out with a note. Steps that work on one table work on the
+/// first query until a step put the queries together.
+fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> Vec<Value> {
+    let Some(first) = ref_ids.first() else { return Vec::new() };
+    let refs: BTreeSet<&str> = ref_ids.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    let mut combined = ref_ids.len() == 1;
+    let list = panel.get("transformations").and_then(Value::as_array).into_iter().flatten();
+    for (i, tr) in list.take(crate::analysis::MAX_STEPS).enumerate() {
+        let kind = text(tr, "id").unwrap_or_default();
+        let o = tr.get("options").cloned().unwrap_or(json!({}));
+        let names = |v: Option<&Value>| -> Vec<String> {
+            v.and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str().map(str::to_string))
+                .take(crate::analysis::MAX_FIELD_LIST)
+                .collect()
+        };
+        let mut per_frame = true;
+        let step = match kind.as_str() {
+            "organize" => {
+                let hide: Vec<String> = o
+                    .get("excludeByName")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, v)| v.as_bool() == Some(true))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                let mut indexed: Vec<(i64, String)> = o
+                    .get("indexByName")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(k, v)| v.as_i64().map(|n| (n, k.clone())))
+                    .collect();
+                indexed.sort();
+                let rename: Map<String, Value> = o
+                    .get("renameByName")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, v)| v.as_str().is_some_and(|s| !s.is_empty()))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let mut step = json!({ "type": "organize", "frame": first });
+                if !indexed.is_empty() {
+                    step["order"] = json!(indexed.into_iter().map(|(_, k)| k).collect::<Vec<_>>());
+                }
+                if !hide.is_empty() {
+                    step["hide"] = json!(hide);
+                }
+                if !rename.is_empty() {
+                    step["rename"] = Value::Object(rename);
+                }
+                Some(step)
+            }
+            "filterFieldsByName" => {
+                let (mode, spec) = match (o.get("include"), o.get("exclude")) {
+                    (Some(spec), _) => ("keep", spec),
+                    (None, Some(spec)) => ("drop", spec),
+                    (None, None) => ("keep", &Value::Null),
+                };
+                let mut step = json!({ "type": "filterFields", "frame": first, "mode": mode });
+                let list = names(spec.get("names"));
+                if !list.is_empty() {
+                    step["names"] = json!(list);
+                }
+                if let Some(p) = text(spec, "pattern").filter(|p| !p.is_empty()) {
+                    match name_pattern(&p) {
+                        Ok(body) if crate::analysis::table::field_pattern(&body).is_err() => {
+                            let short = short_pattern(&p);
+                            notes.push(
+                                note(
+                                    "step_pattern",
+                                    format!("the pattern {short} is no regular expression Kalzit can read; the step was left out"),
+                                )
+                                .with("pattern", &short),
+                            );
+                            continue;
+                        }
+                        Ok(body) if !body.is_empty() => step["pattern"] = json!(body),
+                        Ok(_) => {}
+                        Err(flags) => {
+                            notes.push(
+                                note(
+                                    "step_pattern_flags",
+                                    format!("the pattern {p} uses the flags {flags}, which Kalzit does not read; the step was left out"),
+                                )
+                                .with("pattern", &p)
+                                .with("flags", &flags),
+                            );
+                            continue;
+                        }
+                    }
+                }
+                (o.get("byVariable").and_then(Value::as_bool) != Some(true)).then_some(step)
+            }
+            "filterByValue" => {
+                let conditions: Vec<Value> = o
+                    .get("filters")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .take(crate::analysis::MAX_CONDITIONS)
+                    .filter_map(|f| row_condition(f, notes))
+                    .collect();
+                let mode = if text(&o, "type").as_deref() == Some("exclude") { "drop" } else { "keep" };
+                let match_ = if text(&o, "match").as_deref() == Some("all") { "all" } else { "any" };
+                Some(json!({ "type": "filterRows", "frame": first, "mode": mode, "match": match_,
+                             "conditions": conditions }))
+            }
+            "limit" => {
+                let count = o.get("limitField").and_then(Value::as_u64).unwrap_or(10);
+                let count = count.clamp(1, u64::from(crate::analysis::MAX_LIMIT));
+                Some(json!({ "type": "limit", "frame": first, "count": count }))
+            }
+            "convertFieldType" => {
+                let mut seen = BTreeSet::new();
+                let mut conversions = Vec::new();
+                for c in o.get("conversions").and_then(Value::as_array).into_iter().flatten() {
+                    let Some(field) = text(c, "targetField").filter(|f| !f.is_empty()) else { continue };
+                    let destination = text(c, "destinationType").unwrap_or_default();
+                    let to = match destination.as_str() {
+                        "number" => "number",
+                        "string" => "string",
+                        "time" => "time",
+                        "boolean" => "bool",
+                        _ => {
+                            notes.push(
+                                note(
+                                    "step_conversion",
+                                    format!(
+                                        "the conversion of {field} to {destination} has no counterpart and was left out"
+                                    ),
+                                )
+                                .with("field", &field)
+                                .with("type", &destination),
+                            );
+                            continue;
+                        }
+                    };
+                    if !seen.insert(field.clone()) {
+                        continue;
+                    }
+                    let mut conversion = json!({ "field": field, "to": to });
+                    if let Some(format) = text(c, "dateFormat").filter(|f| !f.is_empty() && to == "time") {
+                        if plain_time_format(&format) {
+                            conversion["format"] = json!(format);
+                        } else {
+                            notes.push(
+                                note(
+                                    "step_time_format",
+                                    format!("the time format {format} uses parts Kalzit does not read; ISO 8601 is read instead"),
+                                )
+                                .with("format", &format),
+                            );
+                        }
+                    }
+                    conversions.push(conversion);
+                }
+                Some(json!({ "type": "convert", "frame": first, "conversions": conversions }))
+            }
+            "reduce" => {
+                let mut calculations: Vec<String> = Vec::new();
+                for r in names(o.get("reducers")) {
+                    match reducer(&r) {
+                        Some(c) if !calculations.contains(&c) => {
+                            notes.extend(reducer_note(&r));
+                            calculations.push(c);
+                        }
+                        Some(_) => {}
+                        None => notes.push(
+                            note("step_reducer", format!("the calculation {r} has no counterpart and was left out"))
+                                .with("reducer", &r),
+                        ),
+                    }
+                }
+                let mode = if text(&o, "mode").as_deref() == Some("reduceFields") { "columns" } else { "rows" };
+                Some(json!({ "type": "reduceSeries", "frame": first, "mode": mode, "calculations": calculations }))
+            }
+            "merge" if !combined => {
+                per_frame = false;
+                notes.push(note(
+                    "step_merge",
+                    "merge became stack tables: rows with equal values are not combined into one",
+                ));
+                Some(json!({ "type": "stack", "frames": ref_ids }))
+            }
+            // One query, or the queries already are one table: nothing to merge.
+            "merge" => continue,
+            "seriesToRows" => {
+                per_frame = false;
+                // Once the queries are one table, only the first is left to read.
+                let frames: Vec<&str> =
+                    if combined { vec![first.as_str()] } else { ref_ids.iter().map(String::as_str).collect() };
+                Some(json!({ "type": "seriesToRows", "frames": frames }))
+            }
+            _ => {
+                notes.push(
+                    note("step_dropped", format!("Grafana's {kind} has no Kalzit step and was left out"))
+                        .with("kind", &kind),
+                );
+                continue;
+            }
+        };
+        let Some(mut step) = step else {
+            notes.push(
+                note("step_empty", format!("Grafana's {kind} had nothing Kalzit could take over and was left out"))
+                    .with("kind", &kind),
+            );
+            continue;
+        };
+        step["id"] = json!(format!("g{}", i + 1));
+        if tr.get("disabled").and_then(Value::as_bool) == Some(true) {
+            step["disabled"] = json!(true);
+        }
+        if crate::analysis::check_steps(std::slice::from_ref(&step), &refs, "transformations").is_err() {
+            notes.push(
+                note("step_empty", format!("Grafana's {kind} had nothing Kalzit could take over and was left out"))
+                    .with("kind", &kind),
+            );
+            continue;
+        }
+        if per_frame && !combined {
+            notes.push(
+                note("step_first_query", format!("{kind} works on query {first} only"))
+                    .with("kind", &kind)
+                    .with("refId", first),
+            );
+        }
+        if !per_frame {
+            combined = true;
+        }
+        out.push(step);
+    }
+    out
+}
+
 /// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
 /// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 fn options_default(detail: &str) -> ImportNote {
@@ -1511,38 +2050,6 @@ fn repeat_dropped(repeat: &str) -> ImportNote {
         format!("the repeat over {repeat} was dropped: that variable does not take several values here"),
     )
     .with("variable", repeat)
-}
-
-/// The panel's transformations: an organize step's display names are taken over (see
-/// `fields::renames`); its hidden columns and order, and every other step, are reported.
-fn transformation_notes(transformations: &[Value], notes: &mut Vec<ImportNote>) {
-    let mut other = BTreeSet::new();
-    for t in transformations {
-        if t.get("disabled").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
-        let id = text(t, "id").unwrap_or_default();
-        if id != "organize" {
-            other.insert(if id.is_empty() { "?".to_string() } else { id });
-            continue;
-        }
-        let options = t.get("options").cloned().unwrap_or(Value::Null);
-        let hidden = options
-            .get("excludeByName")
-            .and_then(Value::as_object)
-            .is_some_and(|o| o.values().any(|v| v.as_bool() == Some(true)));
-        if hidden {
-            notes.push(note("organize_hidden", "columns the organize step hides are shown"));
-        }
-        if options.get("indexByName").and_then(Value::as_object).is_some_and(|o| !o.is_empty()) {
-            notes.push(note("organize_order", "the column order of the organize step is not taken over"));
-        }
-    }
-    for id in other {
-        notes.push(
-            note("transformation", format!("the transformation {id} is not taken over")).with("transformation", id),
-        );
-    }
 }
 
 /// A Grafana time (`now-6h`, an ISO time or Unix milliseconds as text) in Kalzit's form.
@@ -1869,6 +2376,171 @@ mod tests {
     }
 
     #[test]
+    fn transformations_become_steps_and_the_rest_is_reported() {
+        let dash = json!({
+            "schemaVersion": 39,
+            "title": "Steps",
+            "panels": [{
+                "id": 1, "type": "table", "title": "T", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                "datasource": { "uid": "Postgres" },
+                "targets": [{ "refId": "A", "rawSql": "select 1" }, { "refId": "B", "rawSql": "select 2" }],
+                "transformations": [
+                    { "id": "merge", "options": {} },
+                    { "id": "organize", "options": {
+                        "excludeByName": { "secret": true, "kept": false },
+                        "indexByName": { "b": 1, "a": 0 },
+                        "renameByName": { "a": "Alpha", "b": "" } } },
+                    { "id": "filterFieldsByName", "options": { "include": { "names": ["Alpha"], "pattern": "/^c/" } } },
+                    { "id": "filterFieldsByName", "options": { "include": { "pattern": "/^c/i" } } },
+                    { "id": "filterByValue", "options": { "type": "exclude", "match": "all", "filters": [
+                        { "fieldName": "Alpha", "config": { "id": "greater", "options": { "value": 5 } } },
+                        { "fieldName": "Alpha", "config": { "id": "range", "options": { "from": 1, "to": 9 } } },
+                        { "fieldName": "c", "config": { "id": "isNull", "options": {} } },
+                        { "fieldName": "c", "config": { "id": "substring", "options": { "value": "x" } } } ] } },
+                    { "id": "limit", "options": { "limitField": 20 }, "disabled": true },
+                    { "id": "convertFieldType", "options": { "conversions": [
+                        { "targetField": "t", "destinationType": "time", "dateFormat": "DD.MM.YYYY" },
+                        { "targetField": "u", "destinationType": "time", "dateFormat": "MMM Do" },
+                        { "targetField": "e", "destinationType": "enum" } ] } },
+                    { "id": "reduce", "options": { "mode": "reduceFields", "reducers": ["lastNotNull", "p95", "mean", "last", "stdDev", "range"] } },
+                    { "id": "seriesToRows", "options": {} },
+                    { "id": "calculateField", "options": {} }
+                ]
+            }]
+        });
+        let out = convert(&dash, &sources()).unwrap();
+        let panel = &out.model["panels"][0];
+        let steps = panel["transformations"].as_array().unwrap();
+        let types: Vec<&str> = steps.iter().map(|s| s["type"].as_str().unwrap()).collect();
+        assert_eq!(
+            types,
+            ["stack", "organize", "filterFields", "filterRows", "limit", "convert", "reduceSeries", "seriesToRows"]
+        );
+        assert_eq!(steps[0]["frames"], json!(["A", "B"]));
+        assert_eq!(steps[1]["order"], json!(["a", "b"]));
+        assert_eq!(steps[1]["hide"], json!(["secret"]));
+        assert_eq!(steps[1]["rename"], json!({ "a": "Alpha" }));
+        assert_eq!(
+            steps[2],
+            json!({ "id": "g3", "type": "filterFields", "frame": "A", "mode": "keep",
+                                     "names": ["Alpha"], "pattern": "^c" })
+        );
+        assert_eq!(steps[3]["mode"], "drop");
+        assert_eq!(steps[3]["match"], "all");
+        assert_eq!(
+            steps[3]["conditions"],
+            json!([{ "field": "Alpha", "op": "gt", "value": 5 },
+                   { "field": "Alpha", "op": "between", "value": 1, "to": 9 },
+                   { "field": "c", "op": "empty" }])
+        );
+        assert_eq!(steps[4]["disabled"], true);
+        assert_eq!(
+            steps[5]["conversions"],
+            json!([{ "field": "t", "to": "time", "format": "DD.MM.YYYY" },
+                                                   { "field": "u", "to": "time" }])
+        );
+        assert_eq!(steps[6]["calculations"], json!(["last", "p95", "mean", "lastRow", "stddev"]));
+        assert_eq!(steps[6]["mode"], "columns");
+        let codes: Vec<&str> = item(&out.report, "panel 1 \"T\"").notes.iter().map(|n| n.code.as_str()).collect();
+        for code in [
+            "step_merge",
+            "step_matcher",
+            "step_time_format",
+            "step_conversion",
+            "step_reducer",
+            "step_dropped",
+            "step_reducer_row",
+            "step_reducer_sample",
+            "step_pattern_flags",
+        ] {
+            assert!(codes.contains(&code), "{code}: {codes:?}");
+        }
+        // After the merge every step works on the one table left.
+        assert!(!codes.contains(&"step_first_query"), "{codes:?}");
+        // The converted dashboard passes the model's checks, steps included.
+        crate::dashboards::model::parse(out.model.clone()).unwrap();
+        // In order, every step reads only queries no earlier step used up.
+        let mut alive: BTreeSet<String> = ["A".to_string(), "B".to_string()].into();
+        for raw in steps {
+            let step = crate::analysis::parse_step(raw).unwrap();
+            let frames = step.kind.frames();
+            assert!(frames.iter().all(|f| alive.contains(*f)), "{raw} reads a used-up query");
+            if matches!(
+                step.kind,
+                crate::analysis::StepKind::Stack { .. } | crate::analysis::StepKind::SeriesToRows { .. }
+            ) {
+                for f in &frames[1..] {
+                    alive.remove(*f);
+                }
+            }
+        }
+        assert_eq!(steps[7]["frames"], json!(["A"]));
+    }
+
+    #[test]
+    fn name_patterns_match_as_in_grafana_and_bad_regexes_cost_only_their_condition() {
+        let panel = |transformations: Value| {
+            let dash = json!({
+                "schemaVersion": 39, "title": "P",
+                "panels": [{
+                    "id": 1, "type": "table", "title": "T", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                    "datasource": { "uid": "Postgres" },
+                    "targets": [{ "refId": "A", "rawSql": "select 1" }],
+                    "transformations": transformations
+                }]
+            });
+            let out = convert(&dash, &sources()).unwrap();
+            let steps = out.model["panels"][0]["transformations"].as_array().cloned().unwrap_or_default();
+            let notes = item(&out.report, "panel 1 \"T\"").notes.clone();
+            (steps, notes)
+        };
+        // A pattern without slashes matches the whole name, the slash form anywhere.
+        let (steps, _) = panel(json!([
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "cpu" } } },
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "/cpu/" } } }
+        ]));
+        assert_eq!(steps[0]["pattern"], "^cpu$");
+        assert_eq!(steps[1]["pattern"], "cpu");
+        let frame: crate::shapes::Frame = serde_json::from_value(json!({ "fields": [
+            { "name": "cpu", "type": "number", "values": [1] },
+            { "name": "cpu_user", "type": "number", "values": [2] } ] }))
+        .unwrap();
+        let kept = |pattern: &str| {
+            let out =
+                crate::analysis::table::filter_fields(&frame, crate::analysis::KeepDrop::Keep, &[], Some(pattern))
+                    .unwrap();
+            out.fields().iter().map(|f| f.name.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(kept(steps[0]["pattern"].as_str().unwrap()), ["cpu"]);
+        assert_eq!(kept(steps[1]["pattern"].as_str().unwrap()), ["cpu", "cpu_user"]);
+        // A name pattern Kalzit cannot read leaves the step out and names the pattern.
+        let (steps, notes) = panel(json!([
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "/\\d+/" } } }
+        ]));
+        assert!(steps.is_empty());
+        assert!(notes.iter().any(|n| n.code == "step_pattern" && n.params["pattern"] == "/\\d+/"), "{notes:?}");
+        // A condition with an unreadable regex goes alone; the step goes when none is left.
+        let long = format!("(a|b)+{}", "x".repeat(100));
+        let (steps, notes) = panel(json!([
+            { "id": "filterByValue", "options": { "type": "include", "match": "any", "filters": [
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "\\d+" } } },
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": long } } },
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "^x" } } } ] } },
+            { "id": "filterByValue", "options": { "type": "include", "match": "any", "filters": [
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "(a|aa)+" } } } ] } }
+        ]));
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["conditions"], json!([{ "field": "a", "op": "matches", "value": "^x" }]));
+        let bad: Vec<&str> =
+            notes.iter().filter(|n| n.code == "step_condition_pattern").map(|n| n.params["pattern"].as_str()).collect();
+        assert_eq!(bad.len(), 3, "{notes:?}");
+        assert_eq!(bad[0], "\\d+");
+        assert_eq!(bad[1].chars().count(), 80);
+        assert!(bad[1].ends_with('\u{2026}'));
+        assert!(notes.iter().any(|n| n.code == "step_empty"), "{notes:?}");
+    }
+
+    #[test]
     fn plain_variables_take_kalzit_syntax() {
         let mut notes = Vec::new();
         assert_eq!(plain_variables("a [[host]] b ${env} c", &mut notes), "a $host b $env c");
@@ -1961,6 +2633,117 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn xy_charts_and_trends_keep_their_fields() {
+        let target = json!([{ "refId": "A", "expr": "up" }]);
+        let ds = json!({ "type": "prometheus", "uid": "prom-uid" });
+        let input = json!({
+            "schemaVersion": 39, "title": "Shapes",
+            "panels": [
+                { "id": 1, "type": "xychart", "title": "Matchers", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "fieldConfig": { "defaults": { "custom": { "show": "points+lines", "pointSize": { "min": 2, "max": 60 }, "fillOpacity": 40 } } },
+                  "options": { "mapping": "manual", "legend": { "displayMode": "list", "placement": "right" },
+                    "series": [
+                      { "x": { "matcher": { "id": "byName", "options": "basket" } },
+                        "y": { "matcher": { "id": "byName", "options": "days" } },
+                        "size": { "matcher": { "id": "byName", "options": "orders" } },
+                        "color": { "matcher": { "id": "byName", "options": "score" } } },
+                      { "x": { "matcher": { "id": "byName", "options": "a" } }, "y": { "matcher": { "id": "byName", "options": "b" } } }
+                    ] } },
+                { "id": 2, "type": "xychart", "title": "Older", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "options": { "seriesMapping": "auto", "dims": { "x": "basket" }, "series": [{ "pointColor": { "field": "region" } }] } },
+                { "id": 3, "type": "trend", "title": "Retention", "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "options": { "xField": "age_days", "tooltip": { "mode": "multi" } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let panels = c.model["panels"].as_array().unwrap();
+        assert_eq!(panels[0]["type"], "xy");
+        let o = &panels[0]["options"];
+        assert_eq!(o["mapping"], "manual");
+        assert_eq!((o["x"].as_str(), o["y"].as_str()), (Some("basket"), Some("days")));
+        assert_eq!((o["sizeBy"].as_str(), o["colorBy"].as_str()), (Some("orders"), Some("score")));
+        assert_eq!((o["sizeMin"].as_u64(), o["sizeMax"].as_u64()), (Some(2), Some(40)));
+        assert_eq!(o["show"], "both");
+        assert_eq!(o["pointOpacity"], 40);
+        assert_eq!(o["legend"]["placement"], "right");
+        let matchers = item(&c.report, "panel 1 \"Matchers\"");
+        assert_eq!(matchers.notes[0].code, "xy_series");
+        assert_eq!(matchers.notes[0].params["count"], "2");
+        // 60 px became 40: said in the report.
+        assert_eq!(matchers.notes[1].code, "xy_point_size");
+        assert_eq!(matchers.status, ItemStatus::Approximated);
+        let older = &panels[1]["options"];
+        assert!(older.get("mapping").is_none(), "{older}");
+        assert_eq!(older["colorBy"], "region");
+        assert_eq!(item(&c.report, "panel 2 \"Older\"").notes[0].code, "xy_auto");
+        assert_eq!(panels[2]["type"], "trend");
+        assert_eq!(panels[2]["options"]["xField"], "age_days");
+        assert_eq!(panels[2]["options"]["tooltip"]["mode"], "all");
+        assert_eq!(item(&c.report, "panel 3 \"Retention\"").status, ItemStatus::Converted);
+    }
+
+    #[test]
+    fn axes_legend_values_tooltips_and_panel_texts_are_carried() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Axes",
+            "panels": [
+                { "id": 1, "type": "timeseries", "title": "Revenue", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "description": "Per host.", "transparent": true,
+                  "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
+                  "options": {
+                    "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "width": 250,
+                                "calcs": ["lastNotNull", "last", "sum", "stdDev", "diff", "delta", "allValues"] },
+                    "tooltip": { "mode": "multi", "sort": "desc", "hideZeros": true, "maxWidth": 320, "maxHeight": 50 }
+                  },
+                  "fieldConfig": { "defaults": { "custom": {
+                    "axisPlacement": "right", "axisLabel": "Umsatz", "axisWidth": 64, "axisGridShow": false,
+                    "axisColorMode": "series", "axisBorderShow": true, "axisCenteredZero": true,
+                    "axisSoftMin": 0, "axisSoftMax": 100,
+                    "scaleDistribution": { "type": "symlog", "log": 2, "linearThreshold": 10 }
+                  } }, "overrides": [] } },
+                { "id": 2, "type": "barchart", "title": "Bars", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
+                  "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] } },
+                  "fieldConfig": { "defaults": { "custom": { "scaleDistribution": { "type": "log", "log": 10 } } } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let panels = c.model["panels"].as_array().unwrap();
+        let ts = &panels[0];
+        assert_eq!(ts["description"], "Per host.");
+        assert_eq!(ts["transparent"], true);
+        assert_eq!(
+            ts["options"]["legend"],
+            json!({ "mode": "table", "placement": "right", "width": 250,
+                    "values": ["last", "lastRow", "sum", "stddev", "delta"] })
+        );
+        assert_eq!(
+            ts["options"]["tooltip"],
+            json!({ "mode": "all", "sort": "desc", "hideZeros": true, "maxWidth": 320 })
+        );
+        assert_eq!(
+            ts["fieldConfig"]["defaults"],
+            json!({ "axisPlacement": "right", "axisLabel": "Umsatz", "axisWidth": 64, "axisGrid": "off",
+                    "axisColor": "series", "axisLine": true, "axisCenteredZero": true, "axisSoftMin": 0.0,
+                    "axisSoftMax": 100.0, "axisScale": "symlog", "axisLogBase": 2 })
+        );
+        let notes: Vec<_> = item(&c.report, "panel 1 \"Revenue\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(notes.contains(&"legend_calcs".to_string()), "{notes:?}");
+        assert!(notes.contains(&"axis_symlog".to_string()), "{notes:?}");
+        assert!(notes.contains(&"legend_sample".to_string()), "{notes:?}");
+        let legend_note =
+            item(&c.report, "panel 1 \"Revenue\"").notes.iter().find(|n| n.code == "legend_calcs").unwrap();
+        assert_eq!(legend_note.params["calcs"], "delta, allValues");
+        assert_eq!(panels[1]["options"]["legend"]["values"], json!(["sum"]));
+        assert_eq!(panels[1]["fieldConfig"]["defaults"]["axisScale"], "log");
+        // What was carried passes Kalzit's own checks, so no option fell back to the defaults.
+        assert!(!notes.iter().any(|n| n.starts_with("options_default")), "{notes:?}");
     }
 
     #[test]

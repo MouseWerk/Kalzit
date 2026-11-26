@@ -1991,7 +1991,7 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
             }
             ResourceKind::Datasource => {
                 sqlx::query(
-                    "UPDATE datasources SET deleted_at = $1, updated_at = $1 WHERE id = $2 AND org_id = $3 \
+                    "UPDATE datasources SET deleted_at = $1, updated_at = $1, is_default = 0 WHERE id = $2 AND org_id = $3 \
                      AND deleted_at IS NULL",
                 )
                 .bind(now)

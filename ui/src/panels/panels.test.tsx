@@ -46,6 +46,8 @@ describe("registry", () => {
       ["table", true],
       ["piechart", true],
       ["histogram", true],
+      ["xy", true],
+      ["trend", true],
       ["heatmap", true],
       ["state-timeline", true],
       ["status-history", true],
@@ -80,6 +82,15 @@ describe("registry", () => {
       ],
     };
     expect(suggestPanel([{ shape: "frame", frame: series }])).toBe("timeseries");
+    // Numbers only: a Trend when the first ascends, else an XY chart; text keeps the table.
+    const numbers = (first: number[]): Frame => ({
+      fields: [
+        { name: "size", type: "number", values: first },
+        { name: "price", type: "number", values: [9, 7, 5] },
+      ],
+    });
+    expect(suggestPanel([{ shape: "frame", frame: numbers([1, 10, 100]) }])).toBe("trend");
+    expect(suggestPanel([{ shape: "frame", frame: numbers([10, 1, 100]) }])).toBe("xy");
   });
 });
 

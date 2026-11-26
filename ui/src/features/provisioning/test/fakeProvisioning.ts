@@ -19,6 +19,8 @@ export interface FakeProvisioningState {
   importedId: string;
   /** The kept reports by dashboard id (`GET /dashboards/{id}/import-report`). */
   reports: Record<string, Record<string, unknown>>;
+  /** Grafana uids the server knows, with the dashboard each names (`GET /dashboards/by-uid/{uid}`). */
+  uids: Record<string, string>;
   /** The bodies of import and unlock requests, for checking what was sent. */
   requests: { method: string; route: string; body: Record<string, unknown> }[];
 }
@@ -98,6 +100,7 @@ export function provisioningFake(_areas: FakeAreaStates): FakeArea<FakeProvision
     report: FAKE_REPORT,
     importedId: "d-imported",
     reports: {},
+    uids: {},
     requests: [],
   };
 
@@ -147,6 +150,13 @@ export function provisioningFake(_areas: FakeAreaStates): FakeArea<FakeProvision
         createdBy: "u1",
       };
       return json(200, { report: state.report, model: {}, dashboard: { id: state.importedId } });
+    }
+    const byUid = /^\/dashboards\/by-uid\/([^/]+)$/.exec(tail);
+    if (byUid !== null && method === "GET") {
+      const id = state.uids[decodeURIComponent(byUid[1] ?? "")];
+      return id === undefined
+        ? json(404, { error: { code: "not_found", message: "not found" } })
+        : json(200, { id });
     }
     const report = /^\/dashboards\/([^/]+)\/import-report$/.exec(tail);
     if (report !== null && method === "GET") {
