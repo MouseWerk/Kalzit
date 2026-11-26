@@ -15,45 +15,128 @@
     position: absolute;
   }
 
+  /*
+   * The overview as grouped lists: Organisation and Server, each in small groups of rows with an
+   * icon, the name, one short line and, where known, a state. Kept to the reading width, so a
+   * wide window does not stretch it into a row of cards.
+   */
   .admin-overview__group {
     display: grid;
     gap: var(--space-3);
+    max-width: var(--content-max-width);
   }
 
-  .admin-cards {
+  .admin-overview__heading {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
-    gap: var(--space-cards);
+    gap: var(--space-half);
+  }
+
+  .admin-overview__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-overview__clusters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  .admin-overview__cluster {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .admin-overview__cluster-title {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .admin-rows {
+    display: grid;
+    overflow: hidden;
     padding: 0;
-    list-style: none;
-  }
-
-  /* Cards of a row share its height; their text stays at the top instead of spreading out. */
-  .admin-card {
-    display: grid;
-    align-content: start;
-    height: 100%;
-    gap: var(--space-1);
-    padding: var(--space-card);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
+    list-style: none;
+  }
+
+  .admin-rows > li + li {
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .admin-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     color: var(--text);
     text-decoration: none;
     transition: background-color var(--duration-fast) var(--easing);
   }
 
-  .admin-card:hover {
+  .admin-row:hover {
     background: var(--bg-hover);
   }
 
-  .admin-card__title {
+  /* Inside the rounded list, which clips: the ring is drawn inward. */
+  .admin-row:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .admin-row__icon {
+    display: grid;
+    flex: none;
+    width: var(--space-8);
+    height: var(--space-8);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  .admin-row__text {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .admin-row__title {
     font-weight: var(--font-weight-semibold);
   }
 
-  .admin-card__text {
+  .admin-row__summary {
+    overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-row__count {
+    flex: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .admin-row__status {
+    flex: none;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .admin-row__chevron {
+    flex: none;
+    color: var(--text-muted);
   }
 
   /* Section */

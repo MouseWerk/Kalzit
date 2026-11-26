@@ -901,6 +901,46 @@ async fn panel_view_state_is_personal_and_follows_the_dashboard_access(t: TestAp
     }
     assert_eq!(t.put(&path(&board, "p1"), json!({ "properties": {} }), &viewer).await.code(), "validation");
 
+    // Positions of dragged nodes, hidden nodes and edges and released pins are kept the same way,
+    // each list within the same bounds; a state without them answers without them.
+    let moved = json!({
+        "pinned": ["17"], "selected": [],
+        "positions": [{ "id": "17", "x": -12.5, "y": 340.25 }],
+        "hidden": ["4:abc:1042"], "hiddenEdges": ["5:abc:7"], "released": ["21"]
+    });
+    assert_eq!(t.put(&path(&board, "p1"), moved.clone(), &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.body, moved);
+    assert_eq!(t.get(&path(&board, "p1"), &editor).await.body, json!({ "pinned": [], "selected": [] }));
+    let ids = || (0..=200).map(|i| i.to_string()).collect::<Vec<_>>();
+    let crowd: Vec<_> = ids().iter().map(|id| json!({ "id": id, "x": 0, "y": 0 })).collect();
+    let twice = json!([{ "id": "a", "x": 0, "y": 0 }, { "id": "a", "x": 1, "y": 1 }]);
+    for (bad, field) in [
+        (json!({ "positions": twice }), "positions"),
+        (json!({ "positions": [{ "id": "a", "x": 1e12, "y": 0 }] }), "positions"),
+        (json!({ "positions": [{ "id": "", "x": 0, "y": 0 }] }), "positions"),
+        (json!({ "positions": crowd }), "positions"),
+        (json!({ "hidden": ["a", "a"] }), "hidden"),
+        (json!({ "hidden": ids() }), "hidden"),
+        (json!({ "hiddenEdges": ["a\tb"] }), "hiddenEdges"),
+        (json!({ "released": [""] }), "released"),
+    ] {
+        let refused = t.put(&path(&board, "p1"), bad, &viewer).await;
+        assert_eq!((refused.code(), refused.field()), ("validation", field), "{}", refused.body);
+    }
+    // A position that is no number, or carries more than its place, is refused as a whole.
+    for bad in [
+        json!({ "positions": [{ "id": "a", "x": "1", "y": 0 }] }),
+        json!({ "positions": [{ "id": "a", "x": 1, "y": 0, "label": "Kunde" }] }),
+    ] {
+        assert_eq!(t.put(&path(&board, "p1"), bad, &viewer).await.code(), "validation");
+    }
+    // Refused writes changed nothing; hidden nodes alone keep the row.
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.body, moved);
+    let only_hidden = json!({ "pinned": [], "selected": [], "hidden": ["17"] });
+    assert_eq!(t.put(&path(&board, "p1"), only_hidden.clone(), &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.body, only_hidden);
+    assert_eq!(t.put(&path(&board, "p1"), next.clone(), &viewer).await.status, StatusCode::OK);
+
     // A panel the dashboard does not have, and a dashboard in a restricted folder, are not found.
     assert_eq!(t.get(&path(&board, "nope"), &viewer).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.put(&path(&board, "nope"), state.clone(), &viewer).await.status, StatusCode::NOT_FOUND);

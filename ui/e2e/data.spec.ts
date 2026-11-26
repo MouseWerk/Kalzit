@@ -102,7 +102,7 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await page.getByRole("button", { name: t("dashboards.save") }).click();
   const save = page.getByRole("dialog", { name: t("dashboards.save.title") });
   await save.getByLabel(t("dashboards.save.message")).fill("Region als Variable");
-  await save.getByRole("button", { name: t("dashboards.save.submit") }).click();
+  await save.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
   await expect(save).toBeHidden();
   // Saving keeps edit mode, on the new version with nothing left to save.
   await expect(

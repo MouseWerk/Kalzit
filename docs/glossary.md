@@ -36,6 +36,7 @@ catalog.
 | Eigentümer-Team | Owner team | Das Team, dem ein Ordner oder Dashboard gehört; nur es (und Freigaben) bearbeitet ihn. | Besitzerteam, Owner-Team |
 | Sichtbarkeit | Visibility | Wer Inhalte eines Teams außer dem Team sieht: alle mit Zugriff (nur lesen) oder „Nur Team“. | |
 | Panel | Panel | Eine Visualisierung in einem Dashboard. | Kachel, Widget |
+| Karten | Cards | Die Darstellung einer Liste, etwa der Dashboards, als Karten mit Vorschau statt als Tabelle; die Karten sind keine Panels. | Kacheln (für diese Ansicht), Tiles (in English) |
 | Bibliothekspanel | Library panel | Ein Panel, das an einer Stelle gepflegt und in mehrere Dashboards eingefügt wird; verknüpfte Kopien übernehmen jede Änderung. | Bibliotheks-Panel (im Deutschen) |
 | Schwellenwert | Threshold | Ein Wert, ab dem ein Panel eine andere Farbe oder Stufe zeigt. | Schwellwert (im Deutschen) |
 | Variable | Variable | Ein Platzhalter wie `$host` in Abfragen und Titeln, gesetzt in der Leiste über dem Dashboard oder durch einen Klick auf eine Zeile, ein Dokument oder einen Knoten; geht als Parameter an die Datenbank, nie als Text in die Abfrage. | |
@@ -51,6 +52,12 @@ catalog.
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
+| Anheften, angeheftet, Lösen | Pin, pinned, Release | Ein angehefteter Knoten bleibt, wo er steht oder hingezogen wurde: das Layout rechnet ihn nicht mehr um, und er bleibt, wenn sein Explorer-Schritt zurückgenommen wird. Ziehen heftet an; Lösen (Taste P) gibt ihn dem Layout zurück. | Fixieren, Festpinnen |
+| Ausblenden, Einblenden | Hide, Show | Knoten oder Kanten aus der Ansicht nehmen und wieder zeigen; Zählung, Schritte und Export rechnen weiter mit dem ganzen Ergebnis. | Verstecken (für Knoten und Kanten) |
+| Info-Karte | Info card | Die kleine Karte, die beim Darüberfahren oder mit I Beschriftung, Labels und bis zu vier Properties eines Knotens oder einer Kante zeigt. | |
+| Lasso | Lasso | Freihand gezogene Fläche auf der Zeichenfläche, die die Knoten darin wählt; daneben das Rechteck. | |
+| Minikarte | Minimap | Die verkleinerte Übersicht des ganzen Graphen unten rechts auf der Zeichenfläche, mit dem sichtbaren Ausschnitt. | Übersichtskarte |
+| Verlauf (einer Ansicht) | History (of a view) | Die Schritte, mit denen eine Ansicht verändert wurde (Verschieben, Anheften, Ausblenden, Explorer-Schritte, Gruppen), höchstens 50; Rückgängig und Wiederholen gehen durch ihn. Zoom, Ausschnitt und Auswahl gehören nicht dazu. | |
 | Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
 | Berechnetes Feld | Calculated field | Ein neues Feld aus einem Ausdruck über die Felder einer Tabelle. | Formelfeld |
