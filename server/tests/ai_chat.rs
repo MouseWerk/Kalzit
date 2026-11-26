@@ -856,6 +856,58 @@ async fn answers_are_rated_by_their_owner_and_audited_without_content() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_panel_tool_runs_within_the_panels_query_options_and_cache_time() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let (graphite, asked) = common::fake_graphite().await;
+    // The source keeps answers for an hour; the panel allows five seconds.
+    let settings = json!({ "url": format!("http://{graphite}"), "cacheEnabled": true, "cacheTtlSecs": 3600 });
+    let r = t
+        .post(
+            &format!("/api/orgs/{org}/datasources"),
+            json!({ "name": "Graphite", "kind": "graphite", "settings": settings }),
+            &owner,
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let mock = mock().await;
+    t.enable(&owner, &mock, "openai").await;
+    t.ack(&org, &owner).await;
+    t.access(&org, &ds, true, &[], &owner).await;
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Optionen",
+        "timeRange": { "from": "now-1h", "to": "now" },
+        "panels": [
+            { "id": "p1", "type": "timeseries", "title": "Wenige Punkte",
+              "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "targets": [{ "refId": "A", "datasourceId": ds, "query": { "target": "load.$__interval_ms" } }],
+              "maxDataPoints": 10, "cacheTimeout": "5s" }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let chat = t.new_chat(&org, &owner, &[]).await;
+    let run = json!({ "dashboardId": dashboard, "panelId": "p1", "timeRange": { "from": T0 - 3_600_000, "to": T0 } });
+    // First run; again within the panel's five seconds (a hit); again after them (the source is
+    // asked again, though its own time is an hour).
+    for (n, wait, asks) in [(1, 0, 1), (2, 2_000, 1), (3, 10_000, 2)] {
+        t.clock.advance_ms(wait);
+        mock.script(vec![tool("run_panel", run.clone()), text("Gut.")]);
+        let r = t.ask(&org, &chat, &format!("Frage {n}"), &owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+        assert_eq!(r.records()[0]["status"], "ok", "{}", r.text);
+        // The tool asks for no detail of its own: the panel's 10 points over an hour, which is a
+        // 6-minute interval stepped to 10 minutes.
+        assert_eq!(asked.all()[0], ("load.600000".to_string(), "10".to_string()), "run {n}");
+        assert_eq!(asked.all().len(), asks, "run {n}");
+    }
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_steps() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;
@@ -1116,7 +1168,19 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
         "schemaVersion": SCHEMA_VERSION,
         "title": "Kunden",
         "timeRange": { "from": "now-6h", "to": "now" },
+        // "All" of this variable is read from its options query, which names an excluded field.
+        "variables": [
+            { "name": "konto", "type": "query", "datasourceId": ds, "query": { "sql": "SELECT iban FROM kunden" },
+              "multi": true, "includeAll": true, "current": "$__all" }
+        ],
         "panels": [
+            { "id": "by-all", "type": "table", "title": "Nach Konto",
+              "grid": { "x": 0, "y": 40, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds,
+                             "query": { "sql": "SELECT name, umsatz FROM kunden WHERE name IN ($konto)" } } ] },
+            { "id": "plain", "type": "table", "title": "Umsatz",
+              "grid": { "x": 12, "y": 40, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, umsatz FROM kunden" } } ] },
             { "id": "named", "type": "table", "title": "Adressen",
               "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
               "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, iban FROM kunden" } } ] },
@@ -1201,5 +1265,20 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
     }
     let tools = t.audited("ai.tool_called").await;
     assert!(tools.iter().take(2).all(|c| c["outcome"] == "error"), "{tools:?}");
+
+    // The options query behind "All" goes through the same check as the panel's own queries; a
+    // panel that does not use the variable does not read it.
+    let chat = t.new_chat(&org, &editor, &[]).await;
+    mock.script(vec![
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "by-all" })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "plain" })),
+        text("Fertig."),
+    ]);
+    let r = t.ask(&org, &chat, "Und nach Konto?", &editor).await;
+    let records = r.records();
+    assert_eq!(records.len(), 2, "{}", r.text);
+    assert_eq!(records[0]["error"]["reason"], "ai.query_names_excluded_field", "{}", records[0]);
+    assert_eq!(records[0]["error"]["params"]["field"], "kunden.iban");
+    assert_eq!(records[1]["status"], "ok", "{}", records[1]);
     t.finish().await;
 }

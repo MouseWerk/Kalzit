@@ -543,6 +543,60 @@ async fn a_panel_summary_reads_the_result_after_its_steps_without_hidden_queries
     t.finish().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panel_summary_runs_within_the_panels_query_options() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let (graphite, asked) = common::fake_graphite().await;
+    let body = json!({ "name": "Graphite", "kind": "graphite", "settings": { "url": format!("http://{graphite}") } });
+    let r = t.post(&format!("/api/orgs/{org}/datasources"), body, &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &owner).await;
+    t.open_source(&org, &ds, &[], &owner).await;
+    // The target names the interval the run got; the fake keeps the points it was asked for.
+    let target =
+        |id: &str| json!([{ "refId": "A", "datasourceId": ds, "query": { "target": format!("{id}.$__interval_ms") } }]);
+    let grid = json!({ "x": 0, "y": 0, "w": 12, "h": 8 });
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Optionen",
+        "timeRange": { "from": "now-1h", "to": "now" },
+        "panels": [
+            { "id": "few", "type": "timeseries", "title": "Wenige Punkte", "grid": grid,
+              "targets": target("few"), "maxDataPoints": 10 },
+            { "id": "coarse", "type": "timeseries", "title": "Grob", "grid": grid,
+              "targets": target("coarse"), "minInterval": "30m" },
+            { "id": "plain", "type": "timeseries", "title": "Ohne", "grid": grid,
+              "targets": target("plain") }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    // Every summary asks for more detail than the panels allow.
+    let ask = json!({ "timeRange": range(), "intervalMs": 1000, "maxDataPoints": 5000 });
+    for panel in ["few", "coarse", "plain"] {
+        let path = format!("/api/orgs/{org}/dashboards/{dashboard}/panels/{panel}/ai/summarize");
+        let r = t.post(&path, ask.clone(), &owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{panel}: {}", r.text);
+    }
+    assert_eq!(
+        asked.all(),
+        [
+            // An hour over at most 10 points: 6 minutes, stepped to 10 minutes; 10 points.
+            ("few.600000".to_string(), "10".to_string()),
+            // Never finer than 30 minutes; the points as asked.
+            ("coarse.1800000".to_string(), "5000".to_string()),
+            // Without options the request decides.
+            ("plain.1000".to_string(), "5000".to_string()),
+        ]
+    );
+    t.finish().await;
+}
+
 /// A Tempo that answers every request with the trace of the fixture.
 async fn fake_tempo() -> SocketAddr {
     let trace = include_str!("fixtures/traces/tempo_trace.json");
@@ -629,5 +683,57 @@ async fn a_used_up_limit_refuses_before_anything_runs() {
     let r = t.post(&format!("/api/orgs/{org}/ai/summarize"), summary, &editor).await;
     assert_eq!(r.reason(), "ai.limit_user_requests", "{}", r.body);
     assert_eq!(mock.requests(), 1);
+    t.finish().await;
+}
+
+/// An ad hoc filter on a field excluded from AI narrows by that field's values, so the answer
+/// would tell them: free and panel summaries refuse it like a query that names the field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summaries_refuse_filters_on_excluded_fields() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let ds = t.source(&owner, &org).await;
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &owner).await;
+    t.ack(&org, &viewer).await;
+    t.open_source(&org, &ds, &["kunden.email"], &owner).await;
+    let free = |key: &str| {
+        json!({
+            "query": { "refId": "A", "datasourceId": ds,
+                       "query": { "sql": "SELECT name FROM kunden WHERE $__filter" },
+                       "filters": [{ "key": key, "operator": "=", "value": "ana@geheim.example" }] },
+            "timeRange": range()
+        })
+    };
+    let summarize = format!("/api/orgs/{org}/ai/summarize");
+    let r = t.post(&summarize, free("email"), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.query_names_excluded_field"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["field"], "kunden.email", "{}", r.body);
+    assert_eq!(mock.requests(), 0, "refused before anything runs or is sent");
+    mock.answer("Ana.");
+    let r = t.post(&summarize, free("name"), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    // A panel's filters come from the dashboard's ad hoc variable, set by the viewer.
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Kunden", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "filter", "type": "adhoc", "datasourceId": ds } ],
+        "panels": [ { "id": "p1", "type": "table", "title": "Kunden", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                      "targets": [ { "refId": "A", "datasourceId": ds,
+                                     "query": { "sql": "SELECT name FROM kunden WHERE $__filter" } } ] } ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let panel = format!("/api/orgs/{org}/dashboards/{}/panels/p1/ai/summarize", r.body["id"].as_str().unwrap());
+    let with = |key: &str| {
+        json!({ "timeRange": range(),
+                "variables": { "filter": [{ "key": key, "operator": "=", "value": "bo@geheim.example" }] } })
+    };
+    let r = t.post(&panel, with("email"), &viewer).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.query_names_excluded_field"), "{}", r.body);
+    let r = t.post(&panel, with("name"), &viewer).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     t.finish().await;
 }

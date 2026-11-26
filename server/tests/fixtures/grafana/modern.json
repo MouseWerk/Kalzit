@@ -15,9 +15,9 @@
   "templating": {
     "list": [
       { "name": "host", "type": "custom", "query": "alpha,beta,Gamma : gamma", "multi": true, "includeAll": true,
-        "current": { "text": "alpha", "value": ["alpha"] } },
+        "allValue": "%", "current": { "text": "All", "value": ["$__all"] } },
       { "name": "hosts_from_db", "type": "query", "datasource": { "type": "sqlite", "uid": "${DS_LAGER}" },
-        "query": "SELECT DISTINCT host FROM m", "regex": "/a.*/" },
+        "query": "SELECT DISTINCT host FROM m", "regex": "/a.*/", "sort": 5, "refresh": 2 },
       { "name": "filter", "type": "adhoc", "datasource": { "type": "prometheus", "uid": "prom" } },
       { "name": "step", "type": "interval", "query": "1m,10m,1h", "auto": true },
       { "name": "site", "type": "constant", "query": "werk-1" },

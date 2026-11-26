@@ -13,7 +13,7 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { DASHBOARDS_KEY, foldersQuery } from "../dashboards/api";
 import { FolderPicker } from "../dashboards/ToolDialogs";
 import { errorMessage } from "../dashboards/ui/errors";
-import { datasourcesQuery } from "../datasources/api";
+import { datasourcesQuery, sourceAccess } from "../datasources/api";
 import { errorReason } from "../datasources/reasons";
 import { importGrafana } from "./api";
 import {
@@ -52,6 +52,7 @@ const PROBLEM_TEXT: Record<GrafanaProblem | "tooLarge" | "unreadable", MessageKe
 };
 
 const SUGGESTION_TEXT: Record<Suggestion, MessageKey> = {
+  orgDefault: "provisioning.import.orgDefault",
   sameName: "provisioning.import.sameName",
   sameKind: "provisioning.import.sameKind",
   none: "provisioning.import.noSource",
@@ -84,7 +85,13 @@ export function GrafanaImportPage() {
   const search = useSearch({ strict: false }) as { folder?: string };
   const folders = useQuery({ ...foldersQuery(orgId), enabled: orgId !== "" });
   const sources = useQuery({ ...datasourcesQuery(orgId), enabled: orgId !== "" });
-  const available = (sources.data ?? []).map((s) => ({ id: s.id, kind: s.kind, name: s.name }));
+  const available = (sources.data ?? []).map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    name: s.name,
+    ...(s.isDefault === true ? { isDefault: true } : {}),
+    query: sourceAccess(s.access, permissions).query,
+  }));
 
   const [step, setStep] = useState<Step>("file");
   const [mode, setMode] = useState<"upload" | "paste">("upload");

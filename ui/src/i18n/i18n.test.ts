@@ -107,6 +107,9 @@ describe("catalogs", () => {
       "Median",
       "Minimum",
       "Maximum",
+      // The calculations' short names in both languages (ParityEditors board, frame 18).
+      "Min",
+      "Max",
       "JSON",
       "Format",
       "Text",
@@ -260,6 +263,7 @@ describe("catalogs", () => {
       "TraceQL",
       "Operation",
       "Tag",
+      "Tags",
       // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
       "CORS",
       "Apps",
@@ -274,6 +278,18 @@ describe("catalogs", () => {
       "Variable",
       // Graph layouts (Graph081 board, frame 12): Radial is the German word, too.
       "Radial",
+      // The variable editor of the parity wave: "Regex" is the German word too (board ParityEditors).
+      "Regex (optional)",
+      // The legend's calculations and the axis' automatic choices keep their short names in
+      // German (board ParityEditors.dc.html, frames 2, 3 and 18).
+      "Min",
+      "Max",
+      "Auto",
+      // Logs keep the names the sources use, as do the level words (board Logs.dc.html).
+      "Logs",
+      "Level",
+      "Info",
+      "Debug",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

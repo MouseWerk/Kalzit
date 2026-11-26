@@ -94,12 +94,24 @@ export function DashboardRail({
 }: DashboardRailProps) {
   const { t } = useI18n();
   const paneId = useId();
-  const [pane, setPane] = useState<Pane>(null);
-  // Selecting a panel on the canvas opens the outline, where its inspector is.
+  // Edit mode starts with the outline open, where the selected panel's inspector shows. Its
+  // room is taken once, as edit mode starts: selecting a panel never opens it (the canvas would
+  // narrow and every panel move under the pointer), the person opens and closes it.
+  const [pane, setPane] = useState<Pane>(editing ? "outline" : null);
+  const [wasEditing, setWasEditing] = useState(editing);
+  if (editing !== wasEditing) {
+    setWasEditing(editing);
+    if (editing && pane === null) {
+      setPane("outline");
+    } else if (!editing && pane === "add") {
+      setPane(null);
+    }
+  }
+  // Selecting a panel while the Add pane is open shows the outline instead, in the same room.
   const [shownFor, setShownFor] = useState<string | null>(null);
   if (selectedId !== shownFor) {
     setShownFor(selectedId);
-    if (selectedId !== null) {
+    if (selectedId !== null && pane === "add") {
       setPane("outline");
     }
   }
@@ -123,7 +135,11 @@ export function DashboardRail({
 
   return (
     // At the window's edge: the tooltips open to the left, into the canvas (TIP_SIDE_ATTRIBUTE).
-    <aside className="dash-rail" aria-label={t("toolbar.rail")} data-tip-side="before">
+    <aside
+      className={editing ? "dash-rail dash-rail--editing" : "dash-rail"}
+      aria-label={t("toolbar.rail")}
+      data-tip-side="before"
+    >
       {pane === "outline" ? (
         <Outline
           id={paneId}

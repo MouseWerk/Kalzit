@@ -114,10 +114,20 @@ function loadPalettes() {
   const css = readFileSync(paths.tokens, "utf8");
   const block = /:root\s*\{([\s\S]*?)\n\s*\}/.exec(css);
   if (!block) throw new Error("tokens.css: no :root block");
+  // A side is a literal oklch() or a var() of a theme-variant token (--light-*, --dark-*); the
+  // first declaration of that token in the file belongs to the base Light or Dark theme.
+  const side = (value) => {
+    const ref = /^var\(\s*--([\w-]+)\s*\)$/.exec(value);
+    if (!ref) return parseOklch(value);
+    const m = new RegExp(`--${ref[1]}:\\s*(oklch\\([^)]*\\))`).exec(css);
+    if (!m) throw new Error(`tokens.css: no oklch() value for --${ref[1]}`);
+    return parseOklch(m[1]);
+  };
   const pick = (name) => {
-    const m = new RegExp(`--${name}:\\s*light-dark\\((oklch\\([^)]*\\)),\\s*(oklch\\([^)]*\\))\\)`).exec(block[1]);
+    const value = "((?:oklch|var)\\([^)]*\\))";
+    const m = new RegExp(`--${name}:\\s*light-dark\\(${value},\\s*${value}\\)`).exec(block[1]);
     if (!m) throw new Error(`tokens.css: no light-dark() value for --${name}`);
-    return { light: parseOklch(m[1]), dark: parseOklch(m[2]) };
+    return { light: side(m[1]), dark: side(m[2]) };
   };
   // Card and hairline like a Kalzit card; the track is the hairline tone, the fill the muted text
   // tone, as in the update progress bar of the UI. The sweep is the text tone at low opacity.

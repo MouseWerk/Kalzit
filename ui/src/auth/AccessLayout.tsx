@@ -105,16 +105,24 @@ export function AccessLayout({
       recordChoice({ language: option });
     },
   }));
-  const themes: ToolbarMenuEntry[] = THEMES.map((option) => ({
-    kind: "radio",
-    key: option,
-    label: t(`theme.${option}`),
-    checked: option === theme,
-    onSelect: () => {
-      setTheme(option);
-      recordChoice({ theme: option });
-    },
-  }));
+  // The mode only; the light and dark variants are chosen only in the account settings, and here
+  // the server's default variants apply (board Themes, frame 7). Chosen here, the mode holds for
+  // this browser and becomes the account's choice on signing in.
+  const themes: ToolbarMenuEntry[] = [
+    { kind: "heading", key: "mode-heading", label: t("theme.mode") },
+    ...THEMES.map(
+      (option): ToolbarMenuEntry => ({
+        kind: "radio",
+        key: option,
+        label: t(`theme.${option}`),
+        checked: option === theme,
+        onSelect: () => {
+          setTheme(option);
+          recordChoice({ theme: option });
+        },
+      }),
+    ),
+  ];
 
   return (
     <div className={width === "done" ? "access" : "access access--split"}>

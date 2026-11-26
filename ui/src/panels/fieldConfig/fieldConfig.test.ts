@@ -11,11 +11,12 @@ import {
   findMapping,
   isSafeHref,
   parseFieldConfig,
+  shownFieldConfig,
   thresholdTone,
 } from "./fieldConfig";
 import { parseLegend } from "./legendOptions";
 import { compilePattern, loadPatternEngine, MAX_TESTED_CHARS } from "./pattern";
-import { axisTickFormat, formatUnit, fromNow, joinFormatted, UNITS } from "./units";
+import { axisTickFormat, formatUnit, fromNow, isKnownUnit, joinFormatted, UNITS } from "./units";
 import { legacyUnit, upgradePanel } from "./upgrade";
 
 const NBSP = "\u00a0";
@@ -392,6 +393,37 @@ describe("field options", () => {
       thresholds: DEFAULT_THRESHOLDS,
       decimals: 2,
     });
+  });
+
+  it("never prints a stored unit id it does not know", () => {
+    expect(isKnownUnit("currency:EUR")).toBe(true);
+    expect(isKnownUnit("suffix:Kerne")).toBe(true);
+    expect(isKnownUnit("currencyEUR")).toBe(false);
+    // An id another tool stored (an earlier import) is left out where panels draw; the editor
+    // keeps it to name it.
+    const stored = parseFieldConfig({
+      defaults: { unit: "currencyEUR", decimals: 0 },
+      overrides: [
+        { matcher: { type: "name", value: "a" }, properties: { unit: "flux", color: "warn" } },
+        { matcher: { type: "name", value: "b" }, properties: { unit: "percent" } },
+      ],
+    });
+    expect(stored.defaults.unit).toBe("currencyEUR");
+    const shownConfig = shownFieldConfig(stored);
+    expect(shownConfig.defaults).toEqual({ decimals: 0 });
+    expect(shownConfig.overrides.map((o) => o.properties)).toEqual([
+      { color: "warn" },
+      { unit: "percent" },
+    ]);
+    const revenue: Field = { name: "revenue", type: "number", values: [40000], unit: "ms" };
+    // The data source's own unit stays in effect; nothing prints "currencyEUR".
+    const options = fieldOptionsFor(revenue, shownConfig);
+    expect(options).toEqual({ unit: "ms", decimals: 0 });
+    expect(displayText(displayValue(40000, "number", options, "en"))).not.toContain("currency");
+    const plain = fieldOptionsFor({ name: "x", type: "number", values: [40000] }, shownConfig);
+    expect(displayText(displayValue(40000, "number", plain, "en"))).toBe("40,000");
+    const known = parseFieldConfig({ defaults: { unit: "currency:EUR" } });
+    expect(shownFieldConfig(known)).toBe(known);
   });
 });
 

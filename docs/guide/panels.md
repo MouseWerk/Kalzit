@@ -81,9 +81,28 @@ default for these fields** shows the option as if the defaults had not set it.
 
 ## Time series
 
-Values over time as lines. Options: **Legend** (List, Table, Hidden; position Below or Right;
-values Last, Min, Max, Mean), **Tooltip** (Nearest series, All series, Hidden), **Series names**
-(label names in double braces, such as `{{job}} on {{instance}}`), and the **Graph style**:
+Values over time as lines. Options: **Tooltip** (Nearest series, All series, Hidden; sorted by
+the value at the pointer, zeros hidden, a largest width and height), **Legend** (shown or not, List
+or Table, Below or Right, a width beside the chart, **At most** a number of series with "show all"
+for the rest, and up to six **Values** per series), **Series names** (label names in double braces,
+such as `{{job}} on {{instance}}`), the **Axes** and the **Graph style**.
+
+The legend's values are calculated over the visible time range: Last, Min, Max, Mean, Total;
+First, Difference, Change in %, Range; Median, any percentile (p1 to p99), Standard deviation,
+Variance; Count, Distinct values, Gaps; and Last or First row (the exact newest or oldest row, empty
+when it is a gap) and Time of the max. Last and First skip gaps. The list
+shows the first two, the table shows each as a column and sorts by a click on its heading.
+
+**Axes**: placement Auto (left; a field with a second unit gets the right axis), Left, Right or Off,
+a label, a fixed width, grid lines (Auto: only from the left axis), the axis color (text or like the
+series) and line, the **Scale** linear, logarithmic (base 2 or 10) or **Log around zero** (linear
+near zero, logarithmic beyond, negative values too), zero in the middle and a soft minimum and
+maximum, which the axis reaches at least and grows beyond. An override sets them for one field,
+such as a second axis on the right. A logarithmic scale cannot draw values of zero or below: the
+chart says how many points it left out. Bar charts and histograms take the same axis options for
+their value axis.
+
+The **Graph style**:
 
 - **Draw as**: lines, bars or points.
 - **Line interpolation**: linear, smooth, step before, step after. **Line width** (0 to 10 px) and
@@ -139,6 +158,17 @@ width (px)**. **Clicking a row sets** a dashboard variable to the row's value in
 variable** (the name the header shows, or the field name; empty takes the first column); that
 cell becomes a button, so the keyboard reaches it too.
 
+**Footer** adds a row at the bottom that stays in place while you scroll: one calculation per
+column, such as **Total**, **Mean**, **Count** (shown as "4 of 2,000 rows"), **Min**, **Max**,
+**Median**, **p95** or **First** and **Last** (which skip empty cells; **First row** and **Last
+row** do not). **All number columns** sets one calculation for every number column, **Per
+column** sets or overrides it for a column. **Calculates over** all rows of the query or only the
+rows the column filters keep; a line under the table always says which, and "over the N rows
+loaded" when the query's row limit cut the answer. Sums, means and percentiles carry the
+column's unit; counts and the variance are plain numbers. Imported Grafana tables keep their
+footer's first calculation; where Grafana calculates differently (its counter-aware delta, the
+population spread, a row count), the import report says so.
+
 ## Pie chart
 
 **Shape** Pie or Donut. **Labels** None, Percent, Name or Value; **Label position** On the slices
@@ -150,6 +180,33 @@ slices when every field becomes one.
 
 How values are spread over equal buckets. Options: **Buckets** (count; empty picks a number from
 the data amount), **Bucket size**, **Count all fields together**.
+
+## XY chart
+
+Two number fields against each other, a point per row: basket against delivery time, price
+against lot size. **Mapping**: **Auto** takes the first number field as X and every further one
+as a Y series; **By hand** takes the **X field** and **Y field** you choose. **One series per
+value of** a field gives each value its own colour, up to 8; more values are put together as
+**Others**. **Size by** a number field scales the points between **Point size from** and **to**;
+**Color by** a number field colours them from light to dark, with the scale above the chart.
+**Show**: Points, Lines (joining a series' points in the order of X) or Both, and the **Point
+opacity**.
+
+The chart reads tables as they are: documents and graphs need the step **Project into a table**
+first. It draws up to 12,000 points; above that it draws an even sample, says how many of all it
+shows (the axes cover all of them) and offers **Show as density**. Drag a rectangle to zoom in,
+**Reset** or a double click to go back; the view is not saved. The arrow keys walk the points in
+the order of X, and the readout names the row's fields.
+
+## Trend
+
+A time series without time: the X axis is a number field with ascending values, such as an
+account's age in days, a level, a quantity or a calendar week. **X field**: Auto takes the first
+number field whose values ascend; all other number fields are series, drawn as in the time
+series (**Graph style**, axes, legend and tooltip). The panel never sorts or groups by itself.
+When X falls back, it says in which row and offers the step **Sort**; when an X value repeats,
+the step **Group** with the mean; when X is text, the bar chart. **Show as XY chart** takes the
+rows as they are. The buttons are in the panel editor, the hint on the dashboard explains.
 
 ## Heatmap
 
@@ -191,7 +248,8 @@ For `documents` results (see [Explore](explore.md#documents)):
 When a source has more documents than a panel shows (**The source has more.**), **Load more
 documents** under the panel appends the next ones, for MongoDB, Elasticsearch and OpenSearch, and
 JSON and NDJSON files. It continues the panel's stored query only, so viewers can use it too; a
-refresh or another time range starts again from the first page.
+refresh or another time range starts again from the first page. The preview of the panel editor
+offers it as well, for the stored query and for a changed one alike.
 
 ### Data links from fields, nodes and edges
 

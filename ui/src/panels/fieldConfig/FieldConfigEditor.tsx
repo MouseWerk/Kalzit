@@ -3,6 +3,7 @@ import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { OptionField, OptionFilterContext, useOptionScope } from "../optionFilter";
 import { NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptionGroup } from "../types";
+import { AxisEditor } from "./AxisEditor";
 import { ColorField } from "./ColorField";
 import { ColorsEditor } from "./ColorsEditor";
 import {
@@ -26,7 +27,7 @@ import {
 import { GraphStyleEditor } from "./GraphStyleEditor";
 import { patternStatus, usePatternEngine } from "./pattern";
 import { toneLabel } from "./toneLabel";
-import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
+import { CUSTOM_PREFIX, isKnownUnit, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
 import { Select } from "../../components/Select";
 
@@ -69,7 +70,7 @@ function set<K extends keyof FieldOptions>(
  * A folding section of options. While the options pane filters, it stands open; in the
  * "Overrides" view only the overrides section shows, with all of its options.
  */
-function Section({
+export function Section({
   title,
   overrides = false,
   children,
@@ -135,6 +136,9 @@ export function UnitPicker({
   const { t, language } = useI18n();
   const id = useId();
   const custom = value?.startsWith(CUSTOM_PREFIX);
+  // A stored unit Kalzit does not know (another tool's id) is named, not shown as automatic;
+  // panels do not print it.
+  const unknown = value !== undefined && value !== "" && !isKnownUnit(value) ? value : null;
   const currencyNames =
     typeof Intl.DisplayNames === "function"
       ? new Intl.DisplayNames(language, { type: "currency" })
@@ -162,6 +166,9 @@ export function UnitPicker({
           }}
         >
           <option value="">{t("panels.unit.auto")}</option>
+          {unknown === null ? null : (
+            <option value={unknown}>{t("panels.unit.unknown", { unit: unknown })}</option>
+          )}
           {UNIT_GROUPS.map((group) => (
             <optgroup key={group} label={t(`panels.unitGroup.${group}`)}>
               {UNITS.filter((u) => u.group === group).map((u) => (
@@ -420,6 +427,11 @@ function OptionsFields({
   const mappings = options.mappings ?? [];
   return (
     <>
+      {groups.includes("axes") ? (
+        <Section title={t("panels.section.axes")}>
+          <AxisEditor options={options} onChange={onChange} />
+        </Section>
+      ) : null}
       {groups.includes("graphStyle") ? (
         <Section title={t("panels.section.graphStyle")}>
           <GraphStyleEditor options={options} onChange={onChange} />

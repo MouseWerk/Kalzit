@@ -338,7 +338,9 @@ export function stackedFill(
       return paths;
     }
     const x = (i: number) => u.valToPos(xs[i] as number, "x", true);
-    const y = (i: number) => u.valToPos(base[i] as number, "y", true);
+    // The series' own value axis: a series on the right axis stacks on its scale.
+    const scale = u.series?.[seriesIdx]?.scale ?? "y";
+    const y = (i: number) => u.valToPos(base[i] as number, scale, true);
     const fill = new Path2D(stroke);
     const missing = (i: number) => ys[i] === null || ys[i] === undefined;
     if (interpolation === "stepAfter" || interpolation === "stepBefore") {

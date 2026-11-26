@@ -306,14 +306,14 @@ describe("server settings rows", () => {
     const { user, admin, server } = await openAdmin("/settings/appearance", {
       isServerAdmin: true,
     });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     expect(
       within(theme)
         .getAllByRole("radio")
         .map((r) => r.textContent),
     ).toEqual(["Light", "Dark", "System", "High contrast"]);
     await user.click(within(theme).getByRole("radio", { name: "Dark" }));
-    expect(await screen.findByText("“Default theme” was saved.")).toBeTruthy();
+    expect(await screen.findByText("“Default mode” was saved.")).toBeTruthy();
     const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
     expect(stored).toMatchObject({ value: "dark", version: 1 });
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -325,6 +325,31 @@ describe("server settings rows", () => {
     expect(batches.at(-1)?.body).toEqual({
       changes: [{ key: "appearance.default_theme", reset: true, version: 1 }],
     });
+  });
+
+  it("sets the default light and dark variant beside the mode", async () => {
+    const { user, admin, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+    });
+    const light = await screen.findByRole("radiogroup", { name: "Light variant" });
+    expect(
+      within(light)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["Light", "Paper", "Calcite"]);
+    const dark = screen.getByRole("radiogroup", { name: "Dark variant" });
+    expect(
+      within(dark)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["Dark", "Graphite", "Night"]);
+    await user.click(within(light).getByRole("radio", { name: "Paper" }));
+    expect(await screen.findByText("“Light variant” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme_light");
+    expect(stored).toMatchObject({ value: "paper", version: 1 });
+    expect(server.state.preferences.defaults.themeLight).toBe("paper");
+    // Someone without a variant of their own sees the new default at once.
+    await waitFor(() => expect(document.documentElement.dataset.light).toBe("paper"));
   });
 
   it("turns the line on the product before sign-in off at once, with undo", async () => {
@@ -357,7 +382,7 @@ describe("server settings rows", () => {
 
   it("sends a change made while another is saving afterwards, instead of dropping it", async () => {
     const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     // Hold the first save on its way.
     const fake = globalThis.fetch;
     let release: () => void = () => undefined;
@@ -406,7 +431,7 @@ describe("server settings rows", () => {
     const { user, admin, server } = await openAdmin("/settings/appearance", {
       isServerAdmin: true,
     });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     const { fake, release } = holdFirstPatch();
     try {
       await user.click(within(theme).getByRole("radio", { name: "Dark" }));
@@ -426,7 +451,7 @@ describe("server settings rows", () => {
     const { user, admin, server } = await openAdmin("/settings/appearance", {
       isServerAdmin: true,
     });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
     if (stored === undefined) {
       throw new Error("fixture setting missing");
@@ -449,7 +474,7 @@ describe("server settings rows", () => {
 
   it("applies a changed default theme to the open app, and takes it back with undo", async () => {
     const { user } = await openAdmin("/settings/appearance", { isServerAdmin: true });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     await user.click(within(theme).getByRole("radio", { name: "Dark" }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
     await user.click(await screen.findByRole("button", { name: "Undo" }));
@@ -463,13 +488,13 @@ describe("server settings rows", () => {
         fake.state.preferences.theme = "light";
       },
     });
-    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const theme = await screen.findByRole("radiogroup", { name: "Default mode" });
     const note = await screen.findByText(/You use your own theme/);
     expect(within(note).getByRole("link", { name: "Profile" }).getAttribute("href")).toBe(
       "/settings/profile",
     );
     await user.click(within(theme).getByRole("radio", { name: "Dark" }));
-    await screen.findByText("“Default theme” was saved.");
+    await screen.findByText("“Default mode” was saved.");
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(server.state.preferences.theme).toBe("light");
   });

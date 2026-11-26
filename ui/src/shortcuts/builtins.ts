@@ -60,6 +60,7 @@ export const BUILTIN_AREAS: readonly AreaDef[] = [
   { id: "providers", title: "shortcuts.area.providers", page: '[data-shortcuts~="providers"]' },
   { id: "ask", title: "shortcuts.area.ask", page: ".ask__main" },
   { id: "fields", title: "shortcuts.area.fields" },
+  { id: "handbook", title: "shortcuts.area.handbook", page: ".hb" },
 ];
 
 const ARROWS_UD = ["ArrowUp", "ArrowDown"];
@@ -287,6 +288,13 @@ export const BUILTIN_SHORTCUTS = [
     label: "shortcuts.explore.aiStop",
     note: "shortcuts.explore.aiStopNote",
     overrides: "layer.close",
+  },
+  {
+    id: "explore.logsLevel",
+    area: "explore",
+    keys: [combo("Mod", "Click")],
+    label: "shortcuts.explore.logsLevel",
+    note: "shortcuts.explore.logsLevelNote",
   },
 
   // Query editors
@@ -620,6 +628,33 @@ export const BUILTIN_SHORTCUTS = [
     keys: [combo("Esc")],
     label: "shortcuts.field.cancel",
     overrides: "layer.close",
+  },
+
+  // Handbook: brackets need AltGr on German keyboards, so K and J turn the pages too.
+  {
+    id: "handbook.search",
+    area: "handbook",
+    keys: [combo("/")],
+    label: "shortcuts.handbook.search",
+    overrides: "palette.open",
+  },
+  {
+    id: "handbook.pages",
+    area: "handbook",
+    keys: [keySet([], "[", "]", "K", "J")],
+    label: "shortcuts.handbook.pages",
+  },
+  {
+    id: "handbook.turnBack",
+    area: "handbook",
+    keys: [combo("["), combo("K")],
+    partOf: "handbook.pages",
+  },
+  {
+    id: "handbook.turnForward",
+    area: "handbook",
+    keys: [combo("]"), combo("J")],
+    partOf: "handbook.pages",
   },
 ] as const satisfies readonly ShortcutDef[];
 

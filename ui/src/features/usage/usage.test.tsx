@@ -128,7 +128,11 @@ describe("usage insights", () => {
     expect(sent(server, "GET").some((path) => path.startsWith("/api/admin/usage?from="))).toBe(
       true,
     );
-    expect(sent(server, "GET").at(-1)).toMatch(/orgId=o1/);
+    expect(
+      sent(server, "GET")
+        .filter((path) => path.startsWith("/api/admin/usage?"))
+        .at(-1),
+    ).toMatch(/orgId=o1/);
     const page = within(screen.getByRole("region", { name: "Usage" }));
     await pickOption(user, await page.findByLabelText("Organization"), "");
     await waitFor(() => {

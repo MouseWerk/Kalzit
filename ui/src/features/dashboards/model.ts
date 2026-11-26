@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import { WEEK_STARTS, type WeekStart } from "../../lib/timeSettings";
+import { decodeFilters, encodeFilter, storedFilters } from "./adhoc";
 
 /**
  * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"; version 2 parts in
@@ -49,6 +50,14 @@ export interface PanelModel {
   timeFrom?: string;
   /** Moves the range back by this length ("1d"). */
   timeShift?: string;
+  /** The most points per series the queries ask for; the server never asks for more. */
+  maxDataPoints?: number;
+  /** The finest interval the queries run with ("30s"). */
+  minInterval?: string;
+  /** How long the query cache keeps the answers ("5m"), at most what the source sets. */
+  cacheTimeout?: string;
+  /** The header leaves out the note on an own range or shift. */
+  hideTimeNote?: boolean;
   links?: PanelLink[];
   /** Shows this library panel: queries, type and options come from there. */
   libraryPanelId?: string;
@@ -105,15 +114,63 @@ export type VariableValue = string | string[];
 export type VariableValues = Record<string, VariableValue>;
 
 /** Every variable type the model allows (docs/api/settings-dashboards.md). */
-export const ALL_VARIABLE_TYPES = ["custom", "textbox", "query", "constant", "interval"] as const;
+export const ALL_VARIABLE_TYPES = [
+  "custom",
+  "textbox",
+  "query",
+  "constant",
+  "interval",
+  "datasource",
+  "adhoc",
+  "switch",
+] as const;
 export type VariableType = (typeof ALL_VARIABLE_TYPES)[number];
 /** The types the settings page offers, in its order. */
-export const VARIABLE_TYPES = ["custom", "textbox", "query", "interval", "constant"] as const;
+export const VARIABLE_TYPES = [
+  "custom",
+  "textbox",
+  "query",
+  "interval",
+  "constant",
+  "datasource",
+  "adhoc",
+  "switch",
+] as const;
+
+/**
+ * What a selection of "All" is kept and stored as. It never reaches a query: `sentValues` turns
+ * it into the list of every value, or the variable's `allValue` (as on the server,
+ * `dashboards/variables.rs`).
+ */
+export const ALL_VALUE = "$__all";
+
+/** The orders of a query variable's options (`sort`); absent keeps the query's order. */
+export const VARIABLE_SORTS = [
+  "alphabetical",
+  "alphabeticalDesc",
+  "numerical",
+  "numericalDesc",
+  "caseInsensitive",
+  "caseInsensitiveDesc",
+] as const;
+export type VariableSort = (typeof VARIABLE_SORTS)[number];
+
+/** When the bar reads a query variable's options again; absent: on every new time range. */
+export const VARIABLE_REFRESH = ["load", "timeRange"] as const;
+export type VariableRefresh = (typeof VARIABLE_REFRESH)[number];
+
+/** A fixed option listed after a query variable's own. */
+export interface StaticOption {
+  value: string;
+  label?: string;
+}
 
 /**
  * A dashboard variable. `custom` and `interval` offer fixed values, `textbox` takes free text,
- * `query` asks the server for its options, `constant` is fixed and not shown. The value always
- * reaches queries as a bind parameter.
+ * `query` asks the server for its options, `constant` is fixed and not shown. `datasource` picks
+ * the source of the panel targets written as `$name`, `adhoc` holds filters the server builds
+ * into the queries of its source, `switch` sends one of two values. The value always reaches
+ * queries as a bind parameter.
  */
 export interface VariableModel {
   name: string;
@@ -124,20 +181,165 @@ export interface VariableModel {
    * JSON), so numbers or objects survive a save; `optionValues` reads them as text.
    */
   options?: unknown;
-  /** `query`: where the options come from. */
+  /** `query`: where the options come from; `adhoc`: the source its filters narrow. */
   datasourceId?: string;
+  /** `datasource`: the kind of source offered ("postgres"). */
+  datasourceKind?: string;
+  /** `switch`: what it sends when on, and when off. */
+  onValue?: string;
+  offValue?: string;
   /** Kept for every type as stored, also on a constant. */
   query?: unknown;
   /** The value the dashboard opens with: text, a number or a list, as stored. */
   current?: unknown;
   /** Several values at once (custom and query variables); repeats need it. */
   multi?: boolean;
+  /** Without a stored value, a multi-value variable starts with every option picked. */
+  allByDefault?: boolean;
   /**
    * `query`: how options come from a graph or documents result (without it, from a table's first
    * column). The explicit projection the server applies too (`routes/query.rs`, `options_from`).
    */
   valuesFrom?: ValuesFrom | undefined;
+  /** Custom and query: "All" is offered first; it sends every value, or `allValue`. */
+  includeAll?: boolean;
+  /** What "All" sends instead of the list: this one value, as one parameter. */
+  allValue?: string;
+  /**
+   * Query: only matching values stay; named groups `text` and `value` split name and value.
+   * Data source: only sources whose name matches are offered.
+   */
+  regex?: string;
+  sort?: VariableSort | undefined;
+  refresh?: VariableRefresh | undefined;
+  staticOptions?: StaticOption[];
+  /** Custom and query: values outside the list may be typed in. */
+  allowCustom?: boolean;
 }
+
+/** Whether a value is the selection of "All". */
+export function isAll(value: VariableValue | undefined): boolean {
+  return Array.isArray(value) ? value.includes(ALL_VALUE) : value === ALL_VALUE;
+}
+
+/**
+ * The values queries run with: a variable at "All" sends its `allValue` when it has one, else the
+ * list of every value it offers (a custom variable's own; a query variable's as last loaded, in
+ * `loaded`, by name). Everything else is sent as picked. A query variable whose options are not
+ * loaded gives an empty list here; `heldVariables` names it, so nothing runs with that list.
+ */
+export function sentValues(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+  loaded: Readonly<Record<string, LoadedOptions>>,
+): VariableValues {
+  let out: VariableValues | null = null;
+  for (const variable of variables) {
+    if (variable.includeAll !== true || !isAll(values[variable.name])) continue;
+    out ??= { ...values };
+    out[variable.name] =
+      variable.allValue !== undefined && variable.allValue !== ""
+        ? variable.allValue
+        : variable.type === "custom"
+          ? optionValues(variable)
+          : listOf(loaded[variable.name]);
+  }
+  return out ?? values;
+}
+
+/** A query variable's options as the bar last read them: the values, or why they failed. */
+export type LoadedOptions = readonly string[] | { error: string };
+
+/**
+ * The variables at "All" whose values are not there yet, by name: `null` while a query
+ * variable's options are still loading (never loaded yet, as opposed to an empty list), the
+ * options query's error text when it failed. What uses one of them waits instead of running
+ * with an empty list (`holdOf`); a custom variable or one with a custom value for "All" never
+ * waits.
+ */
+export function heldVariables(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+  loaded: Readonly<Record<string, LoadedOptions>>,
+): Readonly<Record<string, string | null>> {
+  const held: Record<string, string | null> = {};
+  for (const variable of variables) {
+    if (
+      variable.type !== "query" ||
+      variable.includeAll !== true ||
+      (variable.allValue !== undefined && variable.allValue !== "") ||
+      !isAll(values[variable.name])
+    ) {
+      continue;
+    }
+    const known = loaded[variable.name];
+    if (known === undefined) {
+      held[variable.name] = null;
+    } else if (!Array.isArray(known)) {
+      held[variable.name] = (known as { error: string }).error;
+    }
+  }
+  return held;
+}
+
+/** Names a query or address mentions as $name, ${name} or ${name:format}. */
+export function mentionedNames(value: unknown): Set<string> {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
+}
+
+/** Why something waits: the held variable it uses first, and its error (`null`: loading). */
+export interface Hold {
+  name: string;
+  error: string | null;
+}
+
+/** The held variable (`heldVariables`) that `used` mentions first, or null when none. */
+export function holdOf(
+  used: unknown,
+  held: Readonly<Record<string, string | null>> | undefined,
+): Hold | null {
+  if (held === undefined) return null;
+  const names = Object.keys(held);
+  if (names.length === 0) return null;
+  const mentioned = mentionedNames(used);
+  const name = names.find((n) => mentioned.has(n));
+  return name === undefined ? null : { name, error: held[name] ?? null };
+}
+
+/** What of a panel uses variables: its queries and the variable it repeats over. */
+export function panelUses(panel: PanelModel): unknown {
+  return [panel.targets.map((t) => t.query), panel.repeat ? `$${panel.repeat.variable}` : null];
+}
+
+/** Loaded values as a list; none while loading or after a failure (`heldVariables` holds those). */
+function listOf(known: LoadedOptions | undefined): string[] {
+  return Array.isArray(known) ? [...known] : [];
+}
+
+/**
+ * The values with each "All" resolved as far as the browser can without a query: custom
+ * variables and custom values for "All" (`sentValues`). A query variable at "All" keeps the
+ * marker; the server fills it in from the saved variable (the preview's `dashboardId`).
+ */
+export function allWithoutQuery(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+): VariableValues {
+  return sentValues(
+    values,
+    variables.filter((v) => v.type !== "query" || (v.allValue !== undefined && v.allValue !== "")),
+    {},
+  );
+}
+
+/** Whether any of the values still stands at "All". */
+export function anyAll(values: VariableValues): boolean {
+  return Object.values(values).some((value) => isAll(value));
+}
+
+/** The most values "All" sends as a list (the server's `MAX_LIST_VALUES`). */
+export const MAX_ALL_VALUES = 1000;
 
 export const VALUES_SOURCES = ["nodes", "edges", "documents"] as const;
 export type ValuesSource = (typeof VALUES_SOURCES)[number];
@@ -185,9 +387,52 @@ const asText = (value: unknown): string | null =>
 export function storedQueryVariables(
   values: VariableValues,
   saved: readonly VariableModel[],
-): VariableValues {
-  const allowed = new Set(saved.filter((v) => v.type !== "constant").map((v) => v.name));
-  return Object.fromEntries(Object.entries(values).filter(([name]) => allowed.has(name)));
+): Record<string, unknown> {
+  const types = new Map(saved.filter((v) => v.type !== "constant").map((v) => [v.name, v.type]));
+  return Object.fromEntries(
+    Object.entries(values).flatMap(([name, value]): [string, unknown][] => {
+      const type = types.get(name);
+      if (type === undefined) return [];
+      // Ad hoc filters go as `{ key, operator, value }` objects, not as the texts the bar keeps.
+      return [[name, type === "adhoc" ? decodeFilters(valueList(value)) : value]];
+    }),
+  );
+}
+
+/** An ad hoc variable's stored filters as the texts the bar keeps them as. */
+export function filterTexts(variable: VariableModel): string[] {
+  return storedFilters(variable.current).map(encodeFilter);
+}
+
+/**
+ * The source a target runs on: its own, or for `$name` the value of that data source variable
+ * (its default while nothing is picked). Only the free query route needs this; stored targets
+ * are resolved on the server.
+ */
+export function targetSource(
+  datasourceId: string,
+  values: VariableValues,
+  variables: readonly VariableModel[],
+): string {
+  if (!datasourceId.startsWith("$")) return datasourceId;
+  const name = datasourceId.slice(1);
+  const variable = variables.find((v) => v.name === name && v.type === "datasource");
+  if (variable === undefined) return datasourceId;
+  return valueList(values[name])[0] ?? currentValue(variable) ?? datasourceId;
+}
+
+/**
+ * The ad hoc filters for queries on `datasourceId` (free query route): those of every ad hoc
+ * variable that names that source, as the server applies them to stored queries.
+ */
+export function filtersFor(
+  datasourceId: string,
+  values: VariableValues,
+  variables: readonly VariableModel[],
+) {
+  return variables
+    .filter((v) => v.type === "adhoc" && v.datasourceId === datasourceId)
+    .flatMap((v) => decodeFilters(valueList(values[v.name] ?? filterTexts(v))));
 }
 
 /**
@@ -376,6 +621,8 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     "rowId",
     "timeFrom",
     "timeShift",
+    "minInterval",
+    "cacheTimeout",
     "libraryPanelId",
     "analysisId",
     "description",
@@ -384,6 +631,12 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     if (typeof text === "string" && text !== "") {
       panel[key] = text;
     }
+  }
+  if (typeof value.maxDataPoints === "number" && Number.isInteger(value.maxDataPoints)) {
+    panel.maxDataPoints = value.maxDataPoints;
+  }
+  if (value.hideTimeNote === true) {
+    panel.hideTimeNote = true;
   }
   if (isRecord(value.repeat) && typeof value.repeat.variable === "string") {
     panel.repeat = {
@@ -480,6 +733,10 @@ function parseVariable(value: unknown): VariableModel | null {
   if (typeof value.datasourceId === "string") {
     variable.datasourceId = value.datasourceId;
   }
+  for (const key of ["datasourceKind", "onValue", "offValue"] as const) {
+    const text = value[key];
+    if (typeof text === "string") variable[key] = text;
+  }
   if (value.query !== undefined) {
     variable.query = value.query;
   }
@@ -489,10 +746,33 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.multi === true) {
     variable.multi = true;
   }
+  if (value.allByDefault === true) {
+    variable.allByDefault = true;
+  }
   const valuesFrom = parseValuesFrom(value.valuesFrom);
   if (valuesFrom !== null) {
     variable.valuesFrom = valuesFrom;
   }
+  if (value.includeAll === true) variable.includeAll = true;
+  if (typeof value.allValue === "string") variable.allValue = value.allValue;
+  if (typeof value.regex === "string") variable.regex = value.regex;
+  const sort = VARIABLE_SORTS.find((s) => s === value.sort);
+  if (sort !== undefined) variable.sort = sort;
+  const refresh = VARIABLE_REFRESH.find((r) => r === value.refresh);
+  if (refresh !== undefined) variable.refresh = refresh;
+  if (Array.isArray(value.staticOptions)) {
+    const options: StaticOption[] = [];
+    for (const o of value.staticOptions) {
+      if (!isRecord(o) || typeof o.value !== "string") continue;
+      options.push(
+        typeof o.label === "string" && o.label !== ""
+          ? { value: o.value, label: o.label }
+          : { value: o.value },
+      );
+    }
+    if (options.length > 0) variable.staticOptions = options;
+  }
+  if (value.allowCustom === true) variable.allowCustom = true;
   return variable;
 }
 
@@ -503,7 +783,17 @@ function parseVariable(value: unknown): VariableModel | null {
  */
 export function cleanVariable(variable: VariableModel): VariableModel {
   const clean: VariableModel = { ...variable };
-  if (clean.type !== "query") delete clean.datasourceId;
+  if (clean.type !== "query" && clean.type !== "adhoc") delete clean.datasourceId;
+  if (clean.type !== "datasource") delete clean.datasourceKind;
+  if (clean.type !== "switch") {
+    delete clean.onValue;
+    delete clean.offValue;
+  }
+  if (clean.type === "adhoc") {
+    const filters = storedFilters(clean.current);
+    if (filters.length === 0) delete clean.current;
+    else clean.current = filters;
+  }
   if (clean.label === "") delete clean.label;
   if (clean.current === "" || (Array.isArray(clean.current) && clean.current.length === 0)) {
     delete clean.current;
@@ -511,7 +801,28 @@ export function cleanVariable(variable: VariableModel): VariableModel {
   if (clean.multi !== true || (clean.type !== "custom" && clean.type !== "query")) {
     delete clean.multi;
   }
+  if (clean.multi !== true || clean.allByDefault !== true) delete clean.allByDefault;
   if (clean.type !== "query" || clean.valuesFrom === undefined) delete clean.valuesFrom;
+  const choice = clean.type === "custom" || clean.type === "query";
+  if (!choice || clean.includeAll !== true) {
+    delete clean.includeAll;
+    delete clean.allValue;
+    if (isAll(clean.current as VariableValue | undefined)) delete clean.current;
+  }
+  if (clean.allValue === "") delete clean.allValue;
+  if (!choice || clean.allowCustom !== true) delete clean.allowCustom;
+  if (clean.type !== "query" && clean.type !== "datasource") delete clean.regex;
+  if (clean.type !== "query") {
+    delete clean.sort;
+    delete clean.refresh;
+    delete clean.staticOptions;
+  }
+  if (clean.regex === "") delete clean.regex;
+  if (clean.staticOptions !== undefined) {
+    const options = clean.staticOptions.filter((o) => o.value !== "");
+    if (options.length === 0) delete clean.staticOptions;
+    else clean.staticOptions = options;
+  }
   return clean;
 }
 

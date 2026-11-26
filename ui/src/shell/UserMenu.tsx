@@ -31,7 +31,8 @@ export function initialsOf(name: string): string {
 }
 
 /**
- * Account menu with theme, language and sign out, following the WAI-ARIA menu button pattern:
+ * Account menu with the theme mode, language and sign out (the light and dark variants live only
+ * in the account settings, board Themes, frame 7), following the WAI-ARIA menu button pattern:
  * arrow keys move between items, Home and End jump, Escape and Tab close, and focus returns to the
  * button after a choice or Escape.
  *

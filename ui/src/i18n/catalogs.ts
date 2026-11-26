@@ -6,6 +6,7 @@
 import { de as deStart } from "./de";
 import deApps from "./de/apps.json";
 import deGraphStyle from "./de/graphStyle.json";
+import deHandbook from "./de/handbook.json";
 import deProvisioning from "./de/provisioning.json";
 import deReports from "./de/reports.json";
 import deServerAdmin from "./de/serverAdmin.json";
@@ -14,6 +15,7 @@ import deTraces from "./de/traces.json";
 import { en as enStart } from "./en";
 import enApps from "./en/apps.json";
 import enGraphStyle from "./en/graphStyle.json";
+import enHandbook from "./en/handbook.json";
 import enProvisioning from "./en/provisioning.json";
 import enReports from "./en/reports.json";
 import enServerAdmin from "./en/serverAdmin.json";
@@ -29,6 +31,7 @@ export const de = {
   ...deServerAdmin,
   ...deApps,
   ...deGraphStyle,
+  ...deHandbook,
 };
 export const en = {
   ...enStart,
@@ -39,4 +42,5 @@ export const en = {
   ...enServerAdmin,
   ...enApps,
   ...enGraphStyle,
+  ...enHandbook,
 };

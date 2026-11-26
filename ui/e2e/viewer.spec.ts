@@ -15,9 +15,9 @@ test.afterAll(async () => {
   await owner.dispose();
 });
 
-test("a viewer reads a dashboard and changes its variable, but cannot edit or explore", async ({
-  pageAs,
-}) => {
+test("a viewer reads a dashboard and changes its variable, but cannot edit or explore", {
+  tag: "@smoke",
+}, async ({ pageAs }) => {
   const viewer = await owner.createMember(unique("Viktor Viewer"), "viewer");
   const source = await owner.createSqliteSource(unique("Verkauf"), join(fixturesDir(), "sales.db"));
   const title = unique("Regionen");
@@ -75,7 +75,9 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
   await expect(page.getByRole("heading", { name: t("explore.forbidden.title") })).toBeVisible();
 });
 
-test("a viewer with query access to one data source can use Explore", async ({ pageAs }) => {
+test("a viewer with query access to one data source can use Explore", { tag: "@smoke" }, async ({
+  pageAs,
+}) => {
   const analyst = await owner.createMember(unique("Anna Analyst"), "viewer");
   const name = unique("Freigegeben");
   const source = await owner.createSqliteSource(name, join(fixturesDir(), "sales.db"));

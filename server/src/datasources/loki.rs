@@ -48,6 +48,8 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
 /// Lines a log query asks for when it does not say (Loki's own default is 100).
 const DEFAULT_LINES: u64 = 1_000;
+/// The most lines one log query asks for, below the row limit too (the logs view's line limit).
+const MAX_LINES: u64 = 5_000;
 /// Label values the schema reads for completion: of this many labels, this many values each.
 const MAX_SCHEMA_LABELS: usize = 50;
 const MAX_SCHEMA_VALUES: usize = 200;
@@ -301,6 +303,10 @@ impl DataSourcePlugin for Loki {
         &[Shape::Documents, Shape::Frame]
     }
 
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
@@ -343,10 +349,11 @@ impl DataSourcePlugin for Loki {
         let mut req = req;
         req.interval_ms = step_ms as u64;
         let expr = prometheus::expand(&q.logql, &req)?;
+        let expr = if expr.trim().is_empty() { expr } else { prometheus::inject_filters(&expr, &req.filters, false)? };
         if expr.trim().is_empty() {
             return Err(SourceError::rejected("loki.empty", "the LogQL query is empty"));
         }
-        let limit = q.limit.unwrap_or(DEFAULT_LINES).clamp(1, req.limits.max_rows as u64);
+        let limit = line_limit(q.limit, req.limits.max_rows);
         let direction = q.direction.unwrap_or_default();
         let c = client(conn).await?;
         let max_bytes = req.limits.budget.remaining();
@@ -400,6 +407,11 @@ impl DataSourcePlugin for Loki {
         drop(charge);
         Ok(result)
     }
+}
+
+/// The lines a log query asks Loki for: the query's limit or 1,000, at most 5,000 and the row limit.
+fn line_limit(asked: Option<u64>, max_rows: usize) -> u64 {
+    asked.unwrap_or(DEFAULT_LINES).clamp(1, MAX_LINES.min(max_rows as u64).max(1))
 }
 
 /// The step of a metric query, as for Prometheus: the panel's interval, at least the query's
@@ -474,6 +486,7 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 
@@ -504,6 +517,16 @@ mod tests {
             Endpoint::LabelValues("a/b").url(&base).unwrap().as_str(),
             "https://loki.intern/proxy/loki/api/v1/label/a%2Fb/values"
         );
+    }
+
+    #[test]
+    fn line_limit_defaults_to_1000_and_stays_within_5000_and_the_row_limit() {
+        assert_eq!(line_limit(None, 100_000), 1_000);
+        assert_eq!(line_limit(Some(2_500), 100_000), 2_500);
+        assert_eq!(line_limit(Some(50_000), 100_000), 5_000);
+        assert_eq!(line_limit(Some(4_000), 300), 300);
+        assert_eq!(line_limit(Some(0), 100_000), 1);
+        assert_eq!(line_limit(None, 0), 1);
     }
 
     #[test]

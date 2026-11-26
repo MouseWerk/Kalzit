@@ -379,6 +379,109 @@ async fn pages_are_bounded_and_continue_with_the_cursor() {
     t.finish().await;
 }
 
+/// One source per organization is the default: setting another moves it, unsetting leaves none,
+/// the trash takes it away, and it takes `datasources:write` on the source.
+#[tokio::test]
+async fn the_default_source_is_one_per_organization() {
+    let t = T::new().await;
+    let file = t.sqlite_file("standard.db", "CREATE TABLE x (a INT);").await;
+    let a = t.create_sqlite("Erste", &file).await;
+    let b = t.create_sqlite("Zweite", &file).await;
+    let tr = &t;
+    let set = |id: &str, on: bool, cookie: &str| {
+        let t = tr;
+        let path = t.path(&format!("/datasources/{id}/default"));
+        let cookie = cookie.to_string();
+        async move { t.send(Method::PUT, &path, Some(json!({ "default": on })), Some(&cookie)).await }
+    };
+    let defaults = || async move {
+        let list = tr.get("/datasources").await;
+        list.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["isDefault"] == true)
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(defaults().await, Vec::<String>::new(), "none until one is chosen");
+    assert_eq!(t.get(&format!("/datasources/{a}")).await.body["isDefault"], false);
+
+    let r = set(&a, true, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["isDefault"], true);
+    assert_eq!(defaults().await, std::slice::from_ref(&a));
+    // Setting it again changes nothing.
+    assert_eq!(set(&a, true, &t.owner).await.body["isDefault"], true);
+
+    // Another source takes it over.
+    assert_eq!(set(&b, true, &t.owner).await.status, StatusCode::OK);
+    assert_eq!(defaults().await, std::slice::from_ref(&b));
+    assert_eq!(t.get(&format!("/datasources/{a}")).await.body["isDefault"], false);
+
+    // Unset: the organization has none.
+    let r = set(&b, false, &t.owner).await;
+    assert_eq!((r.status, r.body["isDefault"].clone()), (StatusCode::OK, json!(false)));
+    assert_eq!(defaults().await, Vec::<String>::new());
+
+    // Without write on the source: refused, nothing changes (a viewer does not even see it).
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let r = set(&a, true, &viewer).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text);
+    let editor = t.session_for_role("edda", Some("editor")).await;
+    let r = set(&a, true, &editor).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    assert_eq!(defaults().await, Vec::<String>::new());
+    let r = t
+        .send(Method::PUT, &t.path(&format!("/datasources/{a}/default")), Some(json!({ "on": true })), Some(&t.owner))
+        .await;
+    assert_eq!(r.code(), "validation", "{}", r.text);
+
+    // The trash takes it away; restoring does not bring it back.
+    assert_eq!(set(&a, true, &t.owner).await.status, StatusCode::OK);
+    let del = t.send(Method::DELETE, &t.path(&format!("/datasources/{a}")), None, Some(&t.owner)).await;
+    assert_eq!(del.status, StatusCode::NO_CONTENT);
+    assert_eq!(set(&a, true, &t.owner).await.status, StatusCode::NOT_FOUND, "not for a source in the trash");
+    let restored = t.post(&format!("/datasources/{a}/restore"), json!({})).await;
+    assert_eq!(restored.body["isDefault"], false);
+    assert_eq!(defaults().await, Vec::<String>::new());
+    assert_eq!(crate::routes::datasources::default_datasource(&t.state.db, &t.org).await.unwrap(), None);
+    assert_eq!(set(&b, true, &t.owner).await.status, StatusCode::OK);
+    assert_eq!(crate::routes::datasources::default_datasource(&t.state.db, &t.org).await.unwrap(), Some(b));
+    t.finish().await;
+}
+
+/// A test that ran on the settings before a change saved meanwhile is not kept as the changed
+/// source's last test.
+#[tokio::test]
+async fn a_test_of_older_settings_is_not_kept_after_a_change() {
+    let t = T::new().await;
+    let file = t.sqlite_file("alt.db", "CREATE TABLE x (a INT);").await;
+    let id = t.create_sqlite("Alt", &file).await;
+    let before = super::resolve_in_org(&t.state.db, &t.org, &id).await.unwrap();
+    // A change saved while the test runs: the test still holds the version before it.
+    t.clock.advance_ms(5);
+    let changed = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/datasources/{id}")),
+            Some(json!({ "settings": { "path": file.to_string_lossy(), "maxRows": 10 } })),
+            Some(&t.owner),
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.text);
+    let user: (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'joerg@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let report = super::check_health(&t.state, &user.0, &before).await.unwrap();
+    assert!(report.ok, "{report:?}");
+    assert!(t.get(&format!("/datasources/{id}")).await.body.get("lastTest").is_none(), "not kept");
+    // A test of the current version is kept.
+    let r = t.post(&format!("/datasources/{id}/health"), json!({})).await;
+    assert_eq!(r.body["ok"], true, "{}", r.text);
+    assert_eq!(t.get(&format!("/datasources/{id}")).await.body["lastTest"]["ok"], true);
+    t.finish().await;
+}
+
 /// New PostgreSQL and MySQL sources get the TLS mode `auto` when they leave it out; a change that
 /// leaves it out keeps `auto`, and a source stored without a mode (from before) stays without.
 #[tokio::test]
@@ -1278,8 +1381,9 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
         code: Some("datasource_error"),
         warnings: Vec::new(),
     };
-    super::store_last_test(&t.state.db, &idle, &failed(5), 1_000).await;
-    super::store_last_test(&t.state.db, &idle, &failed(7), 2_000).await;
+    let version = super::resolve_in_org(&t.state.db, &t.org, &idle).await.unwrap().updated_at;
+    super::store_last_test(&t.state.db, &idle, version, &failed(5), 1_000).await;
+    super::store_last_test(&t.state.db, &idle, version, &failed(7), 2_000).await;
 
     let r = t.get("/datasources/status").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
@@ -1296,7 +1400,7 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
         "a failure after a failure keeps the start"
     );
     // A passing test ends the run.
-    super::store_last_test(&t.state.db, &idle, &super::HealthReport { ok: true, ..failed(3) }, 3_000).await;
+    super::store_last_test(&t.state.db, &idle, version, &super::HealthReport { ok: true, ..failed(3) }, 3_000).await;
     let r = t.get("/datasources/status").await;
     let items = r.body["items"].as_array().unwrap();
     let idle_item = items.iter().find(|i| i["id"] == idle.as_str()).unwrap();
@@ -3745,5 +3849,126 @@ async fn document_cursors_continue_only_their_caller_and_query() {
     // Nor does the viewer's cursor open a free query: viewers may not run one at all.
     let r = t.query(&viewer, item(&ids[0], Some(&mine))).await;
     assert!(r.status != StatusCode::OK || r.body["results"]["A"]["result"].is_null(), "{}", r.text);
+
+    // A saved analysis pages the same way through its own route, for whoever may read it.
+    let r = t
+        .post(
+            "/analyses",
+            json!({ "model": {
+                "schemaVersion": 1, "title": "Log", "timeRange": null,
+                "targets": [
+                    { "refId": "A", "datasourceId": ids[0], "query": {} },
+                    { "refId": "B", "datasourceId": ids[1], "query": {} }
+                ],
+                "steps": [], "visualization": { "type": "documents", "options": {} }
+            } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let analysis = r.body["id"].as_str().unwrap().to_string();
+    let path = t.path(&format!("/analyses/{analysis}/query"));
+    let body = |cursor: Option<&str>| {
+        let cursors = cursor.map(|c| json!({ "A": c })).unwrap_or_else(|| json!({}));
+        json!({ "timeRange": range(), "limit": 2, "cursors": cursors })
+    };
+    let r = t.send(Method::POST, &path, Some(body(None)), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let set = &r.body["results"]["A"]["result"]["documents"];
+    assert_eq!(set["documents"], json!([{ "n": 1 }, { "n": 2 }]), "{}", r.text);
+    let page = set["nextCursor"].as_str().unwrap().to_string();
+    let r = t.send(Method::POST, &path, Some(body(Some(&page))), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["result"]["documents"]["documents"], json!([{ "n": 3 }]), "{}", r.text);
+    assert!(r.body["results"].get("B").is_none(), "only the continued target runs: {}", r.text);
+    // Cursors of another caller, or of the dashboard's same query, do not continue it.
+    let r = t.send(Method::POST, &path, Some(body(Some(&cursor))), Some(&viewer)).await;
+    assert_eq!(reason(&r), "query.cursor_invalid", "{}", r.text);
+    let r = t.send(Method::POST, &path, Some(body(Some(&page))), Some(&editor)).await;
+    assert_eq!(reason(&r), "query.cursor_invalid", "{}", r.text);
+    // An analysis has no variables: a page asked for with some is refused like the first.
+    let body = json!({ "timeRange": range(), "variables": { "x": "1" }, "cursors": { "A": mine } });
+    let r = t.send(Method::POST, &path, Some(body), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text);
+    t.finish().await;
+}
+
+/// A panel on `$quelle` runs on the variable's saved default for whoever may read the dashboard;
+/// another source needs the viewer's own query right. Ad hoc filters narrow typed SQL through
+/// `$__filter`, values bound, keys from the schema, and only on their own source.
+#[tokio::test]
+async fn data_source_variables_and_ad_hoc_filters_keep_the_rights() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let main = t.create_sqlite("Shop Produktion", &file).await;
+    let other = t.create_sqlite("Shop Staging", &file).await;
+    let sql = "SELECT land FROM verkauf WHERE $__filter AND ($nur = '0' OR bezahlt = 1) ORDER BY id";
+    let model = json!({
+        "schemaVersion": 2, "title": "Quellen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "quelle", "type": "datasource", "datasourceKind": "sqlite", "current": main },
+            { "name": "filter", "type": "adhoc", "datasourceId": main },
+            { "name": "nur", "type": "switch", "onValue": "1", "offValue": "0", "current": "0" }
+        ],
+        "panels": [{ "id": "p1", "type": "table", "title": "Länder", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": "$quelle", "query": { "sql": sql } }] }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let run =
+        |variables: Value| t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": variables }));
+    let lands = |r: &Reply| r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"].clone();
+
+    // The default source: reading the dashboard is enough.
+    let r = run(json!({ "nur": "0" })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(lands(&r), json!(["Österreich", "Schweiz", "Deutschland"]), "{}", r.text);
+    assert_eq!(lands(&run(json!({ "nur": "1" })).await), json!(["Österreich"]));
+    let r = run(json!({ "nur": "1 OR 1=1" })).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "a switch takes only its two values");
+
+    // Filters narrow, values are bound and keys must be columns of the source.
+    let filter = |key: &str, op: &str, value: &str| json!([{ "key": key, "operator": op, "value": value }]);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=", "Schweiz") })).await;
+    assert_eq!(lands(&r), json!(["Schweiz"]), "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=", "x' OR '1'='1") })).await;
+    assert_eq!(lands(&r), json!([]), "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land = land OR 1", "=", "x") })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "sql.filter_key", "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=~", "S.*") })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "sql.filter_operator", "{}", r.text);
+
+    // The options: the sources of the kind the viewer may query, and the default.
+    let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    // A viewer without the right to see the source gets its id, not its name.
+    assert_eq!(r.body["options"], json!([{ "value": main, "label": main }]));
+    let r = t.options(&t.owner, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.body["options"][0], json!({ "value": main, "label": "Shop Produktion" }), "{}", r.text);
+
+    // Another source needs the viewer's own query right; then it runs, without the filters of
+    // the default source.
+    let r = run(json!({ "nur": "0", "quelle": other })).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", r.text);
+    let r = run(json!({ "nur": "0", "quelle": "unbekannt" })).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    let viewer_id = user_id(&t, "viewer").await;
+    grant(&t, &viewer_id, &other, "query").await;
+    let r = run(json!({ "nur": "0", "quelle": other, "filter": filter("land", "=", "Schweiz") })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(lands(&r), json!(["Österreich", "Schweiz", "Deutschland"]), "{}", r.text);
+    assert!(r.text.contains("query.filters_not_applied"), "the answer says the filters did not apply: {}", r.text);
+    let r = run(json!({ "nur": "0", "quelle": other })).await;
+    assert!(!r.text.contains("query.filters_not_applied"), "no notice without filters: {}", r.text);
+    let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.body["options"].as_array().unwrap().len(), 2, "{}", r.text);
+
+    // Free queries may carry filters too.
+    let free = json!([{ "refId": "A", "datasourceId": main,
+                        "query": { "sql": "SELECT land FROM verkauf WHERE $__filter ORDER BY id" },
+                        "filters": [{ "key": "land", "operator": "!=", "value": "Schweiz" }] }]);
+    let r = t.query(&t.owner, free).await;
+    assert_eq!(lands(&r), json!(["Österreich", "Deutschland"]), "{}", r.text);
     t.finish().await;
 }

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { addAnalysis } from "../analyses/test/fakeAnalyses";
 import { addMongoSource, MONGO_ID } from "../datasources/test/fakeDatasources";
 import { emptyModel, type PanelModel } from "./model";
 import { addDashboard } from "./test/fakeDashboards";
@@ -20,14 +21,19 @@ const panel: PanelModel = {
   fieldConfig: {},
 };
 
-function open() {
+function serve(role: "viewer" | "editor") {
   const server = installFakeServer({
     signedIn: true,
-    user: { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "viewer" }] },
+    user: { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] },
   });
   addMongoSource(server.areas.datasources);
   server.areas.datasources.mongo.orders = Array.from({ length: 1200 }, (_, i) => ({ n: i }));
   addDashboard(server.areas.dashboards, "d-shop", { ...emptyModel("Shop"), panels: [panel] });
+  return server;
+}
+
+function open() {
+  const server = serve("viewer");
   return { server, ...renderApp("/dashboards/d-shop") };
 }
 
@@ -95,5 +101,67 @@ describe("load more in a dashboard's document panel", () => {
     await within(orders).findByText("1,200 documents.");
     // The page went out with the time range of the answer it continues.
     expect(server.areas.dashboards.panelQueries.at(-1)?.body.timeRange).toEqual(answered);
+  });
+});
+
+describe("load more in a saved analysis", () => {
+  it("continues the analysis's stored query through its own route", async () => {
+    const server = serve("viewer");
+    const stored = addAnalysis(server.areas.analyses, {
+      title: "Orders",
+      datasourceId: MONGO_ID,
+      query: { collection: "orders", pipeline: "[]" },
+      type: "documents",
+    });
+    const { user } = renderApp(`/explore/saved/${stored.id}`);
+    const result = await screen.findByRole("region", { name: "Result" }, { timeout: 4000 });
+    await within(result).findByText(/Cut off at 1,000 documents/, undefined, { timeout: 4000 });
+    const first = server.areas.analyses.runs.length;
+    await user.click(within(result).getByRole("button", { name: "Load more documents" }));
+    expect(await within(result).findByText("1,200 documents.")).toBeTruthy();
+    // A viewer only continues the stored query: the analysis route with the set's cursor.
+    const sent = server.areas.analyses.runs.slice(first);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.id).toBe(stored.id);
+    expect(sent[0]?.body.cursors).toEqual({ A: "1000" });
+    expect(sent[0]?.body).not.toHaveProperty("variables");
+    expect(server.areas.datasources.queries).toHaveLength(0);
+    expect(within(result).queryByRole("button", { name: "Load more documents" })).toBeNull();
+  });
+
+  it("starts from the first page again when the analysis runs again", async () => {
+    const server = serve("viewer");
+    const stored = addAnalysis(server.areas.analyses, {
+      title: "Orders",
+      datasourceId: MONGO_ID,
+      query: { collection: "orders", pipeline: "[]" },
+      type: "documents",
+    });
+    const { user } = renderApp(`/explore/saved/${stored.id}`);
+    const result = await screen.findByRole("region", { name: "Result" }, { timeout: 4000 });
+    await within(result).findByText(/Cut off at 1,000 documents/, undefined, { timeout: 4000 });
+    await user.click(within(result).getByRole("button", { name: "Load more documents" }));
+    await within(result).findByText("1,200 documents.");
+    await user.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() =>
+      expect(within(result).getByText(/Cut off at 1,000 documents/)).toBeTruthy(),
+    );
+    expect(server.areas.analyses.runs.at(-1)?.body).not.toHaveProperty("cursors");
+  });
+});
+
+describe("load more in the panel editor's preview", () => {
+  it("continues the unchanged stored panel through the panel route", async () => {
+    const server = serve("editor");
+    const { user } = renderApp("/dashboards/d-shop/panels/p-orders/edit");
+    const preview = await screen.findByRole("region", { name: "Preview" }, { timeout: 4000 });
+    await within(preview).findByText(/Cut off at 1,000 documents/, undefined, { timeout: 4000 });
+    const first = server.areas.dashboards.panelQueries.length;
+    await user.click(within(preview).getByRole("button", { name: "Load more documents" }));
+    expect(await within(preview).findByText("1,200 documents.")).toBeTruthy();
+    const sent = server.areas.dashboards.panelQueries.slice(first);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.body.cursors).toEqual({ A: "1000" });
+    expect(within(preview).queryByRole("button", { name: "Load more documents" })).toBeNull();
   });
 });

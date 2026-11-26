@@ -255,6 +255,10 @@
     color: var(--border);
   }
 
+  .ts__probe--line {
+    color: var(--border-strong);
+  }
+
   /*
    * Forced colors (Windows high contrast) leave the canvas alone, so the probes hand it system
    * colors: series in text, link and selection colors in turn, the axis in the text color and
@@ -301,6 +305,20 @@
     fill: var(--text-muted);
     font-size: var(--font-size-xs);
     dominant-baseline: middle;
+  }
+
+  /* A value axis in the colour of its first series (axis option "Wie die Serie"). */
+  .ts__axis--series .ts__label {
+    fill: var(--series-color);
+  }
+
+  .ts__axis-line {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .ts__axis--series .ts__axis-line {
+    stroke: var(--series-color);
   }
 
   .ts__line {
@@ -394,6 +412,25 @@
     color: var(--text-muted);
   }
 
+  /* The rows scroll below the time, which stays at the top; sizes from the tooltip options. */
+  .ts__tooltip-rows {
+    display: grid;
+    gap: var(--space-1);
+    max-width: var(--tooltip-max-width, none);
+    max-height: var(--tooltip-max-height, 50vh);
+    overflow: auto;
+  }
+
+  .ts__tooltip-note {
+    color: var(--text-muted);
+  }
+
+  /* A line under the chart, such as the points a log axis leaves out. */
+  .ts__note {
+    flex: none;
+    padding-block-start: var(--space-1);
+  }
+
   .ts__tooltip-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -453,12 +490,14 @@
 
   /* Stat */
 
+  /* The columns come from the code (--stat-columns), which gives each value the largest box. */
   .stat {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
+    grid-template-columns: repeat(var(--stat-columns, 1), minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
     gap: var(--space-3);
     height: 100%;
-    align-content: center;
+    min-height: 0;
     list-style: none;
   }
 
@@ -467,6 +506,8 @@
     justify-items: center;
     gap: var(--space-1);
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .stat__name {
@@ -500,6 +541,15 @@
     stroke: var(--series-color);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
+  }
+
+  /* A short box keeps name and value; the trend line gives way first, then the large number. */
+  .stat--compact .stat__sparkline {
+    display: none;
+  }
+
+  .stat.stat--small .stat__value {
+    font-size: var(--font-size-xl);
   }
 
   /* Table: fixed row height so only the rows in view are rendered. */
@@ -658,6 +708,55 @@
   .vt__table--columns .vt__spacer > td:first-child {
     position: static;
     background: transparent;
+  }
+
+  /* The footer: one calculation per column, standing at the bottom while the rows scroll. */
+  .vt__foot {
+    position: sticky;
+    inset-block-end: 0;
+    z-index: var(--z-sticky);
+    height: var(--vt-row-height);
+    padding: 0 var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+    font-weight: var(--font-weight-semibold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .vt__table--columns tr > .vt__foot.vt__foot:first-child {
+    z-index: var(--z-sticky-corner);
+  }
+
+  .vt__foot-label {
+    margin-inline-end: var(--space-1);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /* The footer's calculation per column in the editor: the column's name, then its choice. */
+  .table-footer-editor {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .table-footer-editor__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .vt__footnote {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   /* An option written as its own markup adds no box of its own. */

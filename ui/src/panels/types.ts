@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type {
   DocumentSet,
   FieldDistribution,
+  FieldType,
   Frame,
   GraphSet,
   QueryResult,
@@ -61,6 +62,8 @@ export interface PanelSeries {
  */
 export type FieldOptionGroup =
   | "graphStyle"
+  /** The value axis: placement, label, scale, soft limits (`fieldConfig/axisOptions.ts`). */
+  | "axes"
   | "standard"
   | "range"
   | "thresholds"
@@ -173,4 +176,26 @@ export interface PanelEditorProps<Options> {
    * (a graph panel's colors). Absent where there is no preview.
    */
   graphLabels?: readonly { label: string; count: number }[];
+  /**
+   * The fields of the preview's frames after the steps, each name once, for options that name a
+   * field (the XY chart's X and Y). Absent where there is no preview.
+   */
+  fields?: readonly PanelField[];
+  /**
+   * The columns of the preview's tables after the steps, by shown name, for options set per
+   * column (the table footer). Absent where there is no preview.
+   */
+  tableColumns?: readonly TableColumn[];
+}
+
+/** A field of the preview, by name and type. */
+export interface PanelField {
+  name: string;
+  type: FieldType;
+}
+
+/** One column the panel shows: its shown name and its type. */
+export interface TableColumn {
+  name: string;
+  type: FieldType;
 }

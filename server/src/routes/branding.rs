@@ -88,9 +88,14 @@ pub struct Branding {
     logo: Option<LogoInfo>,
     sign_in: SignInTexts,
     default_theme: Value,
+    /// The light and dark variant of the theme for visitors without a choice of their own.
+    default_theme_light: Value,
+    default_theme_dark: Value,
     accent: Value,
     density: Value,
     font_size: Value,
+    /// Whether the app shows the built-in handbook (`appearance.handbook`).
+    handbook: Value,
 }
 
 async fn logo_info(state: &AppState) -> ApiResult<Option<LogoInfo>> {
@@ -122,9 +127,12 @@ async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>
             lock_minutes: state.config.security.login_window_secs.div_ceil(60),
         },
         default_theme: get("appearance.default_theme").await?,
+        default_theme_light: get("appearance.default_theme_light").await?,
+        default_theme_dark: get("appearance.default_theme_dark").await?,
         accent: get("appearance.accent").await?,
         density: get("appearance.density").await?,
         font_size: get("appearance.font_size").await?,
+        handbook: get("appearance.handbook").await?,
     }))
 }
 

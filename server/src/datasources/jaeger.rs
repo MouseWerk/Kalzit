@@ -438,6 +438,7 @@ mod tests {
                 budget: ResponseBudget::new(1 << 20),
             },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

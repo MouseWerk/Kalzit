@@ -185,6 +185,7 @@ describe("keys of a deferred area", () => {
       "panels/graph/style/tableStyle.tsx",
       "panels/graph/style/usePanelStyle.tsx",
     ],
+    handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
   };
 
   const files = sources(SRC).map((path) => ({
@@ -220,6 +221,16 @@ describe("keys of a deferred area", () => {
     expect(offenders).toEqual([]);
   });
 
+  const GATE_FLOOR: Record<(typeof DEFERRED_AREAS)[number], number> = {
+    sharing: 7,
+    provisioning: 5,
+    reports: 4,
+    traces: 4,
+    serverAdmin: 5,
+    apps: 5,
+    handbook: 1,
+  };
+
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
     const gated = new Set(GATED[area]);
     for (const name of gated) {
@@ -250,7 +261,8 @@ describe("keys of a deferred area", () => {
       }
     }
     expect(offenders).toEqual([]);
-    // The walk found the gates, so it is not vacuous.
-    expect(gates).toBeGreaterThan(2);
+    // The walk found the gates, so it is not vacuous: at least as many as each area had when
+    // this was written (the handbook is one page behind one gate).
+    expect(gates).toBeGreaterThanOrEqual(GATE_FLOOR[area]);
   });
 });

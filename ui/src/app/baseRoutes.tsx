@@ -18,6 +18,7 @@ import { HELP_PAGES } from "../help/helpPages";
 import { loadArea } from "../i18n/i18n";
 import { ErrorPage, NotFoundPage } from "../pages/StatusPages";
 import { AppShell } from "../shell/AppShell";
+import { primeShell } from "../shell/primeShell";
 
 export interface RouterContext {
   queryClient: QueryClient;
@@ -280,6 +281,8 @@ export const appRoute = createRoute({
       });
     }
     if (!preload) {
+      // The sidebar's data before its first frame (cached after the first page load).
+      await primeShell(context.queryClient, me);
       // Permissions can change with the role, like the session; refresh them in the background.
       void context.queryClient.invalidateQueries({ queryKey: [ORG_QUERY_KEY] });
     }
