@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { HandbookLink, type HandbookTarget } from "../handbook";
 import { type HelpTopic, type Snippet, snippetMatches } from "../registry";
 import { SnippetCard } from "./Snippet";
 import "../help.css";
@@ -28,7 +29,7 @@ export function HelpPanel<V>({
   topics: readonly HelpTopic[];
   snippets: readonly Snippet<V>[];
   notes?: ReactNode;
-  docs?: { href: string; label: string } | undefined;
+  docs?: { target: HandbookTarget; label: string } | undefined;
   focus?: string | undefined;
   onInsert?: ((value: V, snippet: Snippet<V>) => void) | undefined;
   onClose: () => void;
@@ -116,10 +117,9 @@ export function HelpPanel<V>({
       </div>
       {notes === undefined ? null : <div className="help-panel__notes">{notes}</div>}
       {docs === undefined ? null : (
-        <a className="help-panel__docs" href={docs.href} target="_blank" rel="noopener noreferrer">
+        <HandbookLink className="help-panel__docs" target={docs.target}>
           {docs.label}
-          <Icon name="external" />
-        </a>
+        </HandbookLink>
       )}
     </section>
   );

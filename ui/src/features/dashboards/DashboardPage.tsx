@@ -578,6 +578,8 @@ function DashboardView({
   const locked = isLocked(managed);
   const mayEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
   const canEdit = mayEdit && !locked;
+  // Save as copy: a new dashboard needs the right to write dashboards, or this one to edit.
+  const canSaveAs = permissions.has("dashboards:write") || canEdit;
   // The line a Grafana import left for the first visits, until it is put away.
   const [imported] = useState(() => parseNotice(readPreference(noticeKey(dashboard.id))) !== null);
   const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
@@ -2087,7 +2089,7 @@ function DashboardView({
                 remove: canDelete && !inTrash && !locked,
                 access: canAccess,
                 owner: canAccess && canEdit,
-                saveAs: permissions.has("dashboards:write") || canEdit,
+                saveAs: canSaveAs,
               }}
               lockedReason={locked && mayEdit ? t("dashboards.managedLocked") : undefined}
               controls={controls}
@@ -2418,6 +2420,11 @@ function DashboardView({
           onSave={async ({ title, folderId }) => {
             const created = await createDashboard(orgId, { folderId, model: { ...model, title } });
             setDialog(null);
+            // The changes went into the copy; this dashboard stays as it was saved.
+            if (draft !== null) {
+              setDraft(null);
+              writeDraft(owner, dashboard.id, null);
+            }
             await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
             await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId: created.id } });
           }}
@@ -2518,9 +2525,15 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
+          // The changes and the version both against the newest saved version; a settings page
+          // opened on an older one ends in the conflict dialog, which compares all three.
+          base={dashboard.model}
+          draft={draft}
+          version={dashboard.version}
           changed={dirty || dialog.folderId !== undefined}
           rangeChanged={rangeChanged}
           valuesChanged={valuesChanged}
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onSave={(message, keep) => {
             const next = withDefaults(draft, {
               range: keep.range ? textRange : undefined,
@@ -2560,6 +2573,7 @@ function DashboardView({
               finish: dialog.finish,
             })
           }
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onTakeTheirs={() => {
             setDialog(null);
             setDraft(null);

@@ -543,6 +543,60 @@ async fn a_panel_summary_reads_the_result_after_its_steps_without_hidden_queries
     t.finish().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panel_summary_runs_within_the_panels_query_options() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let (graphite, asked) = common::fake_graphite().await;
+    let body = json!({ "name": "Graphite", "kind": "graphite", "settings": { "url": format!("http://{graphite}") } });
+    let r = t.post(&format!("/api/orgs/{org}/datasources"), body, &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &owner).await;
+    t.open_source(&org, &ds, &[], &owner).await;
+    // The target names the interval the run got; the fake keeps the points it was asked for.
+    let target =
+        |id: &str| json!([{ "refId": "A", "datasourceId": ds, "query": { "target": format!("{id}.$__interval_ms") } }]);
+    let grid = json!({ "x": 0, "y": 0, "w": 12, "h": 8 });
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Optionen",
+        "timeRange": { "from": "now-1h", "to": "now" },
+        "panels": [
+            { "id": "few", "type": "timeseries", "title": "Wenige Punkte", "grid": grid,
+              "targets": target("few"), "maxDataPoints": 10 },
+            { "id": "coarse", "type": "timeseries", "title": "Grob", "grid": grid,
+              "targets": target("coarse"), "minInterval": "30m" },
+            { "id": "plain", "type": "timeseries", "title": "Ohne", "grid": grid,
+              "targets": target("plain") }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    // Every summary asks for more detail than the panels allow.
+    let ask = json!({ "timeRange": range(), "intervalMs": 1000, "maxDataPoints": 5000 });
+    for panel in ["few", "coarse", "plain"] {
+        let path = format!("/api/orgs/{org}/dashboards/{dashboard}/panels/{panel}/ai/summarize");
+        let r = t.post(&path, ask.clone(), &owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{panel}: {}", r.text);
+    }
+    assert_eq!(
+        asked.all(),
+        [
+            // An hour over at most 10 points: 6 minutes, stepped to 10 minutes; 10 points.
+            ("few.600000".to_string(), "10".to_string()),
+            // Never finer than 30 minutes; the points as asked.
+            ("coarse.1800000".to_string(), "5000".to_string()),
+            // Without options the request decides.
+            ("plain.1000".to_string(), "5000".to_string()),
+        ]
+    );
+    t.finish().await;
+}
+
 /// A Tempo that answers every request with the trace of the fixture.
 async fn fake_tempo() -> SocketAddr {
     let trace = include_str!("fixtures/traces/tempo_trace.json");

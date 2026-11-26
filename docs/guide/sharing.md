@@ -19,7 +19,7 @@ section also sets the longest expiry (default 365 days) and the largest snapshot
 Changes apply at once: with sharing off, every public link and public snapshot stops answering and
 starts again when it is turned back on.
 
-Sharing starts at a dashboard's **Share** button. **Administration > Shares** lists every public
+Sharing starts at a dashboard's **Share** button. [**Administration > Shares**](app:/admin/shares) lists every public
 link and snapshot of the organization for its admins, with the status and the reason when one is
 suspended; **Settings > My shares** lists your own.
 

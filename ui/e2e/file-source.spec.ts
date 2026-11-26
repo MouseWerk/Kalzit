@@ -25,9 +25,9 @@ function within<T>(what: string, ms: number, promise: Promise<T>): Promise<T> {
   return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
 }
 
-test("the owner connects a CSV file and explores it with the file query editor", async ({
-  page,
-}) => {
+test("the owner connects a CSV file and explores it with the file query editor", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const source = unique("Regionen");
   const path = join(filesDir(), "regions.csv");
 
