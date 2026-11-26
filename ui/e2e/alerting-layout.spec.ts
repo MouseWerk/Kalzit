@@ -18,6 +18,7 @@ let pointName: string;
 let policyName: string;
 let ownPolicyName: string;
 let comment: string;
+let silenceEnds: number;
 /** What this file made, taken away again in afterAll: other files share the organization. */
 const made = {
   rules: [] as string[],
@@ -97,12 +98,13 @@ test.beforeAll(async ({ world }) => {
     ),
   );
   comment = unique("Wartung am Lagerrechner");
+  silenceEnds = lateEvening(Date.now());
   made.silences.push(
     await id(
       await owner.context.post(org("/alerting/silences"), {
         data: {
           matchers: [{ label: "team", op: "=", value: team }],
-          endsAt: Date.now() + 3_600_000,
+          endsAt: silenceEnds,
           comment,
         },
       }),
@@ -126,6 +128,17 @@ test.afterAll(async () => {
   }
   await owner.dispose();
 });
+
+/**
+ * 22:58 UTC on the first day at least two hours ahead: an end with a two-digit afternoon hour
+ * ("10:58 PM", "22:58"), the longest time a rule's state line can say.
+ */
+function lateEvening(now: number): number {
+  const at = new Date(now);
+  at.setUTCHours(22, 58, 0, 0);
+  if (at.getTime() < now + 2 * 3_600_000) at.setUTCDate(at.getUTCDate() + 1);
+  return at.getTime();
+}
 
 interface ListPage {
   name: string;
@@ -222,6 +235,30 @@ for (const variant of [
           await signInOwner(page, variant.language);
           await page.goto(list.path);
           await list.ready(page);
+          await expectListFits(page);
+        });
+      }
+
+      // What the rule's state line says depends on the clock: the time while the silence ends
+      // the same day, the day once it ends on another. Both at their longest, set by the
+      // browser's clock, so the list cannot fit by the luck of the hour the run starts at. The
+      // texts expected here rely on the browser's time zone being UTC (playwright.config.ts).
+      for (const moment of [
+        { name: "the same day", before: 58 * 60_000, says: /(22:58|10:58\sPM)$/ },
+        { name: "another day", before: 26 * 3_600_000, says: /\d{2}[./]\d{2}([./]\d{4}|\.)?$/ },
+      ]) {
+        test(`rules: the list fits when the silence ends ${moment.name}`, async ({ page }) => {
+          await signInOwner(page, variant.language);
+          await page.clock.setFixedTime(silenceEnds - moment.before);
+          await page.goto("/alerting");
+          const row = page
+            .getByRole("row")
+            .filter({ has: page.getByRole("link", { name: ruleName }) });
+          // Short on screen; the full moment, with its time, is what a screen reader reads.
+          const line = row.locator(".alert-state-cell .alert-sub").first();
+          await expect(line.locator("time")).toHaveText(moment.says);
+          await expect(line.locator("time")).toHaveAttribute("aria-hidden", "true");
+          await expect(line.locator(".visually-hidden")).toHaveText(/(22:58|10:58\sPM)$/);
           await expectListFits(page);
         });
       }

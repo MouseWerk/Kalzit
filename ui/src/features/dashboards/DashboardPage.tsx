@@ -78,6 +78,7 @@ import { PanelInspector } from "./PanelInspector";
 import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { useHeldResults } from "../../api/resultCache";
 import { withBase } from "../../lib/basePath";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
@@ -343,6 +344,9 @@ export function DashboardScreen({
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, VariableValues>());
+  // Per dashboard, the version saved from edit mode: the view of the next version goes on
+  // editing (as after a save in the toolbar), so the toolbar does not change under the pointer.
+  const editAfterSave = useRef(new Map<string, number>());
   // The address values the view has taken: each new address applies once, also over earlier
   // picks (a link back to a dashboard seen before, a link to the same dashboard), but not again
   // when a save starts a new view.
@@ -391,6 +395,7 @@ export function DashboardScreen({
       orgId={orgId}
       dashboard={dashboard.data}
       picked={picked.current}
+      editAfterSave={editAfterSave.current}
       addressValues={pending}
       onAddressValuesTaken={setApplied}
       display={display}
@@ -405,8 +410,20 @@ type DialogState =
    * `base`: the version the change was made on (the settings page), else the newest. `folderId`:
    * the folder the settings page moves the dashboard to; absent, it stays where it is.
    */
-  | { kind: "save"; base?: number | undefined; folderId?: string | null | undefined }
-  | { kind: "conflict"; current: Dashboard; message: string; folderId?: string | null | undefined }
+  | {
+      kind: "save";
+      base?: number | undefined;
+      folderId?: string | null | undefined;
+      /** After saving: stay in edit mode (the default), or finish editing. */
+      finish?: boolean | undefined;
+    }
+  | {
+      kind: "conflict";
+      current: Dashboard;
+      message: string;
+      folderId?: string | null | undefined;
+      finish?: boolean | undefined;
+    }
   | { kind: "discard" }
   | { kind: "delete" }
   | { kind: "row"; row: RowModel }
@@ -496,6 +513,7 @@ function DashboardView({
   orgId,
   dashboard,
   picked,
+  editAfterSave,
   addressValues,
   onAddressValuesTaken,
   display,
@@ -505,6 +523,8 @@ function DashboardView({
   orgId: string;
   dashboard: Dashboard;
   picked: Map<string, VariableValues>;
+  /** The version saved from edit mode, per dashboard: a newer one starts in edit mode. */
+  editAfterSave: Map<string, number>;
   /** Values from a new address (`var-name`), taken over the picks; absent once taken. */
   addressValues: VariableValues | undefined;
   onAddressValuesTaken: (values: VariableValues) => void;
@@ -555,6 +575,8 @@ function DashboardView({
   const locked = isLocked(managed);
   const mayEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
   const canEdit = mayEdit && !locked;
+  // Save as copy: a new dashboard needs the right to write dashboards, or this one to edit.
+  const canSaveAs = permissions.has("dashboards:write") || canEdit;
   // The line a Grafana import left for the first visits, until it is put away.
   const [imported] = useState(() => parseNotice(readPreference(noticeKey(dashboard.id))) !== null);
   const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
@@ -568,7 +590,17 @@ function DashboardView({
   // What this tab kept of unsaved work on this version (a reload): the draft and the editor's
   // panel. It comes back below, once it is clear that this person may edit.
   const [kept] = useState(() => readDraft(owner, dashboard.id, dashboard.version));
-  const [draft, setDraft] = useState<DashboardModel | null>(null);
+  const [draft, setDraft] = useState<DashboardModel | null>(() => {
+    const savedFrom = editAfterSave.get(dashboard.id);
+    return savedFrom !== undefined && dashboard.version > savedFrom ? dashboard.model : null;
+  });
+  // Taken once: a later version (saved elsewhere) opens as usual.
+  useEffect(() => {
+    const savedFrom = editAfterSave.get(dashboard.id);
+    if (savedFrom !== undefined && dashboard.version > savedFrom) {
+      editAfterSave.delete(dashboard.id);
+    }
+  }, [editAfterSave, dashboard.id, dashboard.version]);
   // The editor's panel from a reload, used once when the editor opens on it again.
   const [keptEditor, setKeptEditor] = useState(kept?.editor);
   // Edit mode is where query editors appear; start loading the editor before one opens.
@@ -658,6 +690,9 @@ function DashboardView({
   const [focusAfter, setFocusAfter] = useState<string | null>(null);
   const editing = display.editPanel;
   const isNewPanel = editing === NEW_PANEL;
+  // While the panel editor or the settings stand in the grid's place, its panels' answers stay:
+  // back on the dashboard only the edited panel asks again.
+  useHeldResults(editing !== undefined || onSettings, [PANEL_DATA_KEY, orgId, dashboard.id]);
   // The open editor's state, read when it is left, and the panel as it was when it opened.
   const snapshot = useRef<EditorSnapshot | null>(null);
   const opened = useRef<OpenedPanel | null>(null);
@@ -921,12 +956,19 @@ function DashboardView({
       version: number;
       message: string;
       folderId?: string | null | undefined;
+      finish?: boolean | undefined;
     }) => saveDashboard(orgId, dashboard.id, { model: next, version, message, folderId }),
-    onSuccess: async () => {
+    onSuccess: async (_saved, { finish }) => {
       setDialog(null);
-      setDraft(null);
       // Saved: what was picked so far is no longer a pending choice of new defaults.
       setChosen(new Set());
+      if (finish === true) {
+        setDraft(null);
+      } else {
+        // Edit mode goes on in the view of the new version, from the dashboard as stored, so
+        // nothing counts as unsaved and the toolbar keeps its buttons where they were.
+        editAfterSave.set(dashboard.id, dashboard.version);
+      }
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       // Saved from the settings page: back to the dashboard with the new settings.
       if (onSettings) {
@@ -938,7 +980,7 @@ function DashboardView({
         });
       }
     },
-    onError: async (error, { message, folderId }) => {
+    onError: async (error, { message, folderId, finish }) => {
       if (isApiError(error, "version_conflict")) {
         // The answer carries the stored dashboard as `current`; only when it is missing or
         // unreadable is it read again.
@@ -947,7 +989,7 @@ function DashboardView({
           (await fetchDashboard(orgId, dashboard.id).catch(() => null));
         if (current !== null) {
           save.reset();
-          setDialog({ kind: "conflict", current, message, folderId });
+          setDialog({ kind: "conflict", current, message, folderId, finish });
         }
       }
     },
@@ -1462,10 +1504,11 @@ function DashboardView({
     );
 
   // The panel shortcuts while editing the dashboard itself: E, Ctrl+D, Ctrl+C, Ctrl+V, Delete.
-  // They act on the panel whose card holds focus, else on the selected one.
+  // They act on the panel whose card holds focus, else on the selected one; with neither, E
+  // opens the panel under the pointer, one step from the dashboard to the editor.
   usePanelShortcuts(
     editActions !== undefined && editing === undefined && !onSettings && dialog === null,
-    (shortcut: PanelShortcut, focusedId: string | null) => {
+    (shortcut: PanelShortcut, focusedId: string | null, hoveredId: string | null) => {
       if (editActions === undefined) {
         return false;
       }
@@ -1477,7 +1520,9 @@ function DashboardView({
         return true;
       }
       const panels = modelRef.current.panels;
-      const id = [focusedId, selectedId].find(
+      const candidates =
+        shortcut === "edit" ? [focusedId, selectedId, hoveredId] : [focusedId, selectedId];
+      const id = candidates.find(
         (candidate) => candidate !== null && panels.some((p) => p.id === candidate),
       );
       if (id === undefined || id === null) {
@@ -1650,23 +1695,6 @@ function DashboardView({
       </>
     ) : (
       <PanelHostContext value={host}>
-        {/*
-          The editor shows no filter bar, but query variables still need their options read so a
-          panel using $region previews with a value when the editor is opened by its address.
-        */}
-        <div hidden>
-          <VariablesBar
-            orgId={orgId}
-            dashboardId={dashboard.id}
-            variables={model.variables}
-            values={values}
-            textRange={textRange}
-            range={resolved.range}
-            run={clock.manual}
-            stored={dashboard.model.variables}
-            onChange={pick}
-          />
-        </div>
         <PanelEditor
           key={edited.id}
           orgId={orgId}
@@ -1693,6 +1721,22 @@ function DashboardView({
               />
               <RefreshControl onRefresh={tick} busy={refreshing} compact />
             </>
+          }
+          // The dashboard's variables, its values shared: a choice here changes the dashboard's
+          // value and re-runs the preview. Query variables read their options here as well, so a
+          // panel using $region previews with a value when the editor is opened by its address.
+          variablesBar={
+            <VariablesBar
+              orgId={orgId}
+              dashboardId={dashboard.id}
+              variables={model.variables}
+              values={values}
+              textRange={textRange}
+              range={resolved.range}
+              run={clock.manual}
+              stored={dashboard.model.variables}
+              onChange={pick}
+            />
           }
           range={resolved.range}
           variables={editorValues(edited, rows, values)}
@@ -1905,6 +1949,8 @@ function DashboardView({
             kind: "save",
             base,
             folderId: folder === dashboard.folderId ? undefined : folder,
+            // Saved from the settings while viewing: the dashboard is viewed again after it.
+            finish: draft === null,
           });
         }}
         folderId={movingTo === undefined ? dashboard.folderId : movingTo}
@@ -1989,7 +2035,7 @@ function DashboardView({
                 remove: canDelete && !inTrash && !locked,
                 access: canAccess,
                 owner: canAccess && canEdit,
-                saveAs: permissions.has("dashboards:write") || canEdit,
+                saveAs: canSaveAs,
               }}
               lockedReason={locked && mayEdit ? t("dashboards.managedLocked") : undefined}
               controls={controls}
@@ -2319,6 +2365,11 @@ function DashboardView({
           onSave={async ({ title, folderId }) => {
             const created = await createDashboard(orgId, { folderId, model: { ...model, title } });
             setDialog(null);
+            // The changes went into the copy; this dashboard stays as it was saved.
+            if (draft !== null) {
+              setDraft(null);
+              writeDraft(owner, dashboard.id, null);
+            }
             await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
             await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId: created.id } });
           }}
@@ -2419,9 +2470,15 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
+          // The changes and the version both against the newest saved version; a settings page
+          // opened on an older one ends in the conflict dialog, which compares all three.
+          base={dashboard.model}
+          draft={draft}
+          version={dashboard.version}
           changed={dirty || dialog.folderId !== undefined}
           rangeChanged={rangeChanged}
           valuesChanged={valuesChanged}
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onSave={(message, keep) => {
             const next = withDefaults(draft, {
               range: keep.range ? textRange : undefined,
@@ -2436,6 +2493,7 @@ function DashboardView({
               version: dialog.base ?? dashboard.version,
               message,
               folderId: dialog.folderId,
+              finish: dialog.finish,
             });
           }}
           onClose={() => {
@@ -2457,8 +2515,10 @@ function DashboardView({
               version: dialog.current.version,
               message: dialog.message,
               folderId: dialog.folderId,
+              finish: dialog.finish,
             })
           }
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onTakeTheirs={() => {
             setDialog(null);
             setDraft(null);
@@ -2477,15 +2537,20 @@ function DashboardView({
       ) : null}
       {dialog?.kind === "discard" ? (
         <ConfirmDialog
-          title={t("dashboards.discard.title")}
+          title={t("dashboards.finish.title")}
           confirmLabel={t("dashboards.discard.confirm")}
           onCancel={() => setDialog(null)}
           onConfirm={() => {
             setDraft(null);
             setDialog(null);
           }}
+          // Finishing with changes: they can be saved on the way out too.
+          primary={{
+            label: t("dashboards.finish.save"),
+            onClick: () => setDialog({ kind: "save", folderId: movingTo, finish: true }),
+          }}
         >
-          {t("dashboards.discard.text")}
+          {t("dashboards.finish.text")}
         </ConfirmDialog>
       ) : null}
       {dialog?.kind === "delete" ? (

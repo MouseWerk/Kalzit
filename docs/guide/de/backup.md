@@ -25,7 +25,8 @@ beschrieben. Ziel ist ein Ordner, den ein Admin in `backups.allowed_dirs` erlaub
 Datenordner), oder ein Bucket eines S3-kompatiblen Speichers (Amazon S3, MinIO, Ceph, Garage;
 Kalzit legt den Bucket nie an). Gespeichert wird das Ziel erst nach einem bestandenen
 Verbindungstest. Am Ziel bleiben die neuesten `backups.keep_count` (14) Sicherungen. Jeder Lauf
-steht im Verlauf und im Audit-Log (docs/api/backups.md).
+steht im Verlauf und im Audit-Log (docs/api/backups.md). Eingerichtet wird das unter
+[Verwaltung > Sicherungen](app:/settings/backups).
 
 Mit PostgreSQL enthält eine geplante Sicherung nur die Dateien und einen Hinweis auf `pg_dump`
 ([unten](#postgresql)): Die Datenbank sicherst du mit den Werkzeugen von PostgreSQL.

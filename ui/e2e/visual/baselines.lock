@@ -1,0 +1,5 @@
+# The approved baselines of the visual comparison: their repository and the commit Kalzit
+# compares against (e2e/visual/baselines.ts, docs/process.md "Visual comparison"). A baseline
+# change is a pull request there and a new commit here.
+repo=https://github.com/MouseWerk/kalzit-visual.git
+commit=2999fa3585bb984c6fdd21ff7353eaac924a1879

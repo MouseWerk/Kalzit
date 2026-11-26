@@ -15,5 +15,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      The boot state: drawn from the first byte, in the stored theme (theme-boot.js) and the app's
+      colors (src/styles/base.css), until the first page has rendered (src/app/boot.ts takes it
+      away). Decorative only; the page that follows says what it is.
+    -->
+    <div id="boot" class="boot" aria-hidden="true">
+      <svg class="boot__mark" aria-hidden="true" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3.1 8.25 7.6 3.95l11.5-2 1.8 13.6-4 4.4L5.6 22.05ZM3.1 8.25 14.6 6.35l2.3 13.6M14.6 6.35l4.5-4.4" />
+      </svg>
+      <span class="boot__bar"></span>
+    </div>
   </body>
 </html>

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs the full CI of pull requests on GitHub's runners instead of this machine, for example
 # overnight next to a local run: the pull requests are merged onto the current main (one after
-# another, as run.sh does), that commit is pushed to a branch of its own, ci.yml is started there
-# by hand (workflow_dispatch: every job, Windows and Linux, arm64 packages and the MSI included),
-# and its result is posted to every head as the statuses local/linux and local/windows with the
-# tested tree, as run.sh posts them:
+# another as squash commits, as run.sh and GitHub do), that commit is pushed to a branch of its
+# own, ci.yml is started there by hand (workflow_dispatch: every job, Windows and Linux, arm64
+# packages and the MSI included), and its result is posted to every head as the statuses
+# local/linux and local/windows with the tested tree, as run.sh posts them:
 #
 #   passed tree <tree> on main <main> [batch 391,388] in N min, GitHub run <id>
 #
@@ -14,9 +14,17 @@
 #   gh-run.sh --on PR... -- PR... tests the second list on top of main with the first list merged
 #                                 first (as the merge queue tested ahead); the statuses go to the
 #                                 heads of the second list only, for the tree main + first + second
+#   gh-run.sh --gate ...          the fast gate instead of the full suite (ci.yml with
+#                                 suite=gate), posted as `passed gate tree ...` like run.sh's gate;
+#                                 enough for merge.sh, as a local gate is
 #
-# It waits for the run and deletes the branch afterwards. No checkout is touched: the merges are
-# made with git merge-tree in the repository's object store.
+# It waits for the run (at most 8 hours) and deletes the branch afterwards. No checkout is
+# touched: the merges are made with git merge-tree in the repository's object store.
+#
+# On GitHub the pushed commit's own ci.yml runs, so a batch that changes .github/ or
+# tools/local-ci would be judged by its own rules: it is refused (run it locally) unless
+# GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed. A run that is cancelled, times out
+# or does not finish posts `error` (no result; merge.sh runs the CI again), not `failure`.
 
 set -euo pipefail
 
@@ -27,6 +35,11 @@ main() {
 REPO_SLUG=MouseWerk/Kalzit
 CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 
+suite=full
+if [ "${1:-}" = --gate ]; then
+  suite=gate
+  shift
+fi
 ahead=()
 prs=()
 if [ "${1:-}" = --on ]; then
@@ -57,9 +70,10 @@ tree="$(git rev-parse "$cur^{tree}")"
 # The workflow that runs is the pushed commit's own ci.yml: a batch that changes it, or the
 # scripts it calls, would be judged by its own rules. Such a batch runs locally (run.sh uses
 # main's scripts), unless GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed.
-if [ "${GH_RUN_ALLOW_CI_CHANGES:-0}" != 1 ] && [ -n "$(git diff --name-only "$main" "$cur" -- .github tools/local-ci)" ]; then
+ci_changes="$(git diff --name-only "$main" "$cur" -- .github tools/local-ci)"
+if [ "${GH_RUN_ALLOW_CI_CHANGES:-0}" != 1 ] && [ -n "$ci_changes" ]; then
   echo "This batch changes .github/ or tools/local-ci, so ci.yml on GitHub would judge it by its own rules:" >&2
-  git diff --name-only "$main" "$cur" -- .github tools/local-ci | sed 's/^/  /' >&2
+  printf '%s\n' "$ci_changes" | sed 's/^/  /' >&2
   echo "Run it locally, or set GH_RUN_ALLOW_CI_CHANGES=1 after reviewing those changes." >&2
   exit 2
 fi
@@ -67,6 +81,7 @@ fi
 targets=("${heads[@]:${#ahead[@]}}")
 
 base="tree ${tree:0:12} on main ${main:0:9}"
+[ "$suite" = gate ] && base="gate $base"
 if [ ${#all[@]} -gt 1 ]; then base="$base batch $(IFS=,; echo "${all[*]}")"; fi
 
 label="$(IFS=+; echo "${all[*]}")"
@@ -87,11 +102,12 @@ status() {
 
 git push --quiet origin "$cur:refs/heads/$branch"
 trap 'git push --quiet origin --delete "$branch" 2> /dev/null || true' EXIT
-gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" > /dev/null
+gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" -f suite="$suite" > /dev/null
 run=""
 for _ in $(seq 1 30); do
   sleep 5
-  # The run of exactly the pushed commit, not an older one on a branch of the same name.
+  # The run of exactly the pushed commit, not an older one on a branch of the same name; a failed
+  # call is tried again.
   run="$(gh run list --repo "$REPO_SLUG" --workflow ci.yml --branch "$branch" --event workflow_dispatch \
     --json databaseId,headSha --jq "[.[] | select(.headSha == \"$cur\")][0].databaseId // empty" || true)"
   [ -n "$run" ] && break
@@ -102,7 +118,8 @@ echo "GitHub run $run for ${all[*]} (tree ${tree:0:12} on main ${main:0:9}): $ur
 status pending "running $base, GitHub run $run"
 
 start=$SECONDS
-# At most eight hours; a run that has not finished by then counts as no result.
+# At most eight hours; a run that has not finished by then counts as no result. A failed status
+# call counts as not finished yet.
 state=unknown
 conclusion=none
 while [ $((SECONDS - start)) -lt 28800 ]; do

@@ -272,6 +272,7 @@ impl DataSourcePlugin for MsSql {
         }
         let mut frame =
             frame.unwrap_or_else(|| FrameBuilder::new(Vec::new(), req.limits.max_rows, req.limits.budget.clone()));
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql.clone());
         if binary {
             frame.notice(
