@@ -26,9 +26,9 @@ function source(): Promise<string> {
   return owner.createSqliteSource(unique("Lager"), join(fixturesDir(), "sales.db"));
 }
 
-test("a dashboard from files is marked, read-only, and unlocked in an emergency", async ({
-  page,
-}) => {
+test("a dashboard from files is marked, read-only, and unlocked in an emergency", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const sourceId = await source();
   const set = unique("lager").replace(/[^A-Za-z0-9._-]/g, "-");
   const uid = `${set}-board`;
@@ -142,7 +142,8 @@ test("a Grafana dashboard is imported in steps, with its report kept", async ({ 
 
   await signInOwner(page);
   await page.goto("/dashboards");
-  await page.getByRole("link", { name: t("dashboardTools.import.grafana") }).click();
+  await page.getByRole("button", { name: t("dashboards.import.menu") }).click();
+  await page.getByRole("menuitem", { name: t("dashboardTools.import.grafana") }).click();
   await expect(page.getByRole("heading", { name: t("provisioning.import.title") })).toBeVisible();
 
   // Step 1: the file, pasted; what was found, and the name the dashboard gets.

@@ -10,10 +10,9 @@ import { expect, signInOwner, test } from "./support/test";
 const STATE = (region: string) =>
   `SELECT ts AS time, CASE WHEN amount >= 150 THEN 'ok' ELSE 'degraded' END AS state FROM sales WHERE region = '${region}' AND $__timeFilter(ts) ORDER BY ts`;
 
-test("the editor opened by link previews with the dashboard's variables", async ({
-  page,
-  world,
-}) => {
+test("the editor opened by link previews with the dashboard's variables", {
+  tag: "@smoke",
+}, async ({ page, world }) => {
   const owner = await Api.owner();
   let dashboardId = "";
   try {

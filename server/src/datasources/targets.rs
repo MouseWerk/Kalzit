@@ -642,7 +642,8 @@ pub(crate) mod test_hosts {
 
     static HOSTS: Mutex<BTreeMap<String, Vec<IpAddr>>> = Mutex::new(BTreeMap::new());
 
-    /// Makes `name` (lower case, no trailing dot) resolve to `ips`.
+    /// Makes `name` (lower case, no trailing dot) resolve to `ips`; with none it does not
+    /// resolve, like an unknown name, without asking the system's resolver.
     pub fn pin(name: &str, ips: &[IpAddr]) {
         HOSTS.lock().unwrap().insert(name.to_string(), ips.to_vec());
     }

@@ -69,6 +69,23 @@ export interface SpreadInput {
    * "spread".
    */
   move?: "spread" | "stretch" | "keep";
+  /**
+   * Pinned nodes (by index) and the places they are held at, in graph units: they stand exactly
+   * there whatever the layout says, and the others make room around them.
+   */
+  fixed?: ReadonlyMap<number, readonly [number, number]>;
+  /**
+   * Corners of the panel that tools lie over (the canvas tools top left, the minimap bottom
+   * right), in px: at the fitted zoom no node or label is placed under them.
+   */
+  keepOut?: readonly KeepOut[];
+}
+
+/** A corner of the panel to keep free, with its size in px. */
+export interface KeepOut {
+  corner: "topLeft" | "bottomRight";
+  width: number;
+  height: number;
 }
 
 export interface BBox {
@@ -256,7 +273,10 @@ export function drawingArea(width: number, height: number): { width: number; hei
  * units at the same scale. Since it stays within the area, the renderer frames it at that scale
  * or larger, so nothing comes closer again. Positions stay as they are when nothing overlaps,
  * when the input says they may not move, when the boxes cannot fit the area, and for graphs above
- * SPREAD_LIMIT nodes (whose box is still fitted).
+ * SPREAD_LIMIT nodes (whose box is still fitted). Pinned nodes (`fixed`) stand where they are held:
+ * they take no part in the stretching, are never pushed, and may lie outside the drawing area;
+ * the scale the others are parted at is the layout's own, so a node pinned far away does not
+ * move the rest.
  */
 export function spreadNodes(given: SpreadInput): Spread {
   const { labelHeight, width, height } = given;
@@ -276,7 +296,18 @@ export function spreadNodes(given: SpreadInput): Spread {
   if (move !== "keep" && count >= 2 && count <= SPREAD_LIMIT && sized) {
     stretch(positions, width, height);
   }
-  const { bbox, scale } = frameOf(positions, reach, width, height);
+  // The layout's own frame gives the scale; the frame that is drawn reaches around the pinned.
+  const layoutFrame = frameOf(positions, reach, width, height);
+  const scale = layoutFrame.scale;
+  const fixed = new Uint8Array(count);
+  for (const [i, at] of given.fixed ?? []) {
+    if (i < 0 || i >= count || !(Number.isFinite(at[0]) && Number.isFinite(at[1]))) continue;
+    fixed[i] = 1;
+    positions[2 * i] = at[0];
+    positions[2 * i + 1] = at[1];
+  }
+  const pinned = fixed.includes(1);
+  const bbox = pinned ? frameOf(positions, reach, width, height).bbox : layoutFrame.bbox;
   const kept = { positions, bbox, labelled, nodeScale, passes: 0 };
   if (move !== "spread" || count < 2 || count > SPREAD_LIMIT || !sized) return kept;
   const area = drawingArea(width, height);
@@ -285,8 +316,8 @@ export function spreadNodes(given: SpreadInput): Spread {
   for (const r of reach) packed += (r.left + r.right + GAP) * (2 * r.up + GAP);
   if (packed > MAX_PACKING * area.width * area.height) return kept;
 
-  const cx = ((bbox.x[0] + bbox.x[1]) / 2) * scale;
-  const cy = ((bbox.y[0] + bbox.y[1]) / 2) * scale;
+  const cx = ((layoutFrame.bbox.x[0] + layoutFrame.bbox.x[1]) / 2) * scale;
+  const cy = ((layoutFrame.bbox.y[0] + layoutFrame.bbox.y[1]) / 2) * scale;
   const half = GAP / 2;
   // Flat arrays, filled once: the boxes' reach, the bounds of each centre (so that its box stays
   // in the drawing area; a box larger than the area keeps its centre in the middle) and the
@@ -310,11 +341,18 @@ export function spreadNodes(given: SpreadInput): Spread {
     highY[i] = Math.max(lowY[i] as number, cy + area.height / 2 - r.up);
     const px = (positions[2 * i] as number) * scale;
     const py = (positions[2 * i + 1] as number) * scale;
+    if (fixed[i] === 1) {
+      x[i] = px;
+      y[i] = py;
+      return;
+    }
     x[i] = Number.isFinite(px) ? Math.min(highX[i] as number, Math.max(lowX[i] as number, px)) : cx;
     y[i] = Number.isFinite(py) ? Math.min(highY[i] as number, Math.max(lowY[i] as number, py)) : cy;
   });
   /** Moves node `i` along an axis as far as the area lets it; returns how far it went. */
   const shift = (i: number, alongX: boolean, by: number) => {
+    // A pinned node stays; the node it overlaps takes the whole way.
+    if (fixed[i] === 1) return 0;
     const pos = alongX ? x : y;
     const was = pos[i] as number;
     const low = (alongX ? lowX : lowY)[i] as number;
@@ -329,6 +367,45 @@ export function spreadNodes(given: SpreadInput): Spread {
   const overlapY = (i: number, j: number) =>
     Math.min((y[i] as number) + (up[i] as number), (y[j] as number) + (up[j] as number)) -
     Math.max((y[i] as number) - (up[i] as number), (y[j] as number) - (up[j] as number));
+  // The corners to keep free, in the same px frame (y grows upwards, as in the drawing): a box
+  // that reaches into one is moved out along the shorter way.
+  const corners = (given.keepOut ?? [])
+    .filter((c) => c.width > 0 && c.height > 0)
+    .map((c) => {
+      const w = Math.min(c.width, area.width / 2);
+      const h = Math.min(c.height, area.height / 2);
+      return c.corner === "topLeft"
+        ? { topLeft: true, x: cx - area.width / 2 + w, y: cy + area.height / 2 - h }
+        : { topLeft: false, x: cx + area.width / 2 - w, y: cy - area.height / 2 + h };
+    });
+  /** Moves the boxes out of the corners; returns how many were inside. */
+  const clearCorners = (): number => {
+    let inside = 0;
+    for (const corner of corners) {
+      for (let i = 0; i < count; i++) {
+        if (fixed[i] === 1) continue;
+        const xi = x[i] as number;
+        const yi = y[i] as number;
+        // How far the box reaches into the corner along each axis (0 or less: outside).
+        const intoX = corner.topLeft
+          ? corner.x - (xi - (left[i] as number))
+          : xi + (right[i] as number) - corner.x;
+        const intoY = corner.topLeft
+          ? yi + (up[i] as number) - corner.y
+          : corner.y - (yi - (up[i] as number));
+        if (intoX <= 0 || intoY <= 0) continue;
+        inside++;
+        const alongX = intoX <= intoY;
+        const sign = corner.topLeft === alongX ? 1 : -1;
+        const went = shift(i, alongX, sign * (alongX ? intoX : intoY));
+        // Held by the panel's edge: the other way.
+        if (went < (alongX ? intoX : intoY) - 1e-6) {
+          shift(i, !alongX, -sign * (alongX ? intoY : intoX));
+        }
+      }
+    }
+    return inside;
+  };
   // Pairs are found by sweeping along x: the nodes sorted by their box's left edge, each tested
   // against the ones whose box starts before it ends. The order changes little from pass to pass.
   const order = Array.from({ length: count }, (_, i) => i);
@@ -381,6 +458,7 @@ export function spreadNodes(given: SpreadInput): Spread {
         if (overlapX(i, j) > 1e-6 && overlapY(i, j) > 1e-6) push(!way);
       }
     }
+    overlaps += clearCorners();
     if (overlaps === 0) break;
     moved = true;
     // Passes that part no more pairs than the best one before end the pushing.
@@ -394,6 +472,8 @@ export function spreadNodes(given: SpreadInput): Spread {
   }
   if (!moved) return { ...kept, passes };
   for (let i = 0; i < count; i++) {
+    // A pinned node keeps the very numbers it is held at, not ones gone through the scale.
+    if (fixed[i] === 1) continue;
     positions[2 * i] = (x[i] as number) / scale;
     positions[2 * i + 1] = (y[i] as number) / scale;
   }
