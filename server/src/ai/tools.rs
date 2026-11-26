@@ -976,6 +976,16 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             }
             StepKind::Pivot { row, column, value, .. } => read.extend([row.as_str(), column.as_str(), value.as_str()]),
             StepKind::Sort { by, .. } => read.extend(by.iter().map(|k| k.field.as_str())),
+            // A new name carries the values on; filters and orders tell about the values.
+            StepKind::Organize { rename, .. } => read.extend(rename.keys().map(String::as_str)),
+            StepKind::FilterRows { conditions, .. } => read.extend(conditions.iter().map(|c| c.field.as_str())),
+            StepKind::ReduceSeries { fields, .. } => read.extend(fields.iter().map(String::as_str)),
+            // These keep each field under its name, where the rules still find it.
+            StepKind::FilterFields { .. }
+            | StepKind::Limit { .. }
+            | StepKind::Convert { .. }
+            | StepKind::Stack { .. }
+            | StepKind::SeriesToRows { .. } => {}
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
@@ -998,8 +1008,10 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
     None
 }
 
-/// The excluded field a join of the panel's enabled steps takes in with one of its frames: the
-/// field names of the queries' frames, before any step ran.
+/// The excluded field a step of the panel's enabled steps takes in with all fields of one of its
+/// frames, under other names or as values: a join (it names fields `<refId>.<field>`), series to
+/// rows (field names become values) and a reduce over every series. Checked on the field names
+/// of the queries' frames, before any step ran.
 fn joined_excluded(
     policy: &redact::DataPolicy,
     steps: &[crate::analysis::Step],
@@ -1007,17 +1019,42 @@ fn joined_excluded(
 ) -> Option<String> {
     use crate::analysis::StepKind;
     use crate::analysis::steps::Input;
+    // The queries whose fields each result holds by now: a stack or series to rows puts all of
+    // its queries into the first, a join puts the right one into the left.
+    let mut holds: BTreeMap<&str, BTreeSet<&str>> =
+        inputs.iter().map(|(name, _)| (name.as_str(), BTreeSet::from([name.as_str()]))).collect();
+    let merge = |holds: &mut BTreeMap<&str, BTreeSet<&str>>, into: &str, from: &[&str]| {
+        let taken: BTreeSet<&str> = from.iter().flat_map(|f| holds.get(f).cloned().unwrap_or_default()).collect();
+        if let Some(target) = holds.get_mut(into) {
+            target.extend(taken);
+        }
+    };
+    let excluded_in = |queries: &BTreeSet<&str>| {
+        inputs.iter().filter(|(name, _)| queries.contains(name.as_str())).find_map(|(_, input)| match input {
+            Input::Frame(frame) => frame.fields().iter().find(|f| policy.excludes(&f.name)).map(|f| f.name.clone()),
+            _ => None,
+        })
+    };
     for step in steps {
-        let StepKind::Join { left, right, .. } = &step.kind else { continue };
-        for (name, input) in inputs {
-            if name != left && name != right {
-                continue;
+        let read: Vec<&str> = match &step.kind {
+            StepKind::Join { left, right, .. } => vec![left, right],
+            StepKind::SeriesToRows { frames } => frames.iter().map(String::as_str).collect(),
+            StepKind::ReduceSeries { frame, fields, .. } if fields.is_empty() => vec![frame],
+            _ => Vec::new(),
+        };
+        let queries: BTreeSet<&str> = read.iter().flat_map(|r| holds.get(r).cloned().unwrap_or_default()).collect();
+        if let Some(field) = excluded_in(&queries) {
+            return Some(field);
+        }
+        match &step.kind {
+            StepKind::Join { left, right, .. } => merge(&mut holds, left, &[right.as_str()]),
+            StepKind::Stack { frames } | StepKind::SeriesToRows { frames } => {
+                let names: Vec<&str> = frames.iter().map(String::as_str).collect();
+                if let Some((first, rest)) = names.split_first() {
+                    merge(&mut holds, first, rest);
+                }
             }
-            if let Input::Frame(frame) = input
-                && let Some(f) = frame.fields().iter().find(|f| policy.excludes(&f.name))
-            {
-                return Some(f.name.clone());
-            }
+            _ => {}
         }
     }
     None
@@ -1459,12 +1496,74 @@ mod tests {
                      "aggregations": [{ "field": "email", "op": "first", "name": "k" }] }]),
             json!([{ "id": "1", "type": "pivot", "frame": "A", "row": "name", "column": "email", "value": "umsatz",
                      "op": "sum" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "rename": { "email": "kontakt" } }]),
+            json!([{ "id": "1", "type": "filterRows", "frame": "A", "mode": "keep", "match": "all",
+                     "conditions": [{ "field": "email", "op": "contains", "value": "@" }] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["first"],
+                     "fields": ["email"] }]),
         ] {
             let field = step_reads_excluded(&policy, &steps(raw.clone()));
             assert!(field.as_deref().is_some_and(|f| f.ends_with("email")), "{raw}: {field:?}");
         }
-        let fine = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]);
-        assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        for fine in [
+            json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "hide": ["email"], "rename": { "umsatz": "u" } }]),
+            json!([{ "id": "1", "type": "limit", "frame": "A", "count": 5 }]),
+        ] {
+            assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        }
+        // Steps that take every field of a frame along are checked on the frame's fields.
+        let inputs = vec![(
+            "A".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "email".into(),
+                    field_type: crate::shapes::FieldType::String,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        )];
+        for raw in [
+            json!([{ "id": "1", "type": "seriesToRows", "frames": ["A"] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["sum"] }]),
+        ] {
+            assert_eq!(joined_excluded(&policy, &steps(raw.clone()), &inputs).as_deref(), Some("email"), "{raw}");
+        }
+        let stacked = json!([{ "id": "1", "type": "limit", "frame": "A", "count": 1 }]);
+        assert_eq!(joined_excluded(&policy, &steps(stacked), &inputs), None);
+        // A stack carries A's fields into B: what reads B afterwards takes them in too.
+        let refs2: BTreeSet<&str> = ["A", "B"].into();
+        let steps2 = |raw: Value| crate::analysis::check_steps(raw.as_array().unwrap(), &refs2, "t").unwrap();
+        let mut both = inputs.clone();
+        both.push((
+            "B".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "umsatz".into(),
+                    field_type: crate::shapes::FieldType::Number,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        ));
+        let stack = json!({ "id": "s", "type": "stack", "frames": ["B", "A"] });
+        for then in [
+            json!({ "id": "2", "type": "seriesToRows", "frames": ["B"] }),
+            json!({ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }),
+            json!({ "id": "2", "type": "join", "left": "B", "right": "A", "on": { "by": "time" }, "mode": "inner" }),
+        ] {
+            let raw = json!([stack.clone(), then.clone()]);
+            assert_eq!(joined_excluded(&policy, &steps2(raw), &both).as_deref(), Some("email"), "{then}");
+        }
+        // Without the stack, B alone holds no excluded field.
+        let alone =
+            json!([{ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }]);
+        assert_eq!(joined_excluded(&policy, &steps2(alone), &both), None);
     }
 
     #[test]

@@ -2415,7 +2415,7 @@ pub async fn check_on_save(
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let report = run_health(state, user_id, ds).await?;
-    store_last_test(&state.db, &ds.id, &report, state.clock.now_ms()).await;
+    store_last_test(&state.db, &ds.id, ds.updated_at, &report, state.clock.now_ms()).await;
     Ok(report)
 }
 
@@ -2452,13 +2452,16 @@ impl LastTest {
     }
 }
 
-/// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
-/// source may have been deleted meanwhile), so it is logged, not answered.
-async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
+/// Keeps a test's outcome for the data source page, only while the source is still the version
+/// the test ran on (`tested_version`, its `updated_at`): a change saved during a running test is
+/// not marked as tested. A failure to write only loses the note (the source may have been deleted
+/// meanwhile), so it is logged, not answered.
+async fn store_last_test(db: &AnyPool, datasource_id: &str, tested_version: i64, report: &HealthReport, at: i64) {
     let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
     let stored = sqlx::query(
         "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at, latency_ms, failing_since) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+         SELECT $1, $2, $3, $4, $5, $6 \
+         WHERE EXISTS (SELECT 1 FROM datasources WHERE id = $1 AND updated_at = $7) \
          ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
          tested_at = excluded.tested_at, latency_ms = excluded.latency_ms, \
          failing_since = CASE WHEN excluded.ok = 0 \
@@ -2471,6 +2474,7 @@ async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthRepor
     .bind(i64::try_from(report.latency_ms).unwrap_or(i64::MAX))
     // A first failure starts the run; a failure after failures keeps its start (the CASE above).
     .bind((!report.ok).then_some(at))
+    .bind(tested_version)
     .execute(db)
     .await;
     if let Err(e) = stored {

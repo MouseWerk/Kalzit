@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::expr::{self, DAY_MS, number_text};
 use super::stats;
 use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, SortKey, Stat, Step, StepKind, TrendOutput};
+use super::{calculations, table};
 use crate::datasources::detail::Detail;
 use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet, QueryResult, TraceSet};
 
@@ -100,7 +101,7 @@ impl Control {
         if row.is_multiple_of(CHECK_EVERY) { self.check() } else { Ok(()) }
     }
 
-    fn spend_text(&self, units: usize) -> Result<(), Detail> {
+    pub(super) fn spend_text(&self, units: usize) -> Result<(), Detail> {
         let left = self.text_left.get();
         if units > left {
             return Err(detail(
@@ -129,7 +130,7 @@ impl Control {
 }
 
 /// The text (UTF-16 units) of one cell, for the budget.
-fn text_units(v: &Value) -> usize {
+pub(super) fn text_units(v: &Value) -> usize {
     match v {
         Value::String(s) => expr::utf16_len(s),
         _ => 0,
@@ -351,11 +352,11 @@ pub fn run_graph_steps(
     })
 }
 
-fn detail(reason: &'static str, message: String) -> Detail {
+pub(super) fn detail(reason: &'static str, message: String) -> Detail {
     Detail::new(reason, message)
 }
 
-fn type_name(t: FieldType) -> &'static str {
+pub(super) fn type_name(t: FieldType) -> &'static str {
     match t {
         FieldType::Time => "time",
         FieldType::Number => "number",
@@ -368,19 +369,19 @@ fn type_name(t: FieldType) -> &'static str {
     }
 }
 
-fn wrong_type(field: &Field) -> Detail {
+pub(super) fn wrong_type(field: &Field) -> Detail {
     detail("steps.field_type", format!("field {} ({}) cannot be used here", field.name, type_name(field.field_type)))
         .with("field", &field.name)
         .with("type", type_name(field.field_type))
 }
 
-fn position(frames: &[NamedFrame], name: &str) -> Result<usize, Detail> {
+pub(super) fn position(frames: &[NamedFrame], name: &str) -> Result<usize, Detail> {
     frames.iter().position(|f| f.name == name).ok_or_else(|| {
         detail("steps.frame_missing", format!("there is no table {name} to work on")).with("frame", name)
     })
 }
 
-fn field_index(frame: &Frame, name: &str) -> Result<usize, Detail> {
+pub(super) fn field_index(frame: &Frame, name: &str) -> Result<usize, Detail> {
     let mut found = frame.fields().iter().enumerate().filter(|(_, f)| f.name == name).map(|(i, _)| i);
     match (found.next(), found.next()) {
         (Some(i), None) => Ok(i),
@@ -390,7 +391,7 @@ fn field_index(frame: &Frame, name: &str) -> Result<usize, Detail> {
 }
 
 /// Times and days: both are Unix ms on a time line.
-fn is_time(t: FieldType) -> bool {
+pub(super) fn is_time(t: FieldType) -> bool {
     matches!(t, FieldType::Time | FieldType::Date)
 }
 
@@ -423,7 +424,7 @@ fn numeric_field<'a>(frame: &'a Frame, name: &str) -> Result<&'a Field, Detail> 
     }
 }
 
-fn first_time_field(nf: &NamedFrame) -> Result<usize, Detail> {
+pub(super) fn first_time_field(nf: &NamedFrame) -> Result<usize, Detail> {
     nf.frame.fields().iter().position(|f| is_time(f.field_type)).ok_or_else(|| {
         detail("steps.no_time_field", format!("table {} has no time field", nf.name)).with("frame", &nf.name)
     })
@@ -440,7 +441,7 @@ fn time_field(nf: &NamedFrame, name: Option<&str>) -> Result<usize, Detail> {
     }
 }
 
-fn check_free(frame: &Frame, name: &str) -> Result<(), Detail> {
+pub(super) fn check_free(frame: &Frame, name: &str) -> Result<(), Detail> {
     if frame.fields().iter().any(|f| f.name == name) {
         return Err(detail("steps.name_taken", format!("a field is already named {name}")).with("name", name));
     }
@@ -474,19 +475,19 @@ pub fn int_of(value: &Value) -> Option<i128> {
     }
 }
 
-fn numbers(field: &Field) -> Vec<Option<f64>> {
+pub(super) fn numbers(field: &Field) -> Vec<Option<f64>> {
     field.values.iter().map(number_at).collect()
 }
 
-fn num_value(x: Option<f64>) -> Value {
+pub(super) fn num_value(x: Option<f64>) -> Value {
     expr::to_json(x.map_or(expr::V::Null, expr::V::Num))
 }
 
-fn new_field(name: &str, field_type: FieldType, values: Vec<Value>) -> Field {
+pub(super) fn new_field(name: &str, field_type: FieldType, values: Vec<Value>) -> Field {
     Field { name: name.to_string(), field_type, unit: None, values, labels: None }
 }
 
-fn frame_of(fields: Vec<Field>, meta: Option<&FrameMeta>) -> Result<Frame, Detail> {
+pub(super) fn frame_of(fields: Vec<Field>, meta: Option<&FrameMeta>) -> Result<Frame, Detail> {
     // Every step builds its fields from the same list of rows.
     let frame = Frame::new(fields).expect("step results have fields of equal length");
     Ok(match meta {
@@ -503,7 +504,7 @@ fn with_field(frame: &Frame, field: Field) -> Result<Frame, Detail> {
 
 /// A cell as the text that groups and joins compare: numbers as JavaScript writes them, int64
 /// digits, times in ms; `None` for empty. JSON cells have no key.
-fn key_of(value: &Value, t: FieldType) -> Option<String> {
+pub(super) fn key_of(value: &Value, t: FieldType) -> Option<String> {
     match (t, value) {
         (_, Value::Null) => None,
         (FieldType::Int64, Value::String(s)) => Some(int_of(value).map_or_else(|| s.clone(), |n| n.to_string())),
@@ -515,13 +516,16 @@ fn key_of(value: &Value, t: FieldType) -> Option<String> {
     }
 }
 
-fn keyable(field: &Field) -> Result<(), Detail> {
+pub(super) fn keyable(field: &Field) -> Result<(), Detail> {
     if field.field_type == FieldType::Json { Err(wrong_type(field)) } else { Ok(()) }
 }
 
 fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Result<(), Detail> {
-    if let StepKind::Join { left, right, on, mode } = kind {
-        return join(frames, left, right, on, *mode, control);
+    match kind {
+        StepKind::Join { left, right, on, mode } => return join(frames, left, right, on, *mode, control),
+        StepKind::Stack { frames: names } => return table::stack(frames, names, control),
+        StepKind::SeriesToRows { frames: names } => return table::series_to_rows(frames, names, control),
+        _ => {}
     }
     let index = position(frames, kind.frames()[0])?;
     let nf = &frames[index];
@@ -570,7 +574,21 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations, control)?,
         StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op, control)?,
         StepKind::Sort { by, .. } => sort(frame, by, control)?,
+        StepKind::Organize { order, hide, rename, .. } => table::organize(frame, order, hide, rename)?,
+        StepKind::FilterFields { mode, names, pattern, .. } => {
+            table::filter_fields(frame, *mode, names, pattern.as_deref())?
+        }
+        StepKind::FilterRows { mode, match_, conditions, .. } => {
+            table::filter_rows(frame, *mode, *match_, conditions, control)?
+        }
+        StepKind::Limit { count, from, .. } => table::limit(frame, *count, *from)?,
+        StepKind::Convert { conversions, .. } => table::convert(frame, conversions, control)?,
+        StepKind::ReduceSeries { mode, calculations, fields, .. } => {
+            table::reduce_series(frame, *mode, calculations, fields, control)?
+        }
         StepKind::Join { .. }
+        | StepKind::Stack { .. }
+        | StepKind::SeriesToRows { .. }
         | StepKind::ToFrame { .. }
         | StepKind::CountLabels { .. }
         | StepKind::CountEdgeTypes { .. }
@@ -743,7 +761,10 @@ fn compare(
 }
 
 /// Rows grouped by a key, in the order each key first appears.
-fn groups(keys: impl Iterator<Item = Vec<Option<String>>>, control: &Control) -> Result<Vec<Vec<usize>>, Detail> {
+pub(super) fn groups(
+    keys: impl Iterator<Item = Vec<Option<String>>>,
+    control: &Control,
+) -> Result<Vec<Vec<usize>>, Detail> {
     let mut index: HashMap<Vec<Option<String>>, usize> = HashMap::new();
     let mut out: Vec<Vec<usize>> = Vec::new();
     for (row, key) in keys.enumerate() {
@@ -759,59 +780,8 @@ fn groups(keys: impl Iterator<Item = Vec<Option<String>>>, control: &Control) ->
 }
 
 /// Checks that `op` can aggregate `field` and gives the result's type.
-fn agg_type(field: &Field, op: Agg) -> Result<FieldType, Detail> {
-    use FieldType::*;
-    match (op, field.field_type) {
-        (Agg::Count, _) => Ok(Number),
-        (Agg::First | Agg::Last, t) => Ok(t),
-        (Agg::Min | Agg::Max, t @ (Number | Int64 | Decimal | Time | Date | String)) => Ok(t),
-        (Agg::Sum | Agg::Mean | Agg::Median | Agg::Stddev, Number | Int64 | Decimal) => Ok(Number),
-        _ => Err(wrong_type(field)),
-    }
-}
-
-/// Aggregates the cells of `rows`; empty cells are left out.
-fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
-    let cells = || rows.iter().map(|&r| &field.values[r]).filter(|v| !v.is_null());
-    let nums = || -> Vec<f64> { rows.iter().filter_map(|&r| number_at(&field.values[r])).collect() };
-    match op {
-        Agg::Count => Value::from(cells().count()),
-        Agg::First => cells().next().cloned().unwrap_or(Value::Null),
-        Agg::Last => cells().next_back().cloned().unwrap_or(Value::Null),
-        Agg::Sum => {
-            let v = nums();
-            num_value((!v.is_empty()).then(|| stats::sum(&v)))
-        }
-        Agg::Mean => num_value(stats::mean(&nums())),
-        Agg::Median => num_value(stats::percentile(&stats::sorted(&nums()), 50.0)),
-        Agg::Stddev => num_value(stats::stddev(&nums())),
-        Agg::Min | Agg::Max => {
-            let less = |a: &Value, b: &Value| -> bool {
-                match field.field_type {
-                    FieldType::Int64 => match (int_of(a), int_of(b)) {
-                        (Some(x), Some(y)) => x < y,
-                        _ => number_at(a) < number_at(b),
-                    },
-                    FieldType::String => {
-                        a.as_str().unwrap_or_default().chars().lt(b.as_str().unwrap_or_default().chars())
-                    }
-                    _ => number_at(a) < number_at(b),
-                }
-            };
-            let mut best: Option<&Value> = None;
-            for v in cells() {
-                if field.field_type != FieldType::String && number_at(v).is_none() {
-                    continue;
-                }
-                best = Some(match best {
-                    None => v,
-                    Some(b) if (op == Agg::Min && less(v, b)) || (op == Agg::Max && less(b, v)) => v,
-                    Some(b) => b,
-                });
-            }
-            best.cloned().unwrap_or(Value::Null)
-        }
-    }
+pub(super) fn agg_type(field: &Field, op: Agg) -> Result<FieldType, Detail> {
+    calculations::result_type(op, field.field_type).ok_or_else(|| wrong_type(field))
 }
 
 fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation], control: &Control) -> Result<Frame, Detail> {
@@ -848,7 +818,7 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation], control: &C
         })
         .collect();
     for (f, op, t, name) in plan {
-        let mut field = new_field(&name, t, rows.iter().map(|g| aggregate(f, op, g)).collect());
+        let mut field = new_field(&name, t, rows.iter().map(|g| calculations::aggregate(f, op, g)).collect());
         if !matches!(op, Agg::Count) {
             field.unit = f.unit.clone();
         }
@@ -969,7 +939,7 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: 
             return Err(detail("steps.name_taken", format!("a field is already named {name}")).with("name", &name));
         }
         let values = (0..row_groups.len())
-            .map(|g| aggregate(vf, op, cells.get(&(g, c)).map_or(&[][..], Vec::as_slice)))
+            .map(|g| calculations::aggregate(vf, op, cells.get(&(g, c)).map_or(&[][..], Vec::as_slice)))
             .collect();
         let mut field = new_field(&name, t, values);
         if !matches!(op, Agg::Count) {

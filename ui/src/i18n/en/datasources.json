@@ -1502,5 +1502,17 @@
   "datasources.reason.frame.fill_no_time": "Empty time buckets were not filled: the result has no time column.",
   "datasources.reason.frame.fill_order": "Empty time buckets were not filled: {column} needs one rising time per row. Sort with ORDER BY and group to one row per bucket.",
   "datasources.reason.frame.fill_row_limit": "Empty time buckets were not filled: that would take more than {rows} rows. Choose a larger interval or a shorter time range.",
-  "datasources.reason.source.protocol_error": "The data source could not read a value of this query. Most often a variable holds a value that does not fit the type the query expects at its place, such as text where a number or an interval belongs. Check the variables and casts in the query."
+  "datasources.reason.source.protocol_error": "The data source could not read a value of this query. Most often a variable holds a value that does not fit the type the query expects at its place, such as text where a number or an interval belongs. Check the variables and casts in the query.",
+  "datasources.default.field": "Default data source",
+  "datasources.default.hint": "Explore and new panels start with it when no source is chosen. The organization has one default.",
+  "datasources.default.badge": "Default",
+  "datasources.default.set": "“{name}” is now the default data source.",
+  "datasources.default.unset": "“{name}” is no longer the default data source.",
+  "datasources.menu.setDefault": "Make default",
+  "datasources.menu.unsetDefault": "Remove as default",
+  "datasources.default.managedHint": "The default is an organization setting outside the files, so it can be changed here although the files manage this source.",
+  "datasources.reason.steps.pattern": "{pattern} is no regular expression this step can read.",
+  "datasources.reason.steps.filter_value": "“{value}” cannot be compared with the field {field}.",
+  "datasources.reason.steps.stack_types": "The field {field} is {first} in one table and {other} in another.",
+  "datasources.reason.steps.result_rows": "The step would make more than {max} rows."
 }

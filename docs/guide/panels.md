@@ -81,9 +81,28 @@ default for these fields** shows the option as if the defaults had not set it.
 
 ## Time series
 
-Values over time as lines. Options: **Legend** (List, Table, Hidden; position Below or Right;
-values Last, Min, Max, Mean), **Tooltip** (Nearest series, All series, Hidden), **Series names**
-(label names in double braces, such as `{{job}} on {{instance}}`), and the **Graph style**:
+Values over time as lines. Options: **Tooltip** (Nearest series, All series, Hidden; sorted by
+the value at the pointer, zeros hidden, a largest width and height), **Legend** (shown or not, List
+or Table, Below or Right, a width beside the chart, **At most** a number of series with "show all"
+for the rest, and up to six **Values** per series), **Series names** (label names in double braces,
+such as `{{job}} on {{instance}}`), the **Axes** and the **Graph style**.
+
+The legend's values are calculated over the visible time range: Last, Min, Max, Mean, Total;
+First, Difference, Change in %, Range; Median, any percentile (p1 to p99), Standard deviation,
+Variance; Count, Distinct values, Gaps; and Last or First row (the exact newest or oldest row, empty
+when it is a gap) and Time of the max. Last and First skip gaps. The list
+shows the first two, the table shows each as a column and sorts by a click on its heading.
+
+**Axes**: placement Auto (left; a field with a second unit gets the right axis), Left, Right or Off,
+a label, a fixed width, grid lines (Auto: only from the left axis), the axis color (text or like the
+series) and line, the **Scale** linear, logarithmic (base 2 or 10) or **Log around zero** (linear
+near zero, logarithmic beyond, negative values too), zero in the middle and a soft minimum and
+maximum, which the axis reaches at least and grows beyond. An override sets them for one field,
+such as a second axis on the right. A logarithmic scale cannot draw values of zero or below: the
+chart says how many points it left out. Bar charts and histograms take the same axis options for
+their value axis.
+
+The **Graph style**:
 
 - **Draw as**: lines, bars or points.
 - **Line interpolation**: linear, smooth, step before, step after. **Line width** (0 to 10 px) and

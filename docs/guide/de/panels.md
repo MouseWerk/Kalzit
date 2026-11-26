@@ -88,10 +88,31 @@ hätten die Standardwerte sie nicht gesetzt.
 
 ## Zeitreihe
 
-Werte über die Zeit als Linien. Optionen: **Legende** (Liste, Tabelle, Ausgeblendet; Position
-Unten oder Rechts; Werte Letzter, Minimum, Maximum, Mittelwert), **Tooltip** (Nächste Reihe, Alle
-Reihen, Ausgeblendet), **Namen der Reihen** (Label-Namen in doppelten geschweiften Klammern, etwa
-`{{job}} on {{instance}}`) und der **Diagrammstil**:
+Werte über die Zeit als Linien. Optionen: **Tooltip** (Nächste Reihe, Alle Reihen, Ausgeblendet;
+sortiert nach dem Wert am Zeiger, Nullen ausgeblendet, größte Breite und Höhe), **Legende**
+(gezeigt oder nicht, Liste oder Tabelle, Unten oder Rechts, eine Breite neben dem Diagramm,
+**Höchstens** eine Zahl von Serien mit „alle zeigen“ für den Rest, und bis zu sechs **Werte** je
+Serie), **Namen der Reihen** (Label-Namen in doppelten geschweiften Klammern, etwa
+`{{job}} on {{instance}}`), die **Achsen** und der **Diagrammstil**.
+
+Die Werte der Legende werden über den sichtbaren Zeitraum gerechnet: Letzter, Min, Max, Mittel,
+Summe; Erster, Differenz, Änderung in %, Spanne; Median, jedes Perzentil (p1 bis p99),
+Standardabweichung, Varianz; Anzahl, Eindeutige Werte, Lücken; und Letzter oder Erster als Zeile
+(genau die jüngste oder älteste Zeile, leer bei einer Lücke) und Zeitpunkt des Max. Letzter und
+Erster überspringen Lücken. Die Liste zeigt die ersten zwei, die Tabelle jeden als Spalte und sortiert
+per Klick auf den Spaltenkopf.
+
+**Achsen**: Platzierung Auto (links; ein Feld mit einer zweiten Einheit bekommt die rechte Achse),
+Links, Rechts oder Aus, eine Beschriftung, eine feste Breite, Gitterlinien (Auto: nur von der
+linken Achse), die Farbe der Achse (Text oder wie die Serie) und die Achsenlinie, die **Skala**
+linear, logarithmisch (Basis 2 oder 10) oder **Log um null** (nahe null linear, darüber
+logarithmisch, auch negative Werte), Null in der Mitte und eine weiche Unter- und Obergrenze, die
+die Achse mindestens erreicht und über die sie hinauswächst. Ein Override setzt sie für ein Feld,
+etwa eine zweite Achse rechts. Eine logarithmische Skala kann Werte von null und darunter nicht
+zeichnen: das Diagramm nennt, wie viele Punkte es ausgelassen hat. Balkendiagramm und Histogramm
+nehmen dieselben Achsen-Optionen für ihre Werteachse.
+
+Der **Diagrammstil**:
 
 - **Zeichnen als**: Linien, Balken oder Punkte.
 - **Linienverlauf**: linear, geglättet, Stufe davor, Stufe danach. **Linienstärke** (0 bis 10 px)

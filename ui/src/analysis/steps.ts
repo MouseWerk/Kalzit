@@ -10,6 +10,16 @@ import type {
   TraceSet,
 } from "../api/generated/shapes";
 import {
+  AGGS,
+  type Agg,
+  aggName,
+  aggregate,
+  intOf,
+  numberAt,
+  numCell,
+  resultType,
+} from "./calculations";
+import {
   addMonths,
   type Calendar,
   compareText,
@@ -17,9 +27,13 @@ import {
   DAY_MS,
   type Detail,
   DetailError,
+  daysFromCivil,
+  daysInMonth,
   detail,
   FIELD_TYPE_OF,
   isoTime,
+  MAX_TIME_MS,
+  MIN_TIME_MS,
   numberText,
   parse,
   parseNumber,
@@ -44,7 +58,8 @@ import { TRACE_STEP_TYPES, type TraceStepKind } from "./traceSteps";
 
 export type JoinMode = "inner" | "left" | "outer";
 export type Stat = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "percentile";
-export type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
+export type { Agg };
+export { AGGS, intOf, numberAt };
 export type Period = "week" | "month" | "year";
 export type CompareOutput = "previous" | "difference" | "percent";
 export type TrendOutput = "fitted" | "summary";
@@ -59,17 +74,55 @@ export const STATS: readonly Stat[] = [
   "stddev",
   "percentile",
 ];
-export const AGGS: readonly Agg[] = [
-  "sum",
-  "mean",
-  "median",
-  "min",
-  "max",
-  "count",
-  "stddev",
-  "first",
-  "last",
+
+export type KeepDrop = "keep" | "drop";
+export type MatchMode = "all" | "any";
+export type RowOp =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "between"
+  | "contains"
+  | "matches"
+  | "empty"
+  | "notEmpty";
+export type LimitFrom = "first" | "last";
+export type ConvertTo = "number" | "string" | "time" | "bool";
+export type ReduceMode = "rows" | "columns";
+
+export const ROW_OPS: readonly RowOp[] = [
+  "eq",
+  "ne",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "between",
+  "contains",
+  "matches",
+  "empty",
+  "notEmpty",
 ];
+export const CONVERT_TO: readonly ConvertTo[] = ["number", "string", "time", "bool"];
+
+/** A condition on the cells of one field (`filterRows`). */
+export interface RowCondition {
+  field: string;
+  op: RowOp;
+  value?: string | number | boolean;
+  /** The upper end of `between`. */
+  to?: string | number;
+}
+
+/** One field to convert; `format` reads text as a time (`DD.MM.YYYY HH:mm`). */
+export interface Conversion {
+  field: string;
+  to: ConvertTo;
+  format?: string;
+}
 
 export interface Aggregation {
   field: string;
@@ -109,6 +162,36 @@ export type StepKind =
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
   /** The rows ordered by up to five fields; stable, empty cells last in either direction. */
   | { type: "sort"; frame: string; by: SortKey[] }
+  /** Order, hide and rename fields; names no field has are passed over. */
+  | {
+      type: "organize";
+      frame: string;
+      order?: string[];
+      hide?: string[];
+      rename?: Record<string, string>;
+    }
+  | { type: "filterFields"; frame: string; mode: KeepDrop; names?: string[]; pattern?: string }
+  | {
+      type: "filterRows";
+      frame: string;
+      mode: KeepDrop;
+      match: MatchMode;
+      conditions: RowCondition[];
+    }
+  | { type: "limit"; frame: string; count: number; from?: LimitFrom }
+  | { type: "convert"; frame: string; conversions: Conversion[] }
+  /** Each series reduced: one row per series (`rows`) or one row of all (`columns`). */
+  | {
+      type: "reduceSeries";
+      frame: string;
+      mode: ReduceMode;
+      calculations: Agg[];
+      fields?: string[];
+    }
+  /** The rows of all `frames` one under the other, at the place of the first. */
+  | { type: "stack"; frames: string[] }
+  /** Number fields of `frames` as `time`, `metric`, `value`, at the place of the first. */
+  | { type: "seriesToRows"; frames: string[] }
   /**
    * The projection of the `documents` result of `frame` into a frame (docs/PLAN.md, section 1);
    * the documents UI edits it, the steps after it work on the frame it makes. With `rows`, the
@@ -177,7 +260,15 @@ export function runsWithQuery(step: StepKind): step is GraphStepOf | TraceStepOf
 
 export const STEP_TYPES: readonly StepType[] = [
   "calculate",
+  "organize",
+  "filterFields",
+  "convert",
+  "filterRows",
+  "limit",
   "join",
+  "stack",
+  "seriesToRows",
+  "reduceSeries",
   "reduce",
   "trend",
   "movingAverage",
@@ -272,7 +363,9 @@ export interface ServerSteps {
 
 /** The frames each step reads. */
 export function stepFrames(step: StepKind): string[] {
-  return step.type === "join" ? [step.left, step.right] : [step.frame];
+  if (step.type === "join") return [step.left, step.right];
+  if (step.type === "stack" || step.type === "seriesToRows") return step.frames;
+  return [step.frame];
 }
 
 /** A stored step, or null for anything that is not one; the server checked what it stored. */
@@ -605,34 +698,7 @@ function checkFree(frame: Frame, name: string): void {
   }
 }
 
-/**
- * A cell as a number: numbers, int64 text (by the shared number grammar, `parseNumber`) and
- * times; anything else is empty.
- */
-export function numberAt(value: unknown): number | null {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") return parseNumber(value);
-  return null;
-}
-
-const I128_MAX = (1n << 127n) - 1n;
-const I128_MIN = -(1n << 127n);
-
-/**
- * An int64 cell as an exact integer: an optional sign and digits, spaces around allowed, within
- * the range of i128 (as the server reads it).
- */
-export function intOf(value: unknown): bigint | null {
-  if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : null;
-  if (typeof value !== "string") return null;
-  const t = value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
-  if (!/^[+-]?\d+$/.test(t)) return null;
-  const n = BigInt(t);
-  return n > I128_MAX || n < I128_MIN ? null : n;
-}
-
 const numbers = (field: Field) => field.values.map(numberAt);
-const numCell = (x: number | null) => (x === null || !Number.isFinite(x) ? null : x === 0 ? 0 : x);
 
 function newField(name: string, type: FieldType, values: unknown[]): Field {
   return { name, type, values };
@@ -666,6 +732,8 @@ function keyable(field: Field): void {
 
 function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedFrame[] {
   if (step.type === "join") return join(frames, step, budget);
+  if (step.type === "stack") return stack(frames, step.frames, budget);
+  if (step.type === "seriesToRows") return seriesToRows(frames, step.frames, budget);
   const index = position(frames, step.frame);
   const nf = frames[index] as NamedFrame;
   const frame = nf.frame;
@@ -727,6 +795,24 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
       break;
     case "sort":
       result = sort(frame, step.by, budget);
+      break;
+    case "organize":
+      result = organize(frame, step.order ?? [], step.hide ?? [], step.rename ?? {});
+      break;
+    case "filterFields":
+      result = filterFields(frame, step.mode, step.names ?? [], step.pattern);
+      break;
+    case "filterRows":
+      result = filterRows(frame, step.mode, step.match, step.conditions);
+      break;
+    case "limit":
+      result = limitRows(frame, step.count, step.from ?? "first");
+      break;
+    case "convert":
+      result = convert(frame, step.conversions, budget);
+      break;
+    case "reduceSeries":
+      result = reduceSeries(frame, step.mode, step.calculations, step.fields ?? [], budget);
       break;
     default:
       // Projections and graph steps run in runSteps; an existing frame passes a projection.
@@ -899,58 +985,9 @@ function groups(rows: number, keyOfRow: (row: number) => string): number[][] {
 const joinKeys = (keys: (string | null)[]) => JSON.stringify(keys);
 
 function aggType(field: Field, op: Agg): FieldType {
-  const t = field.type;
-  if (op === "count") return "number";
-  if (op === "first" || op === "last") return t;
-  if ((op === "min" || op === "max") && (isNumeric(t) || isTime(t) || t === "string")) {
-    return t;
-  }
-  if ((op === "sum" || op === "mean" || op === "median" || op === "stddev") && isNumeric(t)) {
-    return "number";
-  }
-  throw wrongType(field);
-}
-
-function aggregate(field: Field, op: Agg, rows: readonly number[]): unknown {
-  const cells = rows.map((r) => field.values[r]).filter((v) => v !== null && v !== undefined);
-  const nums = () =>
-    rows.map((r) => numberAt(field.values[r])).filter((v): v is number => v !== null);
-  switch (op) {
-    case "count":
-      return cells.length;
-    case "first":
-      return cells[0] ?? null;
-    case "last":
-      return cells.at(-1) ?? null;
-    case "sum": {
-      const v = nums();
-      return numCell(v.length === 0 ? null : stats.sum(v));
-    }
-    case "mean":
-      return numCell(stats.mean(nums()));
-    case "median":
-      return numCell(stats.percentile(stats.sorted(nums()), 50));
-    case "stddev":
-      return numCell(stats.stddev(nums()));
-    default: {
-      const less = (a: unknown, b: unknown): boolean => {
-        if (field.type === "int64") {
-          const x = intOf(a);
-          const y = intOf(b);
-          if (x !== null && y !== null) return x < y;
-          return (numberAt(a) as number) < (numberAt(b) as number);
-        }
-        if (field.type === "string") return compareText(String(a), String(b)) < 0;
-        return (numberAt(a) as number) < (numberAt(b) as number);
-      };
-      let best: unknown = null;
-      for (const v of cells) {
-        if (field.type !== "string" && numberAt(v) === null) continue;
-        if (best === null || (op === "min" ? less(v, best) : less(best, v))) best = v;
-      }
-      return best;
-    }
-  }
+  const t = resultType(op, field.type);
+  if (t === null) throw wrongType(field);
+  return t;
 }
 
 function copyField(f: Field, values: unknown[]): Field {
@@ -967,7 +1004,7 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[], budget: 
   const plan = aggregations.map((a) => {
     const f = fieldAt(frame, fieldIndex(frame, a.field));
     const t = aggType(f, a.op);
-    const name = a.name ?? `${a.op}(${a.field})`;
+    const name = a.name ?? `${aggName(a.op)}(${a.field})`;
     if (names.includes(name)) {
       throw detail("steps.name_taken", `a field is already named ${name}`, { name });
     }
@@ -1120,6 +1157,953 @@ function pivot(
     fields.push(field);
   });
   return frameOf(fields, frame.meta);
+}
+
+// ---- table steps: organize, filter, limit, convert, reduce, stack, series to rows ----
+// The server runs the same in `server/src/analysis/table.rs`.
+
+/** Rows a step that puts tables together may make. */
+export const MAX_RESULT_ROWS = 500_000;
+
+/** A field with the same name, type, unit and labels and other values. */
+function copyWith(f: Field, values: unknown[]): Field {
+  return copyField(f, values);
+}
+
+/** The rows `rows` of every field of `frame`, in that order. */
+function takeRows(frame: Frame, rows: readonly number[]): Frame {
+  return frameOf(
+    frame.fields.map((f) =>
+      copyWith(
+        f,
+        rows.map((r) => f.values[r] ?? null),
+      ),
+    ),
+    frame.meta,
+  );
+}
+
+/** Characters a pattern may escape with a backslash (inside a class `-` too). */
+const ESCAPABLE = "^$\\.*+?()[]{}|/";
+/** The largest count a `{n,m}` may name. */
+const MAX_REPEAT = 1000;
+/**
+ * Characters of a cell or field name that `matches` and **filterFields** read; the rest is passed
+ * over, so that a pattern takes bounded time in the browser.
+ */
+export const MAX_MATCH_CHARS = 150;
+/** Characters a pattern may have. */
+const MAX_PATTERN_CHARS = 2000;
+/**
+ * Repetitions (`*`, `+`, `?`, `{n,}`, `{n,m}` with m > 1) a pattern may hold besides a leading or
+ * trailing `.*`; each one multiplies the work of backtracking by the length of the text.
+ */
+const MAX_QUANTIFIERS = 2;
+/**
+ * Ways through the alternatives of groups a pattern without repetitions may have, and what each
+ * repetition divides that by.
+ */
+const MAX_PATHS = 4096;
+const QUANTIFIER_PATHS = 64;
+/**
+ * Size a pattern may expand to (a character its UTF-8 bytes, a class or `.` 40, repeated by its
+ * count), which keeps the expression the server compiles under half of its size limit.
+ */
+const MAX_WEIGHT = 16_000;
+const CLASS_WEIGHT = 40;
+/** What `.` stands for: any character but a line end (the server compiles the same). */
+const DOT = "[^\\r\\n\\u2028\\u2029]";
+
+/** Backslashes right at the end of `text`. */
+function trailingBackslashes(text: string): number {
+  let n = 0;
+  while (n < text.length && text[text.length - 1 - n] === "\\") n += 1;
+  return n;
+}
+
+/**
+ * `pattern` without a leading or trailing `.*` (or `.*?`), which change nothing for a pattern
+ * found anywhere in the text.
+ */
+function trimWildcards(pattern: string): string {
+  let p = pattern;
+  for (;;) {
+    if (p.startsWith(".*?")) p = p.slice(3);
+    else if (p.startsWith(".*")) p = p.slice(2);
+    else break;
+  }
+  for (;;) {
+    const cut = p.endsWith(".*?") ? 3 : p.endsWith(".*") ? 2 : 0;
+    if (cut === 0) break;
+    const rest = p.slice(0, p.length - cut);
+    // A `.` after an odd number of backslashes is escaped.
+    if (trailingBackslashes(rest) % 2 === 1) break;
+    p = rest;
+  }
+  return p;
+}
+
+/** UTF-8 bytes of the code point `ch`. */
+function utf8Bytes(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+}
+
+interface OpenGroup {
+  /** Whether its body holds a quantifier. */
+  quantified: boolean;
+  /** Whether a group inside it holds a `|`. */
+  alternation: boolean;
+  /** Its alternatives (`|` plus one). */
+  branches: number;
+  weight: number;
+}
+
+/** What a quantifier would apply to. */
+interface Item {
+  weight: number;
+  quantified: boolean;
+  alternation: boolean;
+}
+
+/**
+ * Whether `pattern` keeps to the subset of regular expressions both engines read the same and run
+ * in bounded time (server/src/analysis/table.rs, `safe_pattern`): literals, `.`, `^`, `$`, `|`,
+ * `(...)`, classes with ranges, `*`, `+`, `?`, `{n,m}` (optionally lazy) and escapes of the special
+ * characters. No `(?`, no letter escapes, no class set operations, no quantified group that holds a
+ * quantifier (`(a+)+`) or a `|` (`(a|aa)+`); besides a leading or trailing `.*` at most
+ * `MAX_QUANTIFIERS` repetitions, fewer alternatives the more repetitions there are, and at most
+ * `MAX_PATTERN_CHARS` characters.
+ */
+export function safePattern(pattern: string): boolean {
+  return Array.from(pattern).length <= MAX_PATTERN_CHARS && safeBody(trimWildcards(pattern));
+}
+
+function safeBody(pattern: string): boolean {
+  const c = Array.from(pattern);
+  const open = (): OpenGroup => ({ quantified: false, alternation: false, branches: 1, weight: 0 });
+  const groups: OpenGroup[] = [open()];
+  let last: Item | null = null;
+  let quantifiers = 0;
+  let paths = 1;
+  const atom = (top: OpenGroup, weight: number): Item => {
+    top.weight += weight;
+    return { weight, quantified: false, alternation: false };
+  };
+  let i = 0;
+  while (i < c.length) {
+    const top = groups[groups.length - 1] as OpenGroup;
+    const ch = c[i] as string;
+    if (ch === "\\") {
+      const n = c[i + 1];
+      if (n === undefined || !ESCAPABLE.includes(n)) return false;
+      last = atom(top, 1);
+      i += 2;
+      continue;
+    }
+    if (ch === "(") {
+      if (c[i + 1] === "?") return false;
+      groups.push(open());
+      last = null;
+    } else if (ch === ")") {
+      if (groups.length === 1) return false;
+      const inner = groups.pop() as OpenGroup;
+      if (inner.branches > 1) paths *= inner.branches;
+      const item: Item = {
+        weight: inner.weight,
+        quantified: inner.quantified,
+        alternation: inner.alternation || inner.branches > 1,
+      };
+      const outer = groups[groups.length - 1] as OpenGroup;
+      outer.weight += item.weight;
+      outer.quantified ||= item.quantified;
+      outer.alternation ||= item.alternation;
+      last = item;
+    } else if (ch === "|") {
+      top.branches += 1;
+      last = null;
+    } else if (ch === "^" || ch === "$") {
+      last = null;
+    } else if (ch === "}" || ch === "]") {
+      return false;
+    } else if (ch === "[") {
+      i += 1;
+      if (c[i] === "^") i += 1;
+      if (c[i] === "]") return false;
+      for (;;) {
+        const x = c[i];
+        if (x === undefined || x === "[") return false;
+        if (x === "]") break;
+        if (x === "\\") {
+          const n = c[i + 1];
+          if (n === undefined || (n !== "-" && !ESCAPABLE.includes(n))) return false;
+          i += 2;
+        } else if ((x === "&" || x === "-" || x === "~") && c[i + 1] === x) {
+          return false;
+        } else {
+          i += 1;
+        }
+      }
+      last = atom(top, CLASS_WEIGHT);
+    } else if (ch === ".") {
+      last = atom(top, CLASS_WEIGHT);
+    } else if (ch === "*" || ch === "+" || ch === "?" || ch === "{") {
+      // Whether it counts as a repetition, and how many copies of its item it makes.
+      let counted = true;
+      let copies = 1;
+      if (ch === "{") {
+        const end = c.indexOf("}", i);
+        if (end < 0) return false;
+        const body = c.slice(i + 1, end).join("");
+        const comma = body.indexOf(",");
+        const [nText, mText] =
+          comma < 0 ? [body, body] : [body.slice(0, comma), body.slice(comma + 1)];
+        const number = (t: string) => (/^[0-9]{1,4}$/.test(t) ? Number(t) : null);
+        const n = number(nText);
+        if (n === null) return false;
+        const m = mText === "" ? n : number(mText);
+        if (m === null || m < n || m > MAX_REPEAT) return false;
+        i = end;
+        if (body.endsWith(",")) {
+          copies = n + 1;
+        } else {
+          counted = m > 1;
+          copies = Math.max(m, 1);
+        }
+      }
+      if (last === null || last.quantified || last.alternation) return false;
+      top.weight += last.weight * (copies - 1);
+      top.quantified = true;
+      if (counted) quantifiers += 1;
+      last = null;
+      if (c[i + 1] === "?") i += 1;
+    } else {
+      last = atom(top, utf8Bytes(ch));
+    }
+    i += 1;
+  }
+  return (
+    groups.length === 1 &&
+    quantifiers <= MAX_QUANTIFIERS &&
+    paths * QUANTIFIER_PATHS ** quantifiers <= MAX_PATHS &&
+    (groups[0] as OpenGroup).weight <= MAX_WEIGHT
+  );
+}
+
+/**
+ * The text the engine compiles for a pattern `safePattern` took: without a leading or trailing
+ * `.*`, and `.` as `DOT`.
+ */
+function engineSource(pattern: string): string {
+  const c = Array.from(trimWildcards(pattern));
+  let out = "";
+  for (let i = 0; i < c.length; i += 1) {
+    const ch = c[i] as string;
+    if (ch === "\\") {
+      out += ch + (c[i + 1] ?? "");
+      i += 1;
+    } else if (ch === "[") {
+      out += ch;
+      for (i += 1; i < c.length; i += 1) {
+        const x = c[i] as string;
+        out += x;
+        if (x === "\\") {
+          out += c[i + 1] ?? "";
+          i += 1;
+        } else if (x === "]") {
+          break;
+        }
+      }
+    } else {
+      out += ch === "." ? DOT : ch;
+    }
+  }
+  return out;
+}
+
+/** The first `MAX_MATCH_CHARS` characters (code points) of `text`, which a pattern reads. */
+export function matchHead(text: string): string {
+  if (text.length <= MAX_MATCH_CHARS) return text;
+  let at = 0;
+  for (let n = 0; n < MAX_MATCH_CHARS && at < text.length; n += 1) {
+    at += (text.codePointAt(at) ?? 0) > 0xffff ? 2 : 1;
+  }
+  return text.slice(0, at);
+}
+
+/**
+ * A regular expression over field names or cell text, found anywhere in their first
+ * `MAX_MATCH_CHARS` characters, in the subset `safePattern` allows.
+ */
+export function fieldPattern(pattern: string): RegExp {
+  const refused = () =>
+    detail("steps.pattern", `${pattern} is no regular expression this step can read`, {
+      pattern,
+    });
+  if (!safePattern(pattern)) throw refused();
+  try {
+    return new RegExp(engineSource(pattern), "u");
+  } catch {
+    throw refused();
+  }
+}
+
+function organize(
+  frame: Frame,
+  order: readonly string[],
+  hide: readonly string[],
+  rename: Readonly<Record<string, string>>,
+): Frame {
+  const fields = frame.fields;
+  const placedAt = new Array<boolean>(fields.length).fill(false);
+  const picked: number[] = [];
+  for (const name of order) {
+    fields.forEach((f, i) => {
+      if (!placedAt[i] && f.name === name) {
+        placedAt[i] = true;
+        picked.push(i);
+      }
+    });
+  }
+  fields.forEach((_, i) => {
+    if (!placedAt[i]) picked.push(i);
+  });
+  const hidden = new Set(hide);
+  const renames = new Map(Object.entries(rename));
+  const out = picked
+    .filter((i) => !hidden.has((fields[i] as Field).name))
+    .map((i) => {
+      const f = fields[i] as Field;
+      const field = copyWith(f, f.values);
+      const to = renames.get(f.name);
+      const renamed = to !== undefined && to !== f.name;
+      if (renamed) field.name = to;
+      return { field, renamed };
+    });
+  // A new name may not be one another field keeps; fields that already shared a name may.
+  out.forEach(({ field, renamed }, i) => {
+    if (renamed && out.some((o, j) => j !== i && o.field.name === field.name)) {
+      throw detail("steps.name_taken", `a field is already named ${field.name}`, {
+        name: field.name,
+      });
+    }
+  });
+  return frameOf(
+    out.map((o) => o.field),
+    frame.meta,
+  );
+}
+
+function filterFields(
+  frame: Frame,
+  mode: KeepDrop,
+  names: readonly string[],
+  pattern: string | undefined,
+): Frame {
+  const regex = pattern === undefined ? null : fieldPattern(pattern);
+  const fields = frame.fields.filter((f) => {
+    const hit = names.includes(f.name) || regex?.test(matchHead(f.name)) === true;
+    return hit === (mode === "keep");
+  });
+  return frameOf(fields, frame.meta);
+}
+
+/** A cell as text for `contains` and `matches`: times and days in ISO 8601, the rest as groups compare them. */
+function cellText(v: unknown, t: FieldType): string | null {
+  if (t === "time" || t === "date") {
+    const ms = numberAt(v);
+    if (ms === null) return null;
+    const iso = isoTime(Math.floor(ms));
+    return t === "date" ? iso.slice(0, 10) : iso;
+  }
+  return keyOf(v, t);
+}
+
+const isEmptyCell = (v: unknown) => v === null || v === undefined || v === "";
+
+type Test =
+  | { kind: "empty" }
+  | { kind: "notEmpty" }
+  | { kind: "number"; op: RowOp; a: number; b: number }
+  /** An int64 field against whole numbers: compared exactly. */
+  | { kind: "int"; op: RowOp; a: bigint; b: bigint }
+  | { kind: "text"; op: RowOp; a: string; b: string }
+  | { kind: "bool"; op: RowOp; a: boolean }
+  | { kind: "contains"; text: string }
+  | { kind: "matches"; regex: RegExp };
+
+function valueText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return numberText(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return "";
+}
+
+function badValue(field: Field, v: unknown) {
+  const text = valueText(v);
+  return detail("steps.filter_value", `${text} cannot be compared with field ${field.name}`, {
+    field: field.name,
+    value: text,
+  });
+}
+
+/** A condition's value as a number for a field of numbers or times. */
+function numberValue(field: Field, v: unknown): number {
+  let n: number | null = null;
+  if (typeof v === "number") n = Number.isFinite(v) ? v : null;
+  else if (typeof v === "string") {
+    n = parseNumber(v);
+    if (n === null && isTime(field.type)) n = parseTime(v, undefined);
+  }
+  if (n === null) throw badValue(field, v);
+  return n;
+}
+
+function prepare(field: Field, c: RowCondition): Test {
+  const t = field.type;
+  const value = c.value ?? null;
+  if (c.op === "empty") return { kind: "empty" };
+  if (c.op === "notEmpty") return { kind: "notEmpty" };
+  if (t === "json") throw wrongType(field);
+  if (c.op === "contains") return { kind: "contains", text: valueText(value) };
+  if (c.op === "matches") return { kind: "matches", regex: fieldPattern(valueText(value)) };
+  const whole = intOf(value);
+  const upper = intOf(c.to ?? null);
+  if (t === "int64" && whole !== null && (c.op !== "between" || upper !== null)) {
+    return { kind: "int", op: c.op, a: whole, b: upper ?? 0n };
+  }
+  if (isNumeric(t) || isTime(t)) {
+    const b = c.op === "between" ? numberValue(field, c.to ?? null) : 0;
+    return { kind: "number", op: c.op, a: numberValue(field, value), b };
+  }
+  if (t === "string") {
+    return { kind: "text", op: c.op, a: valueText(value), b: valueText(c.to ?? null) };
+  }
+  if (c.op === "eq" || c.op === "ne") {
+    if (typeof value === "boolean") return { kind: "bool", op: c.op, a: value };
+    if (value === "true" || value === "false")
+      return { kind: "bool", op: c.op, a: value === "true" };
+    throw badValue(field, value);
+  }
+  throw wrongType(field);
+}
+
+const order = (x: number | string | boolean, y: number | string | boolean): number =>
+  typeof x === "string" && typeof y === "string" ? compareText(x, y) : x < y ? -1 : x > y ? 1 : 0;
+
+function compareOp(op: RowOp, ord: number | null, upper: number | null): boolean {
+  if (ord === null) return op === "ne";
+  switch (op) {
+    case "eq":
+      return ord === 0;
+    case "ne":
+      return ord !== 0;
+    case "gt":
+      return ord > 0;
+    case "gte":
+      return ord >= 0;
+    case "lt":
+      return ord < 0;
+    case "lte":
+      return ord <= 0;
+    case "between":
+      return ord >= 0 && upper !== null && upper <= 0;
+    default:
+      return false;
+  }
+}
+
+function passes(test: Test, v: unknown, t: FieldType): boolean {
+  switch (test.kind) {
+    case "empty":
+      return isEmptyCell(v);
+    case "notEmpty":
+      return !isEmptyCell(v);
+    case "contains": {
+      const c = cellText(v, t);
+      return c?.includes(test.text) === true;
+    }
+    case "matches": {
+      const c = cellText(v, t);
+      return c !== null && test.regex.test(matchHead(c));
+    }
+    case "number": {
+      const x = numberAt(v);
+      return compareOp(
+        test.op,
+        x === null ? null : order(x, test.a),
+        x === null ? null : order(x, test.b),
+      );
+    }
+    case "int": {
+      const x = intOf(v);
+      return compareOp(
+        test.op,
+        x === null ? null : x < test.a ? -1 : x > test.a ? 1 : 0,
+        x === null ? null : x < test.b ? -1 : x > test.b ? 1 : 0,
+      );
+    }
+    case "text": {
+      const x = typeof v === "string" ? v : null;
+      return compareOp(
+        test.op,
+        x === null ? null : order(x, test.a),
+        x === null ? null : order(x, test.b),
+      );
+    }
+    case "bool":
+      return compareOp(test.op, typeof v === "boolean" ? order(v, test.a) : null, null);
+  }
+}
+
+function filterRows(
+  frame: Frame,
+  mode: KeepDrop,
+  match: MatchMode,
+  conditions: readonly RowCondition[],
+): Frame {
+  const tests = conditions.map((c) => {
+    const f = fieldAt(frame, fieldIndex(frame, c.field));
+    return { f, test: prepare(f, c) };
+  });
+  const rows: number[] = [];
+  for (let row = 0; row < rowsOf(frame); row++) {
+    const hit = ({ f, test }: (typeof tests)[number]) =>
+      passes(test, f.values[row] ?? null, f.type);
+    const matched = match === "all" ? tests.every(hit) : tests.some(hit);
+    if (matched === (mode === "keep")) rows.push(row);
+  }
+  return takeRows(frame, rows);
+}
+
+function limitRows(frame: Frame, count: number, from: LimitFrom): Frame {
+  const n = rowsOf(frame);
+  const keep = Math.min(count, n);
+  const rows = Array.from({ length: keep }, (_, i) => (from === "last" ? n - keep + i : i));
+  return takeRows(frame, rows);
+}
+
+/** `n` digits at `at`, as a number. */
+function digitsAt(s: string, at: number, n: number): number | null {
+  const part = s.slice(at, at + n);
+  return part.length === n && /^[0-9]+$/.test(part) ? Number(part) : null;
+}
+
+interface TimeParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  ms: number;
+  offsetMin: number;
+}
+
+function isoParts(s: string, p: TimeParts): boolean {
+  const y = digitsAt(s, 0, 4);
+  const m = digitsAt(s, 5, 2);
+  const d = digitsAt(s, 8, 2);
+  if (y === null || m === null || d === null || s[4] !== "-" || s[7] !== "-") return false;
+  p.year = y;
+  p.month = m;
+  p.day = d;
+  if (s.length === 10) return true;
+  if (s[10] !== "T" && s[10] !== "t" && s[10] !== " ") return false;
+  const h = digitsAt(s, 11, 2);
+  const mi = digitsAt(s, 14, 2);
+  if (h === null || mi === null || s[13] !== ":") return false;
+  p.hour = h;
+  p.minute = mi;
+  let at = 16;
+  if (s[at] === ":") {
+    const sec = digitsAt(s, at + 1, 2);
+    if (sec === null) return false;
+    p.second = sec;
+    at += 3;
+    if (s[at] === ".") {
+      const start = at + 1;
+      let end = start;
+      while (end < s.length && /[0-9]/.test(s[end] as string) && end - start < 9) end++;
+      if (end === start) return false;
+      p.ms = Number(s.slice(start, Math.min(end, start + 3)).padEnd(3, "0"));
+      at = end;
+    }
+  }
+  const zone = s[at];
+  if (zone === undefined) return true;
+  if (zone === "Z" || zone === "z") return at + 1 === s.length;
+  if (zone !== "+" && zone !== "-") return false;
+  const oh = digitsAt(s, at + 1, 2);
+  if (oh === null) return false;
+  const rest = s.slice(at + 3);
+  let om = 0;
+  if (rest.length > 0) {
+    const mm = /^:?([0-9]{2})$/.exec(rest);
+    if (mm === null) return false;
+    om = Number(mm[1]);
+  }
+  if (oh > 23 || om > 59) return false;
+  p.offsetMin = (oh * 60 + om) * (zone === "-" ? -1 : 1);
+  return true;
+}
+
+/** Characters of the longest text read as a time. */
+const MAX_TIME_CHARS = 64;
+
+const TIME_TOKENS = ["YYYY", "SSS", "MM", "DD", "HH", "mm", "ss"] as const;
+
+function formatParts(s: string, f: string, p: TimeParts): boolean {
+  let i = 0;
+  let at = 0;
+  while (i < f.length) {
+    const token = TIME_TOKENS.find((t) => f.startsWith(t, i));
+    if (token !== undefined) {
+      const n = digitsAt(s, at, token.length);
+      if (n === null) return false;
+      if (token === "YYYY") p.year = n;
+      else if (token === "SSS") p.ms = n;
+      else if (token === "MM") p.month = n;
+      else if (token === "DD") p.day = n;
+      else if (token === "HH") p.hour = n;
+      else if (token === "mm") p.minute = n;
+      else p.second = n;
+      i += token.length;
+      at += token.length;
+    } else {
+      const c = f.codePointAt(i) as number;
+      if (s.codePointAt(at) !== c) return false;
+      const width = c > 0xffff ? 2 : 1;
+      i += width;
+      at += width;
+    }
+  }
+  return at === s.length;
+}
+
+/**
+ * Text read as a time, in ms (UTC unless the text names an offset): ISO 8601 without `format`
+ * (`2026-01-31`, `2026-01-31T08:15`, `2026-01-31 08:15:00.250+01:00`), else by `format` with the
+ * parts `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS` (each with exactly that many digits) and any
+ * other character as itself. Null when the text does not fit or names no real time.
+ */
+export function parseTime(text: string, format: string | undefined): number | null {
+  const s = text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  // No time is written in more characters; longer text is not read at all.
+  if (Array.from(s).length > MAX_TIME_CHARS) return null;
+  const p: TimeParts = {
+    year: 1970,
+    month: 1,
+    day: 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    ms: 0,
+    offsetMin: 0,
+  };
+  const ok = format === undefined ? isoParts(s, p) : formatParts(s, format, p);
+  if (
+    !ok ||
+    p.month < 1 ||
+    p.month > 12 ||
+    p.day < 1 ||
+    p.day > daysInMonth(p.year, p.month) ||
+    p.hour > 23 ||
+    p.minute > 59 ||
+    p.second > 59
+  ) {
+    return null;
+  }
+  const ms =
+    daysFromCivil(p.year, p.month, p.day) * DAY_MS +
+    p.hour * 3_600_000 +
+    p.minute * 60_000 +
+    p.second * 1000 +
+    p.ms -
+    p.offsetMin * 60_000;
+  return ms >= MIN_TIME_MS && ms <= MAX_TIME_MS ? ms : null;
+}
+
+/** A number as a time cell: whole ms within the years 1 to 9999, else empty. */
+function timeCell(x: number | null): number | null {
+  if (x === null || !Number.isFinite(x)) return null;
+  const f = Math.floor(x);
+  return f >= MIN_TIME_MS && f <= MAX_TIME_MS ? (f === 0 ? 0 : f) : null;
+}
+
+/** Text read as true or false: `true`, `false`, `1`, `0` in any case, spaces around allowed. */
+export function boolOfText(s: string): boolean | null {
+  const t = s.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "").replace(/[A-Z]/g, (c) => c.toLowerCase());
+  return t === "true" || t === "1" ? true : t === "false" || t === "0" ? false : null;
+}
+
+function converted(f: Field, c: Conversion, budget: Budget): Field {
+  const from = f.type;
+  const refuse =
+    (from === "json" && c.to !== "bool") ||
+    (c.to === "time" && from === "bool") ||
+    (c.to === "bool" && (from === "time" || from === "date" || from === "json"));
+  if (refuse) throw wrongType(f);
+  const same =
+    (c.to === "number" && from === "number") ||
+    (c.to === "string" && from === "string") ||
+    (c.to === "time" && from === "time") ||
+    (c.to === "bool" && from === "bool");
+  if (same) return copyField(f, f.values);
+  let type: FieldType;
+  let values: unknown[];
+  switch (c.to) {
+    case "number":
+      type = "number";
+      values = f.values.map((v) =>
+        from === "bool" ? (typeof v === "boolean" ? (v ? 1 : 0) : null) : numCell(numberAt(v)),
+      );
+      break;
+    case "string":
+      type = "string";
+      values = f.values.map((v) => {
+        let text: string | null;
+        if (from === "number") {
+          const x = numberAt(v);
+          text = x === null ? null : numberText(x);
+        } else if (from === "bool") text = typeof v === "boolean" ? (v ? "true" : "false") : null;
+        else text = cellText(v, from);
+        spendText(budget, textUnits(text));
+        return text;
+      });
+      break;
+    case "time":
+      type = "time";
+      values = f.values.map((v) =>
+        from === "string"
+          ? typeof v === "string"
+            ? parseTime(v, c.format)
+            : null
+          : timeCell(numberAt(v)),
+      );
+      break;
+    default:
+      type = "bool";
+      values = f.values.map((v) => {
+        if (from === "string") return typeof v === "string" ? boolOfText(v) : null;
+        const x = numberAt(v);
+        return x === null ? null : x !== 0;
+      });
+      break;
+  }
+  const out: Field = { name: f.name, type, values };
+  if (type === "number" && f.unit !== undefined) out.unit = f.unit;
+  if (f.labels !== undefined) out.labels = f.labels;
+  return out;
+}
+
+function convert(frame: Frame, conversions: readonly Conversion[], budget: Budget): Frame {
+  const fields = [...frame.fields];
+  for (const c of conversions) {
+    const i = fieldIndex(frame, c.field);
+    fields[i] = converted(fieldAt(frame, i), c, budget);
+  }
+  return frameOf(fields, frame.meta);
+}
+
+/** The unit all `fields` share, if they share one. */
+function sharedUnit(fields: readonly Field[]): string | undefined {
+  const first = fields[0]?.unit;
+  if (first === undefined) return undefined;
+  return fields.every((f) => f.unit === first) ? first : undefined;
+}
+
+function reduceSeries(
+  frame: Frame,
+  mode: ReduceMode,
+  ops: readonly Agg[],
+  names: readonly string[],
+  budget: Budget,
+): Frame {
+  const fields =
+    names.length === 0
+      ? frame.fields.filter((f) => isNumeric(f.type))
+      : names.map((n) => fieldAt(frame, fieldIndex(frame, n)));
+  const all = Array.from({ length: rowsOf(frame) }, (_, i) => i);
+  if (mode === "rows") {
+    for (const f of fields) if (!isNumeric(f.type)) throw wrongType(f);
+    checkCells(budget, fields.length, ops.length + 1);
+    const unit = sharedUnit(fields);
+    const out: Field[] = [
+      newField(
+        "field",
+        "string",
+        fields.map((f) => f.name),
+      ),
+    ];
+    for (const op of ops) {
+      const field = newField(
+        aggName(op),
+        "number",
+        fields.map((f) => numCell(numberAt(aggregate(f, op, all)))),
+      );
+      if (op !== "count" && unit !== undefined) field.unit = unit;
+      out.push(field);
+    }
+    return frameOf(out, frame.meta);
+  }
+  checkCells(budget, 1, fields.length * ops.length);
+  const out: Field[] = [];
+  for (const f of fields) {
+    for (const op of ops) {
+      const t = aggType(f, op);
+      const field = newField(ops.length === 1 ? f.name : `${aggName(op)}(${f.name})`, t, [
+        aggregate(f, op, all),
+      ]);
+      if (op !== "count" && f.unit !== undefined) field.unit = f.unit;
+      if (f.labels !== undefined) field.labels = f.labels;
+      out.push(field);
+    }
+  }
+  return frameOf(out, frame.meta);
+}
+
+/** The metas of several frames as one: truncated when one is, all notices in order. */
+function joinedMeta(metas: readonly (FrameMeta | undefined)[]): FrameMeta | undefined {
+  let out: FrameMeta | undefined;
+  for (const m of metas) {
+    if (m === undefined) continue;
+    out ??= { rowsTruncated: false, notices: [] };
+    out.rowsTruncated = out.rowsTruncated || (m.rowsTruncated ?? false);
+    out.notices = [...(out.notices ?? []), ...(m.notices ?? [])];
+  }
+  return out;
+}
+
+/** `frames` with `frame` at the place of the first of `at` and the others taken out. */
+function replaced(frames: NamedFrame[], at: readonly number[], frame: Frame): NamedFrame[] {
+  const first = at[0] as number;
+  const gone = new Set(at.slice(1));
+  return frames
+    .map((nf, i) => (i === first ? { name: nf.name, frame } : nf))
+    .filter((_, i) => !gone.has(i));
+}
+
+const tooManyResultRows = () =>
+  detail("steps.result_rows", `the step would make more than ${MAX_RESULT_ROWS} rows`, {
+    max: MAX_RESULT_ROWS,
+  });
+
+function stack(frames: NamedFrame[], names: readonly string[], budget: Budget): NamedFrame[] {
+  const at = names.map((n) => position(frames, n));
+  const fields: Field[] = [];
+  for (const i of at) {
+    const frame = (frames[i] as NamedFrame).frame;
+    for (const f of frame.fields) {
+      fieldIndex(frame, f.name);
+      const g = fields.find((x) => x.name === f.name);
+      if (g === undefined) {
+        fields.push(copyWith(f, []));
+      } else if (g.type !== f.type) {
+        throw detail(
+          "steps.stack_types",
+          `field ${f.name} is ${g.type} in one table and ${f.type} in another`,
+          { field: f.name, first: g.type, other: f.type },
+        );
+      } else {
+        if (g.unit !== f.unit) delete g.unit;
+        if (labelText(g.labels) !== labelText(f.labels)) delete g.labels;
+      }
+    }
+  }
+  const rows = at.reduce((sum, i) => sum + rowsOf((frames[i] as NamedFrame).frame), 0);
+  if (rows > MAX_RESULT_ROWS) throw tooManyResultRows();
+  checkCells(budget, rows, fields.length);
+  let text = 0;
+  for (const i of at) {
+    const frame = (frames[i] as NamedFrame).frame;
+    for (const g of fields) {
+      const f = frame.fields.find((x) => x.name === g.name);
+      if (f === undefined) {
+        for (let r = 0; r < rowsOf(frame); r++) g.values.push(null);
+      } else {
+        for (const v of f.values) {
+          text += textUnits(v);
+          g.values.push(v ?? null);
+        }
+      }
+    }
+  }
+  spendText(budget, text);
+  const meta = joinedMeta(at.map((i) => (frames[i] as NamedFrame).frame.meta));
+  return replaced(frames, at, frameOf(fields, meta));
+}
+
+/** Labels as one text, by key, so equal labels give equal text whatever order they came in. */
+const labelText = (labels: Readonly<Record<string, string>> | undefined) =>
+  JSON.stringify(Object.entries(labels ?? {}).sort(([a], [b]) => compareText(a, b)));
+
+/** A series' name: the field's name and its labels, as `cpu{host="a", zone="b"}`. */
+function metricName(f: Field): string {
+  const labels = Object.entries(f.labels ?? {}).sort(([a], [b]) => compareText(a, b));
+  if (labels.length === 0) return f.name;
+  return `${f.name}{${labels.map(([k, v]) => `${k}="${v}"`).join(", ")}}`;
+}
+
+function seriesToRows(
+  frames: NamedFrame[],
+  names: readonly string[],
+  budget: Budget,
+): NamedFrame[] {
+  const at = names.map((n) => position(frames, n));
+  const entries: { t: number; metric: number; v: number }[] = [];
+  const metrics: string[] = [];
+  const valueFields: Field[] = [];
+  for (const i of at) {
+    const nf = frames[i] as NamedFrame;
+    const t = firstTimeField(nf);
+    const times = fieldAt(nf.frame, t).values;
+    const series: { metric: number; f: Field }[] = [];
+    nf.frame.fields.forEach((f, j) => {
+      if (j === t || !isNumeric(f.type)) return;
+      metrics.push(metricName(f));
+      valueFields.push(f);
+      series.push({ metric: metrics.length - 1, f });
+    });
+    times.forEach((time, row) => {
+      const tm = numberAt(time);
+      if (tm === null) return;
+      for (const { metric, f } of series) {
+        const v = numberAt(f.values[row]);
+        if (v === null) continue;
+        entries.push({ t: tm, metric, v });
+        if (entries.length > MAX_RESULT_ROWS) throw tooManyResultRows();
+      }
+    });
+  }
+  checkCells(budget, entries.length, 3);
+  entries.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  spendText(
+    budget,
+    entries.reduce((sum, e) => sum + (metrics[e.metric] as string).length, 0),
+  );
+  const value = newField(
+    "value",
+    "number",
+    entries.map((e) => numCell(e.v)),
+  );
+  const unit = sharedUnit(valueFields);
+  if (unit !== undefined) value.unit = unit;
+  const fields = [
+    newField(
+      "time",
+      "time",
+      entries.map((e) => Math.floor(e.t)),
+    ),
+    newField(
+      "metric",
+      "string",
+      entries.map((e) => metrics[e.metric]),
+    ),
+    value,
+  ];
+  const meta = joinedMeta(at.map((i) => (frames[i] as NamedFrame).frame.meta));
+  return replaced(frames, at, frameOf(fields, meta));
 }
 
 /**

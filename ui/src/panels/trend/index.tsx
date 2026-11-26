@@ -13,7 +13,7 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatUnit, joinFormatted } from "../fieldConfig/units";
+import { axisTickFormat, formatUnit, joinFormatted } from "../fieldConfig/units";
 import { type FitAction, FitHint } from "../fitHint";
 import { isNumeric } from "../frame";
 import { TrendPreview } from "../picker/previews";
@@ -153,10 +153,10 @@ function TrendPanel({
       format={(index, value) =>
         displayText(displayValue(value, "number", data.series[index]?.options ?? {}, language))
       }
-      axisFormat={(value) =>
-        joinFormatted(formatUnit(value, unit(yOptions.unit), yOptions.decimals, language))
+      // The value axis comes from the series' own options (ends included), as in a time series.
+      axisFormat={(value, _key, ticks) =>
+        axisTickFormat(ticks, unit(yOptions.unit), yOptions.decimals, language)(value)
       }
-      yRange={{ min: fieldConfig.defaults.min, max: fieldConfig.defaults.max }}
       numberAxis={{
         format: (x) =>
           joinFormatted(formatUnit(x, unit(xOptions.unit), xOptions.decimals, language)),

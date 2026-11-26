@@ -13,7 +13,10 @@ shows. API reference: [analysis steps and expressions](../api/settings-dashboard
 
 In the panel editor (tab **Steps**) and in Explore (**Steps and actions**):
 
-1. Choose the **Kind of step** and press **Add step**.
+1. Press **Add step**: the catalog lists the steps for the result's shape in six groups (fields,
+   rows, combine, reshape, calculate, display), the steps you added last, and on the right a
+   preview of the step under the pointer on the first rows of your own result. Search by name,
+   description or a common term (rename, merge, top); Up and Down walk the list, Enter adds.
 2. Fill in its fields. Most steps first name the **Query** (the query's id, such as A) whose result
    they read.
 3. Use **Preview** after any step to see its table (first rows) or **Results of the queries** for
@@ -63,6 +66,30 @@ Functions: `if`, `coalesce`, `isnull`, `round(x, digits)`, `floor`, `ceil`, `abs
 the time zone the dashboard shows (the dashboard's, else yours), and a week starts on the first
 day of the week set there; `weekday` stays 1 (Monday) to 7 (Sunday). An error names the place
 (`unexpected input at 4`).
+
+## Arrange tables
+
+These steps change a table's shape without new arithmetic; each changes only what it says.
+
+- **Arrange and rename fields**: order the fields, hide what nobody needs and give readable names.
+  Names no field has are passed over; a field the query adds later comes last and is shown. A
+  new name another field keeps stops the step.
+- **Filter fields by name**: keep (or leave out) the fields whose name you pick or that match a
+  regular expression anywhere in the name (`^cpu`).
+- **Convert type**: text to a number, a time or true and false, numbers or times to text, in the
+  field's place. Times are read as ISO 8601 (`2026-01-31T08:15`) or by a format with `YYYY`, `MM`,
+  `DD`, `HH`, `mm`, `ss`, `SSS` (`DD.MM.YYYY HH:mm`), in UTC unless the text names an offset. Values
+  that cannot be read become empty.
+- **Filter rows**: keep or leave out the rows that pass all conditions (or one of them): equals,
+  greater than, between, contains, matches a pattern, is empty. An empty value equals nothing, so
+  "does not equal" keeps it.
+- **Limit**: only the first or the last N rows.
+- **Stack tables**: the rows of several queries one under the other; fields with the same name
+  become one field, a field one table lacks stays empty there.
+- **Series to rows**: every number field next to the first time field of its table, as a long
+  table with `time`, `metric` (the field's name and labels) and `value`, ordered by time.
+- **Reduce**: every series (number field) to one value per calculation, such as the last value
+  or the sum: one row per series, or one row with a field per series and calculation.
 
 ## Join queries
 

@@ -62,6 +62,8 @@ export interface PanelSeries {
  */
 export type FieldOptionGroup =
   | "graphStyle"
+  /** The value axis: placement, label, scale, soft limits (`fieldConfig/axisOptions.ts`). */
+  | "axes"
   | "standard"
   | "range"
   | "thresholds"
