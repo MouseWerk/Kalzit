@@ -44,6 +44,16 @@
     max-width: var(--size-menu-max);
   }
 
+  /* A menu named in words: the text, then a quiet chevron. */
+  .toolbar-menu__button {
+    gap: var(--space-1);
+    white-space: nowrap;
+  }
+
+  .toolbar-menu__button > .icon {
+    color: var(--text-muted);
+  }
+
   .toolbar-menu__check {
     display: inline-flex;
     flex: none;

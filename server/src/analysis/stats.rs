@@ -35,12 +35,17 @@ pub fn sorted(values: &[f64]) -> Vec<f64> {
 
 /// The sample standard deviation (n - 1, as Excel's STDEV.S); needs two values.
 pub fn stddev(values: &[f64]) -> Option<f64> {
+    variance(values).map(f64::sqrt)
+}
+
+/// The sample variance (n - 1, as Excel's VAR.S); needs two values.
+pub fn variance(values: &[f64]) -> Option<f64> {
     if values.len() < 2 {
         return None;
     }
     let m = mean(values)?;
     let squares = values.iter().fold(0.0, |acc, v| acc + (v - m) * (v - m));
-    Some((squares / (values.len() - 1) as f64).sqrt())
+    Some(squares / (values.len() - 1) as f64)
 }
 
 pub fn min(values: &[f64]) -> Option<f64> {

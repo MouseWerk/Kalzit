@@ -161,6 +161,34 @@ zurück. Ein Ergebnis zeigt höchstens eine begrenzte Zahl von Dokumenten (**Bei
 abgeschnitten.**), und **Weitere Dokumente laden** holt die nächsten (MongoDB, Elasticsearch und
 OpenSearch, JSON- und NDJSON-Dateien).
 
+### Logs
+
+Logzeilen sind auch Dokumente: **Logs** ist eine Ansicht auf dieselben Dokumente, keine eigene
+Datenform und keine Umwandlung. Sie liest aus jedem Dokument eine Zeit, einen Text und einen Level
+und zeigt sie als Zeilen, die neuesten zuerst, mit dem **Volumen je Level** darüber. Ergebnisse von
+Loki öffnen in **Logs**, ebenso Treffer aus Elasticsearch und OpenSearch mit Zeit- und Textfeld.
+Andere Dokument-Quellen bieten den Reiter an, wenn sie ein Zeitfeld haben, und fragen einmal, welches
+Feld der Text ist. Unter **Felder** siehst und änderst du, welche Felder die Ansicht liest
+(**Zeitfeld**, **Textfeld**, **Level-Feld**; „Automatisch“ sagt, was gefunden wurde). Level sind ein
+Punkt und ein Wort: Kritisch, Fehler, Warnung, Info, Debug, Trace oder unbekannt.
+
+- **Volumen je Level** zählt den ganzen Zeitraum, wo die Quelle zählen kann: bei Loki führt Kalzit
+  neben den Zeilen eine Zählabfrage mit demselben Selektor und denselben Filtern aus, und
+  **Untersuchen** zeigt sie als zweite Abfrage. Sonst zählt es die geladenen Zeilen und sagt das.
+  Ein Klick auf einen Level zeigt nur ihn, Strg+Klick schaltet einen an oder aus; Ziehen über die
+  Balken wählt einen Zeitraum.
+- Die Leiste ändert nur die Ansicht: **Neueste zuerst** oder **Älteste zuerst**, **Zeit** (mit
+  Millisekunden, mit Datum, nur Uhrzeit, relativ oder ausgeblendet), **Umbruch**, **JSON
+  aufbereiten** und **Duplikate** (zeigen, Gleiche zusammenfassen, ohne Zahlen vergleichen, nach
+  Muster). Kalzit merkt sich deine Wahl in diesem Browser.
+- Ein Klick auf eine Zeile oder Eingabe öffnet ihre Details: die Labels der Quelle und die Felder,
+  die Kalzit aus der Zeile (JSON oder Schlüssel=Wert) oder dem Dokument liest. **Danach filtern**
+  und **Herausfiltern** ergänzen die Abfrage in ihrer eigenen Sprache und führen sie aus, etwa
+  `| host = "web-3"` in LogQL oder `AND host:"web-3"` in Lucene, so siehst du, wie es geschrieben
+  wird.
+- Eine Log-Abfrage lädt 1.000 Zeilen, wenn du keine andere Höchstzahl setzt, höchstens 5.000. Hat der
+  Zeitraum mehr, sagt die Liste **Hier endet die Liste, nicht die Daten.**
+
 ### Graphen
 
 Ein Ergebnis `graph` bleibt Knoten und Kanten: das Panel **Netzwerk**, **Hierarchie** oder
@@ -175,14 +203,14 @@ Abfrage in Explore öffnen** als Cypher-Abfrage; sie öffnet sich, ohne zu laufe
 ## Schritte
 
 Die Seitenleiste **Schritte und Aktionen** enthält Rechenschritte, die nacheinander auf die
-Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trend, gleitender Durchschnitt,
-Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot und die Projektion von
+Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trendlinie, gleitender Durchschnitt,
+Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot, Sortieren und die Projektion von
 Dokumenten. Die Abfragen bleiben, wie sie sind. Siehe
 [Berechnete Felder und Statistik](calculated-fields.md).
 
 In Explore ist jeder Schritt eine kompakte Karte: seine Nummer und sein Name und darunter, was er
 tut (die Felder, die er nutzt). Ein Klick öffnet ihn zum Bearbeiten. **Schritt hinzufügen** öffnet
-die Arten von Schritten als Menü; ein hinzugefügter Schritt öffnet sich sofort.
+den Schritt-Katalog mit Suche und Vorschau; ein hinzugefügter Schritt öffnet sich sofort.
 
 ### Graph-Schritte
 

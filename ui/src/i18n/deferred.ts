@@ -4,6 +4,7 @@
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
 import type enGraphStyle from "./en/graphStyle.json";
+import type enHandbook from "./en/handbook.json";
 import type enProvisioning from "./en/provisioning.json";
 import type enReports from "./en/reports.json";
 import type enServerAdmin from "./en/serverAdmin.json";
@@ -16,7 +17,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enTraces &
   typeof enServerAdmin &
   typeof enApps &
-  typeof enGraphStyle;
+  typeof enGraphStyle &
+  typeof enHandbook;
 
 export const DEFERRED_AREAS = [
   "sharing",
@@ -29,6 +31,8 @@ export const DEFERRED_AREAS = [
   "apps",
   // The style rules of graph data: the graph panels and tables made from a graph load them.
   "graphStyle",
+  // The built-in handbook: its page, the search and the article's parts (src/handbook).
+  "handbook",
 ] as const;
 export type DeferredArea = (typeof DEFERRED_AREAS)[number];
 
@@ -65,5 +69,9 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   graphStyle: {
     de: () => import("./de/graphStyle.json").then(pick),
     en: () => import("./en/graphStyle.json").then(pick),
+  },
+  handbook: {
+    de: () => import("./de/handbook.json").then(pick),
+    en: () => import("./en/handbook.json").then(pick),
   },
 };

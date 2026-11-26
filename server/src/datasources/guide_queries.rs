@@ -29,6 +29,7 @@ fn request(query: &Value) -> SourceQuery {
         identifier_variables: None,
         limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
         cursor: None,
+        filters: Vec::new(),
     }
 }
 
@@ -58,6 +59,8 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
             variables: &vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         return sql::prepare(text(query, "sql"), engine, &ctx).map(|_| ()).map_err(|e| e.message);
     }

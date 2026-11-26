@@ -575,6 +575,7 @@ function SamlForm({
               type="button"
               className="button button--secondary"
               aria-disabled={busy !== null}
+              aria-busy={busy === "check" || undefined}
               onClick={() => void onCheck()}
             >
               <Icon name="refresh" />

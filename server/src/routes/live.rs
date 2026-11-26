@@ -594,14 +594,19 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
     let min = limits.min_refresh.as_millis() as u64;
     let refresh_ms = sub.refresh_ms.unwrap_or(limits.default_refresh.as_millis() as u64);
     let refresh_ms = refresh_ms.clamp(min, (MAX_REFRESH.as_millis() as u64).max(min));
-    let (items, variables, identifiers) = match (&sub.panel, &sub.queries) {
+    // A panel's own query options apply to its live runs too; the range keeps its length, so
+    // they are worked out once.
+    let mut interval_ms = sub.interval_ms;
+    let mut max_data_points = sub.max_data_points;
+    let (items, variables, identifiers, unfiltered) = match (&sub.panel, &sub.queries) {
         (Some(panel), None) => {
-            let PanelRun { items, variables, identifiers } =
+            let PanelRun { items, variables, identifiers, unfiltered, limits } =
                 panel_run(state, ctx, &panel.dashboard_id, &panel.panel_id, &sub.variables, sub.limit).await?;
             if !items.is_empty() {
                 check_items(&items)?;
             }
-            (items, variables, Some(identifiers))
+            (interval_ms, max_data_points) = limits.apply(range.at(state.clock.now_ms()), interval_ms, max_data_points);
+            (items, variables, Some(identifiers), unfiltered)
         }
         (None, Some(items)) => {
             check_items(items)?;
@@ -616,7 +621,7 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
             for item in items {
                 access.check(Permission::DatasourcesQuery, &item.datasource_id)?;
             }
-            (items.clone(), sub.variables.clone(), None)
+            (items.clone(), sub.variables.clone(), None, Default::default())
         }
         _ => return Err(invalid_error("give either panel or queries")),
     };
@@ -624,11 +629,12 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
         org_id: ctx.org_id.clone(),
         items,
         range,
-        interval_ms: sub.interval_ms,
-        max_data_points: sub.max_data_points,
+        interval_ms,
+        max_data_points,
         variables,
         identifiers,
         refresh_ms,
         panel: sub.panel.as_ref().map(|p| (p.dashboard_id.clone(), p.panel_id.clone())),
+        unfiltered,
     })
 }

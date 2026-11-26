@@ -150,6 +150,31 @@ with optional names and types. Remove the step and you get the documents back. A
 most a limited number of documents (**Cut off at N documents**) and **Load more documents** fetches
 the next ones (MongoDB, Elasticsearch and OpenSearch, JSON and NDJSON files).
 
+### Logs
+
+Log lines are documents too: **Logs** is a view on the same documents, not a shape of its own and
+not a conversion. It reads a time, a text and a level from each document and shows them as lines,
+newest first, with the **volume by level** above them. Loki results open on **Logs**; so do
+Elasticsearch and OpenSearch hits with a time and a text field. Other document sources offer the
+tab when they have a time field and ask once which field is the text. Under **Fields** you see and
+change which fields the view reads (**Time field**, **Text field**, **Level field**; Auto says what
+it found). Levels are a dot and a word: Critical, Error, Warning, Info, Debug, Trace or unknown.
+
+- **Volume by level** counts the whole time range where the source can count: for Loki, Kalzit runs
+  a count query with the same selector and filters beside the lines, and **Inspect** shows it as a
+  second query. Elsewhere it counts the loaded lines and says so. Click a level to show only it,
+  Ctrl+click to switch one on or off; drag across the bars to choose a time range.
+- The bar changes only the view: **Newest first** or **Oldest first**, **Time** (with
+  milliseconds, with date, time only, relative or hidden), **Wrap**, **Prettify JSON** and
+  **Duplicates** (show, merge equal, compare without numbers, by pattern). Kalzit remembers your
+  choice in this browser.
+- Click a line, or press Enter, to open its details: the source's labels and the fields Kalzit
+  reads from the line (JSON or key=value) or the document. **Filter for** and **Filter out** add
+  the filter to the query in its own language and run it, such as `| host = "web-3"` in LogQL or
+  `AND host:"web-3"` in Lucene, so you see how it is written.
+- A log query loads 1,000 lines unless you set another line limit, at most 5,000. Where the range
+  holds more, the list says **The list ends here, not the data.**
+
 ### Graphs
 
 A `graph` result stays nodes and edges: the **Network**, **Hierarchy** or **Paths** panel
@@ -163,12 +188,12 @@ so you can read it before you press **Run query**.
 ## Steps
 
 The **Steps and actions** side panel holds analysis steps that work on the results one after the
-other: calculated fields, joins, statistics, trend, moving average, correlation, comparison with
-the previous period, group, pivot and the documents projection. The queries stay as they are. See
+other: calculated fields, joins, statistics, trend line, moving average, correlation, comparison with
+the previous period, group, pivot, sort and the documents projection. The queries stay as they are. See
 [Calculated fields and statistics](calculated-fields.md).
 
 In Explore each step is a compact card: its number and name, and under it what it does (the
-fields it uses). A click opens it for editing. **Add step** opens the kinds of steps as a menu; a
+fields it uses). A click opens it for editing. **Add step** opens the step catalog with a search and a preview; a
 step you add opens at once.
 
 ### Graph steps

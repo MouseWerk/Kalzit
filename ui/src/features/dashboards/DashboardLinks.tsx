@@ -8,7 +8,7 @@ import { useFloatingMenu } from "../../shell/useFloatingMenu";
 import { useMenuButton } from "../../shell/useMenuButton";
 import { DASHBOARDS_KEY, fetchDashboards } from "./api";
 import { linkHref } from "./links";
-import type { DashboardLinkModel, VariableValues } from "./model";
+import { type DashboardLinkModel, holdOf, type VariableValues } from "./model";
 import "../../shell/shellUx.css";
 import "./dashboardTools.css";
 import "./toolbar.css";
@@ -26,20 +26,24 @@ export function DashboardLinks({
   dashboardId,
   links,
   values,
+  held,
 }: {
   orgId: string;
   dashboardId: string;
   links: readonly DashboardLinkModel[];
   values: VariableValues;
+  /** Query variables at "All" whose values are not there yet: a link using one waits. */
+  held?: Readonly<Record<string, string | null>> | undefined;
 }) {
   const { t } = useI18n();
   if (links.length === 0) {
     return null;
   }
-  // A link whose filled-in address is not allowed is left out, so it does not count either.
-  const visible = links.filter(
-    (link) => link.type !== "url" || linkHref(link.url, values) !== null,
-  );
+  // A link whose filled-in address is not allowed is left out, so it does not count either; so
+  // is one whose variables at "All" have no values yet.
+  const ready = (link: DashboardLinkModel) =>
+    link.type !== "url" || (holdOf(link.url, held) === null && linkHref(link.url, values) !== null);
+  const visible = links.filter(ready);
   if (visible.length === 0) {
     return null;
   }
@@ -51,7 +55,7 @@ export function DashboardLinks({
       <ul className="dash-links__list">
         {links.map((link, index) => {
           if (link.type === "url") {
-            const href = linkHref(link.url, values);
+            const href = ready(link) ? linkHref(link.url, values) : null;
             // A link whose filled-in address is not allowed is left out rather than shown dead.
             return href === null ? null : (
               // biome-ignore lint/suspicious/noArrayIndexKey: links keep their order; titles can repeat

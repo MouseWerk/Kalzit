@@ -3,3 +3,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/MouseWerk/Kalzit/security/advisories/new
     about: Please report security problems privately, not in a public issue.
+  - name: User guide
+    url: https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/README.md
+    about: Installation, configuration and every area of Kalzit, in English and German.

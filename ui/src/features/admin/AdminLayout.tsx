@@ -1,8 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useId } from "react";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
-import { useI18n } from "../../i18n/i18n";
+import { Icon } from "../../components/Icon";
+import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useOrgPermissions } from "../../org/useOrg";
 import { useCrumbTitle } from "../../shell/crumbTitle";
@@ -10,6 +12,8 @@ import { isWithin } from "../../shell/navItem";
 import "./admin.css";
 import { Notice, useNotice } from "./components/Notice";
 import { type AdminSectionLink, ORG_SECTIONS, SERVER_SECTIONS, useAdminAccess } from "./sections";
+import { getUpdates, updateKeys } from "./server/updatesApi";
+import { type AdminSummary, getAdminSummary, summaryKey } from "./summaryApi";
 import { canOpenAdministration } from "./visibility";
 
 /**
@@ -89,6 +93,12 @@ export function AdminOverview() {
   const notice = useNotice();
   const access = useAdminAccess();
   const orgSections = ORG_SECTIONS.filter((section) => section.visible(access));
+  const orgId = access.orgId;
+  const summary = useQuery({
+    queryKey: summaryKey(orgId ?? ""),
+    queryFn: () => getAdminSummary(orgId ?? ""),
+    enabled: orgId !== undefined,
+  });
   const serverSections = SERVER_SECTIONS.filter((section) => section.visible(access));
   // A role may hold a change permission without the matching read permission (users:write
   // without users:read); then no section opens, and the page says so instead of staying blank.
@@ -109,9 +119,16 @@ export function AdminOverview() {
               ? t("admin.group.org")
               : t("admin.group.orgNamed", { name: access.orgName })
           }
+          hint={t("admin.overview.orgHint")}
           sections={orgSections}
+          summary={summary.data}
         />
-        <OverviewGroup title={t("admin.group.server")} sections={serverSections} />
+        <OverviewGroup
+          title={t("admin.group.server")}
+          hint={t("admin.overview.serverHint")}
+          sections={serverSections}
+          summary={summary.data}
+        />
       </div>
     </>
   );
@@ -119,29 +136,126 @@ export function AdminOverview() {
 
 function OverviewGroup({
   title,
+  hint,
   sections,
+  summary,
 }: {
   title: string;
+  hint: string;
   sections: readonly AdminSectionLink[];
+  summary: AdminSummary | undefined;
 }) {
   const { t } = useI18n();
   const titleId = useId();
   if (sections.length === 0) {
     return null;
   }
+  // The sections in their small groups (people and access, operations, ...), in list order.
+  const clusters = new Map<MessageKey, AdminSectionLink[]>();
+  for (const section of sections) {
+    clusters.set(section.cluster, [...(clusters.get(section.cluster) ?? []), section]);
+  }
   return (
     <section className="admin-overview__group" aria-labelledby={titleId}>
-      <h2 id={titleId}>{title}</h2>
-      <ul className="admin-cards">
+      <div className="admin-overview__heading">
+        <h2 id={titleId}>{title}</h2>
+        <p className="admin-overview__hint">{hint}</p>
+      </div>
+      <div className="admin-overview__clusters">
+        {[...clusters].map(([cluster, links]) => (
+          <OverviewCluster key={cluster} title={t(cluster)} sections={links} summary={summary} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function OverviewCluster({
+  title,
+  sections,
+  summary,
+}: {
+  title: string;
+  sections: readonly AdminSectionLink[];
+  summary: AdminSummary | undefined;
+}) {
+  const { t } = useI18n();
+  const titleId = useId();
+  return (
+    <div className="admin-overview__cluster">
+      <h3 id={titleId} className="admin-overview__cluster-title">
+        {title}
+      </h3>
+      <ul className="admin-rows" aria-labelledby={titleId}>
         {sections.map((section) => (
           <li key={section.to}>
-            <Link to={section.to} className="admin-card">
-              <span className="admin-card__title">{t(section.label)}</span>
-              <span className="admin-card__text">{t(section.description)}</span>
+            <Link to={section.to} className="admin-row">
+              <span className="admin-row__icon" aria-hidden="true">
+                <Icon name={section.icon} />
+              </span>
+              <span className="admin-row__text">
+                <span className="admin-row__title">{t(section.label)}</span>
+                <span className="admin-row__summary">{t(section.summary)}</span>
+              </span>
+              <SectionCount count={countOf(section, summary)} />
+              <SectionStatus section={section} />
+              <Icon name="chevron" className="admin-row__chevron" />
             </Link>
           </li>
         ))}
       </ul>
-    </section>
+    </div>
+  );
+}
+
+/** Which number of the summary a section's row shows. */
+const COUNT_OF: Readonly<Record<string, keyof AdminSummary>> = {
+  "/admin/members": "members",
+  "/admin/teams": "teams",
+  "/admin/roles": "roles",
+  "/admin/service-accounts": "serviceAccounts",
+  "/admin/server/users": "users",
+  "/admin/server/organizations": "orgs",
+};
+
+function countOf(section: AdminSectionLink, summary: AdminSummary | undefined): number | undefined {
+  const key = COUNT_OF[section.to];
+  return key === undefined ? undefined : summary?.[key];
+}
+
+/** How many entries a section holds, quietly at the end of its row. */
+function SectionCount({ count }: { count: number | undefined }) {
+  const { t, language } = useI18n();
+  if (count === undefined) {
+    return null;
+  }
+  const shown = new Intl.NumberFormat(language).format(count);
+  // The bare number on screen; with its unit for screen readers ("12 entries").
+  return (
+    <span className="admin-row__count">
+      <span aria-hidden="true">{shown}</span>
+      <span className="visually-hidden">{t("admin.overview.count", { count: shown })}</span>
+    </span>
+  );
+}
+
+/** A short state at the end of a row, where the overview knows one without extra requests. */
+function SectionStatus({ section }: { section: AdminSectionLink }) {
+  const { t } = useI18n();
+  const access = useAdminAccess();
+  const updates = useQuery({
+    queryKey: updateKeys.status,
+    queryFn: getUpdates,
+    enabled: section.to === "/admin/server/updates" && access.isServerAdmin,
+    staleTime: 60_000,
+  });
+  const available = updates.data?.available;
+  if (section.to !== "/admin/server/updates" || available == null) {
+    return null;
+  }
+  return (
+    <span className="admin-row__status">
+      {t("admin.overview.updateAvailable", { version: available.version })}
+    </span>
   );
 }

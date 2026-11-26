@@ -347,6 +347,9 @@ describe("data source list", () => {
     await user.click(within(table).getByRole("link", { name: "Sales DB" }));
     const name = await screen.findByRole("textbox", { name: "Name" });
     await user.type(name, " 2");
+    // A changed setting: the server drops the kept test then (a rename alone keeps it).
+    await openSection(user, "Limits");
+    await user.type(await screen.findByRole("textbox", { name: "Row limit (optional)" }), "1000");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Saved.");
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
@@ -715,10 +718,14 @@ describe("adding a data source", () => {
     expect(adds(server)).toEqual([]);
     expect(server.areas.datasources.datasources.some((d) => d.name === "Local")).toBe(false);
     expect(location().pathname).toBe("/data-sources/new");
-    // Saving is its own step, without another test.
+    // Saving is its own step, without another test of the unsaved settings; the passing test
+    // then counts for the stored source, which is tested once so the server keeps the result.
     await user.click(screen.getByRole("button", { name: "Add data source" }));
     await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
-    expect(lastCall(server, "POST", "/health")).toBeUndefined();
+    expect(server.areas.datasources.tests).toHaveLength(1);
+    expect(server.calls.filter((call) => call.path.endsWith("/health"))).toEqual([
+      expect.objectContaining({ method: "POST", path: "/api/orgs/o1/datasources/ds-new-1/health" }),
+    ]);
   });
 
   it("shows a failed test and the secrets it sent only once to the test route", async () => {

@@ -3,7 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../api/generated/shapes";
-import { optionLabels, pickOption } from "../test/select";
+import { pickOption } from "../test/select";
+import {
+  addStep,
+  catalogNames,
+  catalogOption,
+  chooseShape,
+  offeredSteps,
+  openCatalog,
+} from "../test/stepCatalog";
 import { StepsEditor } from "./StepsEditor";
 import { type NamedInput, runSteps, type Step } from "./steps";
 
@@ -50,18 +58,18 @@ function setup(initial: Step[] = []) {
   return { user, seen };
 }
 
-const options = () => optionLabels(screen.getByLabelText("Kind of step"));
-
 describe("graph steps in the steps editor", () => {
   it("offers graph steps for a graph, table steps only after a step that makes a table", async () => {
     const { user, seen } = setup();
-    expect(options()).toContain("Count per label");
-    expect(options()).toContain("Turn into a table");
-    expect(options()).not.toContain("Group");
-    expect(screen.getByText(/Table steps follow a step that makes a table/)).toBeTruthy();
+    const graph = await offeredSteps(user);
+    expect(graph.names).toContain("Count per label");
+    expect(graph.names).toContain("Turn into a table");
+    expect(graph.names).not.toContain("Group");
+    // The table steps are listed, but only after a step that makes a table.
+    const tables = await offeredSteps(user, { shape: "Table" });
+    expect(tables.unavailable).toContain("Group");
 
-    await pickOption(user, screen.getByLabelText("Kind of step"), "Count per label");
-    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await addStep(user, "Count per label");
     expect(seen.steps[0]).toMatchObject({ type: "countLabels", frame: "A" });
     const step = screen.getByRole("listitem", { name: "Step 1" });
     // The shape change is visible at the step, with where it runs.
@@ -70,8 +78,10 @@ describe("graph steps in the steps editor", () => {
     expect(within(step).getByText("2 rows, 3 fields")).toBeTruthy();
 
     // Now there is a table and no graph left: table steps, no graph steps.
-    expect(options()).toContain("Group");
-    expect(options()).not.toContain("Count per label");
+    const after = await offeredSteps(user);
+    expect(after.names).toContain("Group");
+    expect(after.unavailable).not.toContain("Group");
+    expect(after.names).not.toContain("Count per label");
     // The chain of shapes names each step's result.
     const chain = screen.getByRole("list", { name: "Shapes of the steps" });
     expect(within(chain).getByText("3 nodes, 2 edges")).toBeTruthy();
@@ -111,8 +121,7 @@ describe("graph steps in the steps editor", () => {
 describe("graph steps that stay a graph", () => {
   it("filter a subgraph by label and a property condition, and add the degree", async () => {
     const { user, seen } = setup();
-    await pickOption(user, screen.getByLabelText("Kind of step"), "Filter subgraph");
-    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await addStep(user, "Filter subgraph");
     const step = screen.getByRole("listitem", { name: "Step 1" });
     expect(within(step).getByText("Graph")).toBeTruthy();
     expect(within(step).getByText("3 nodes, 2 edges")).toBeTruthy();
@@ -125,8 +134,7 @@ describe("graph steps that stay a graph", () => {
     expect(within(step).getByText("1 nodes, 0 edges")).toBeTruthy();
 
     // A graph is left, so graph steps are still offered: the degree as a property.
-    await pickOption(user, screen.getByLabelText("Kind of step"), "Calculate degree");
-    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await addStep(user, "Calculate degree");
     expect(seen.steps[1]).toMatchObject({ type: "degree", frame: "A" });
     const run = runSteps(seen.steps, INPUTS);
     expect(run.graphs[0]?.graph.nodes[0]?.properties).toEqual({ name: "Anna", degree: 0 });
@@ -245,42 +253,39 @@ function CompactHarness({ seen }: { seen: { steps: Step[] } }) {
   );
 }
 
-describe("the step catalog (Graph board, frame 5B)", () => {
-  it("lists each kind with what it does and its shapes, table steps as one entry until later", async () => {
+describe("the step catalog (Parity board, frame 14)", () => {
+  it("lists each kind with what it does and its shapes, table steps dimmed until later", async () => {
     const user = userEvent.setup();
     render(<CompactHarness seen={{ steps: [] }} />);
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    const menu = screen.getByRole("menu", { name: "Add step" });
-    const count = within(menu).getByRole("menuitem", { name: "Count per label" });
+    const dialog = await openCatalog(user);
+    const count = catalogOption(dialog, "Count per label");
     expect(count.textContent).toContain("Nodes per label, with their share.");
-    expect(count.textContent).toContain("Graph → Table");
-    expect(within(menu).queryByRole("menuitem", { name: "Group" })).toBeNull();
-    const later = within(menu).getByRole("menuitem", {
-      name: "Group, statistics, trend and more",
-    });
-    expect(later.getAttribute("aria-disabled")).toBe("true");
+    expect(catalogNames(dialog)).not.toContain("Group");
+    // The preview names the shapes the step reads and makes.
+    await user.hover(count);
+    expect(within(dialog).getByRole("complementary").textContent).toContain("Graph → Table");
+    await chooseShape(user, dialog, "Table");
+    const group = catalogOption(dialog, "Group");
+    expect(group.getAttribute("aria-disabled")).toBe("true");
+    expect(group.textContent).toContain("Table steps follow a step that makes a table.");
   });
 
-  it("finds a step by its name or description and adds the one left with Enter", async () => {
+  it("finds a step by its name or description and adds the one under the cursor with Enter", async () => {
     const user = userEvent.setup();
     const seen = { steps: [] as Step[] };
     render(<CompactHarness seen={seen} />);
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    const search = screen.getByRole("searchbox", { name: "Find a step" });
+    const dialog = await openCatalog(user);
+    const search = within(dialog).getByRole("searchbox", { name: "Find a step" });
     expect(document.activeElement).toBe(search);
     await user.type(search, "zzz");
-    expect(screen.getByText("No step matches.")).toBeTruthy();
+    expect(within(dialog).getByText("No step for Graph matches “zzz”.")).toBeTruthy();
     await user.clear(search);
     // "in common" is in the description, not the name.
     await user.type(search, "in common");
-    const menu = screen.getByRole("menu", { name: "Add step" });
-    expect(
-      within(menu)
-        .getAllByRole("menuitem")
-        .map((item) => item.querySelector(".step-catalog__name")?.textContent),
-    ).toEqual(["Shared neighbours"]);
+    expect(catalogNames(dialog)).toEqual(["Shared neighbours"]);
+    expect(within(dialog).getByText("Match in the description")).toBeTruthy();
     await user.keyboard("{Enter}");
     expect(seen.steps.map((s) => s.type)).toEqual(["sharedNeighbours"]);
-    expect(screen.queryByRole("menu", { name: "Add step" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add step" })).toBeNull();
   });
 });

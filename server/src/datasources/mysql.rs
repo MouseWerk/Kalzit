@@ -158,6 +158,7 @@ fn failed(e: sqlx::Error) -> SourceError {
         }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),
         sqlx::Error::Io(io) if connect::is_dead(io.kind()) => connect::lost(io),
+        other if connect::is_protocol_error(&other) => connect::protocol(other),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -204,6 +205,11 @@ async fn limit_session(c: &mut sqlx::MySqlConnection, timeout: Duration) -> Resu
 impl DataSourcePlugin for MySql {
     fn kind(&self) -> &'static str {
         "mysql"
+    }
+
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
     }
 
     fn shapes(&self) -> &'static [Shape] {
@@ -283,6 +289,7 @@ impl DataSourcePlugin for MySql {
             .map(|(c, d)| Column::new(c.name(), Some(d.field_type())))
             .collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql.clone());
         let names: Vec<String> = statement.columns().iter().map(|c| c.name().to_string()).collect();
         let mut query = statement.query();

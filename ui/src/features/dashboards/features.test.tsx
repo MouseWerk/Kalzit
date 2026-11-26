@@ -163,6 +163,197 @@ describe("rows", () => {
   });
 });
 
+describe("“All” of a variable", () => {
+  const regions = (extra: Partial<DashboardModel["variables"][number]> = {}): DashboardModel => ({
+    ...emptyModel("Main"),
+    variables: [
+      {
+        name: "region",
+        label: "Region",
+        type: "custom",
+        options: ["Nord", "Ost", "Sued"],
+        multi: true,
+        includeAll: true,
+        ...extra,
+      },
+    ],
+    panels: [panel("p1", "Orders")],
+  });
+
+  const sentRegion = (server: ReturnType<typeof setup>["server"]) =>
+    server.areas.dashboards.panelQueries.at(-1)?.body.variables?.region;
+
+  it("opens with “All” and sends every value as a list", async () => {
+    const { server } = setup("viewer", regions());
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("button", { name: "Region: All" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Nord", "Ost", "Sued"]));
+  });
+
+  it("sends the custom value for “All” as one value, and a pick leaves “All”", async () => {
+    const { server } = setup("viewer", regions({ allValue: "%" }));
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Region: All" }));
+    await waitFor(() => expect(sentRegion(server)).toBe("%"));
+    const all = screen.getByRole("menuitemcheckbox", { name: "All" });
+    expect(all.getAttribute("aria-checked")).toBe("true");
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ost" }));
+    expect(screen.getByRole("button", { name: "Region: Ost" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Ost"]));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "All" }));
+    expect(screen.getByRole("button", { name: "Region: All" })).toBeTruthy();
+    await waitFor(() => expect(sentRegion(server)).toBe("%"));
+  });
+
+  it("offers “All” first in a single-value list", async () => {
+    const { server } = setup("viewer", regions({ multi: false }));
+    const { user } = renderApp("/dashboards/d-main");
+    const select = await screen.findByRole("combobox", { name: "Region" });
+    expect(select).toHaveProperty("value", "$__all");
+    await waitFor(() => expect(sentRegion(server)).toEqual(["Nord", "Ost", "Sued"]));
+    await pickOption(user, select, "Sued");
+    await waitFor(() => expect(sentRegion(server)).toBe("Sued"));
+  });
+
+  it("repeats a panel per value of “All”", async () => {
+    setup("viewer", {
+      ...regions(),
+      panels: [panel("p1", "Orders", { repeat: { variable: "region", direction: "horizontal" } })],
+    });
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("article", { name: "Orders: Sued" })).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Orders: Nord" })).toBeTruthy();
+  });
+
+  const jobs = (): DashboardModel => ({
+    ...emptyModel("Main"),
+    variables: [
+      {
+        name: "job",
+        label: "Job",
+        type: "query",
+        datasourceId: PG_ID,
+        query: { sql: "SELECT job FROM jobs" },
+        multi: true,
+        includeAll: true,
+      },
+    ],
+    panels: [
+      panel("p1", "Orders", {
+        targets: [
+          {
+            refId: "A",
+            datasourceId: PG_ID,
+            query: { sql: "SELECT * FROM o WHERE job IN ($job)" },
+          },
+        ],
+      }),
+      panel("p2", "Plain"),
+    ],
+    links: [
+      { type: "url", title: "Jobs", url: "https://example.org/jobs?job=$job" },
+      { type: "url", title: "Docs", url: "https://example.org/docs" },
+    ],
+  });
+
+  it("holds what uses a query variable at “All” until its options are there, then runs once", async () => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.variableOptions.job = [
+      { value: "api", label: "api" },
+      { value: "web", label: "web" },
+    ];
+    fake.holdOptions = true;
+    renderApp("/dashboards/d-main");
+    const orders = await screen.findByRole("article", { name: "Orders" });
+    expect(within(orders).getByText("Waiting for the values of job for “All”.")).toBeTruthy();
+    // A panel without the variable runs at once; the link with it waits too.
+    await waitFor(() => expect(fake.panelQueries.map((q) => q.panelId)).toEqual(["p2"]));
+    expect(screen.getByRole("link", { name: "Docs" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Jobs" })).toBeNull();
+    act(() => fake.releaseOptions());
+    await waitFor(() =>
+      expect(
+        fake.panelQueries.filter((q) => q.panelId === "p1").map((q) => q.body.variables?.job),
+      ).toEqual([["api", "web"]]),
+    );
+    expect(await screen.findByRole("link", { name: "Jobs" })).toBeTruthy();
+    expect(within(article("Orders")).queryByText(/Waiting for the values/)).toBeNull();
+  });
+
+  it("shows the options query's error on the panels that use the variable, never an empty list", async () => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.failingOptions.job = "connection refused";
+    renderApp("/dashboards/d-main");
+    const orders = await screen.findByRole("article", { name: "Orders" });
+    const alert = await within(orders).findByRole("alert");
+    expect(alert.textContent).toContain("The values of job for “All” could not be read:");
+    expect(alert.textContent).toContain("The data source reported an error.");
+    await waitFor(() => expect(fake.panelQueries.map((q) => q.panelId)).toContain("p2"));
+    expect(fake.panelQueries.some((q) => q.panelId === "p1")).toBe(false);
+  });
+
+  it.each([
+    ["kiosk mode", "/dashboards/d-main?kiosk=kiosk"],
+    ["a panel shown alone", "/dashboards/d-main?viewPanel=p1"],
+  ])("reads the options of “All” in %s too, where no filter bar shows", async (_, address) => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.variableOptions.job = [{ value: "api", label: "api" }];
+    renderApp(address);
+    await waitFor(() =>
+      expect(
+        fake.panelQueries.filter((q) => q.panelId === "p1").map((q) => q.body.variables?.job),
+      ).toEqual([["api"]]),
+    );
+    expect(
+      within(await screen.findByRole("article", { name: "Orders" })).queryByText(/Waiting/),
+    ).toBeNull();
+  });
+
+  it("does not wait for ever on a query variable without a source", async () => {
+    const model = jobs();
+    const [job] = model.variables;
+    if (job === undefined) throw new Error("no variable");
+    model.variables = [{ ...job, datasourceId: "" }];
+    setup("viewer", model);
+    renderApp("/dashboards/d-main");
+    const alert = await within(await screen.findByRole("article", { name: "Orders" })).findByRole(
+      "alert",
+    );
+    expect(alert.textContent).toContain("The variable has no data source yet.");
+  });
+
+  it("takes a typed value where the variable allows it", async () => {
+    const many = Array.from({ length: 3 }, (_, i) => `site-${i + 1}`);
+    const { server } = setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        {
+          name: "site",
+          type: "custom",
+          options: many,
+          current: ["site-1"],
+          multi: true,
+          allowCustom: true,
+        },
+      ],
+      panels: [panel("p1", "Orders")],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "site: site-1" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search values" }), "werk-9");
+    await user.click(screen.getByRole("menuitem", { name: "Use “werk-9”" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables?.site).toEqual([
+        "werk-9",
+        "site-1",
+      ]),
+    );
+  });
+});
+
 describe("multi-value variable picker", () => {
   const regions = (current: string[]): DashboardModel => ({
     ...emptyModel("Main"),
@@ -880,6 +1071,7 @@ describe("panel time options", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await panelAction(user, "Edit “Orders”");
     const dialog = await screen.findByRole("region", { name: "Edit panel" });
+    await user.click(within(dialog).getByRole("button", { name: /Query options/ }));
     await fill(user, within(dialog).getByRole("textbox", { name: /Own time range/ }), "yesterday");
     expect(within(dialog).getByText(/Enter a range relative to now/)).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Save dashboard…" })).toHaveProperty(
@@ -1316,7 +1508,8 @@ describe("JSON, import and export", () => {
     const shop = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
     expect(shop).toBeDefined();
     const { user, location } = renderApp("/dashboards");
-    await user.click(await screen.findByRole("button", { name: "Import…" }));
+    await user.click(await screen.findByRole("button", { name: "Import" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Import…" }));
     const dialog = screen.getByRole("dialog", { name: "Import dashboard" });
     await fill(
       user,

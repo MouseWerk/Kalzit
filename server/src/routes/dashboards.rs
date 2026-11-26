@@ -38,12 +38,15 @@ pub fn routes() -> Vec<RouteDef> {
     use Access::OrgMember;
     vec![
         route(Method::GET, "/orgs/{orgId}/dashboards", Access::Org(Permission::DashboardsRead), list),
+        route(Method::GET, "/orgs/{orgId}/dashboards/counts", Access::Org(Permission::DashboardsRead), counts),
         route(Method::POST, "/orgs/{orgId}/dashboards", OrgMember, create),
         route(Method::POST, "/orgs/{orgId}/dashboards/validate", OrgMember, validate),
         // Places and data sources are checked in the handler, as for `create`.
         route(Method::POST, "/orgs/{orgId}/dashboards/import/grafana", OrgMember, import_grafana)
             .body_limit(8 * 1024 * 1024),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/import-report", OrgMember, import_report),
+        // A Grafana address (`/d/<uid>`): the dashboard behind a uid, if the caller may read it.
+        route(Method::GET, "/orgs/{orgId}/dashboards/by-uid/{uid}", OrgMember, by_uid),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
         route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash).changes_rights(),
@@ -70,15 +73,24 @@ struct DashboardRow {
     created_by: Option<String>,
     created_at: i64,
     updated_by: Option<String>,
+    updated_by_name: Option<String>,
     updated_at: i64,
     deleted_at: Option<i64>,
     /// The current version's tags, as a JSON array.
     tags: String,
     owner_team_id: Option<String>,
     team_only: i64,
+    /// When the caller last opened it; only the list reads it.
+    #[sqlx(default)]
+    opened_at: Option<i64>,
+    /// 1 when the caller starred it; only the list reads it.
+    #[sqlx(default)]
+    starred: Option<i64>,
 }
 
-const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags, \
+/// The name is read from the account as it is now: `NULL` once the account is gone.
+const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, \
+     (SELECT u.name FROM users u WHERE u.id = dashboards.updated_by) AS updated_by_name, updated_at, deleted_at, tags, \
      owner_team_id, team_only";
 
 #[derive(Serialize)]
@@ -93,6 +105,8 @@ pub struct DashboardSummary {
     created_at: i64,
     updated_at: i64,
     updated_by: Option<String>,
+    /// The display name of who saved last; `null` when the account no longer exists.
+    updated_by_name: Option<String>,
     deleted_at: Option<i64>,
     tags: Vec<String>,
     access: ResourceAccess,
@@ -101,6 +115,16 @@ pub struct DashboardSummary {
     owner_team: Option<OwnerTeam>,
     /// Only the owner team, grants on the dashboard and org admins see it.
     team_only: bool,
+    /// Lists only: whether the caller starred it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    starred: Option<bool>,
+    /// Lists only: when the caller last opened it; absent when they never did (or it fell out of
+    /// their recently opened dashboards).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    opened_at: Option<i64>,
+    /// Lists with `layout=true` only: where the panels sit, for a schematic preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout: Option<Layout>,
 }
 
 impl DashboardSummary {
@@ -113,14 +137,117 @@ impl DashboardSummary {
             created_at: r.created_at,
             updated_at: r.updated_at,
             updated_by: r.updated_by.clone(),
+            updated_by_name: r.updated_by_name.clone(),
             deleted_at: r.deleted_at,
             // Written by the server from a validated model; an unreadable value shows no tags.
             tags: serde_json::from_str(&r.tags).unwrap_or_default(),
             access: ResourceAccess::dashboard(index.dashboard(&r.id, r.folder_id.as_deref())),
             owner_team: OwnerTeam::of(r.owner_team_id.as_deref(), index),
             team_only: r.team_only != 0,
+            starred: r.starred.map(|s| s != 0),
+            opened_at: r.opened_at,
+            layout: None,
         }
     }
+}
+
+/// At most this many panels (and row bands) go into a list's layout preview; a dashboard that
+/// holds more shows its top part.
+const MAX_LAYOUT_ITEMS: usize = 24;
+
+/// The largest page a list with `layout=true` answers: every dashboard's current model is read.
+const MAX_LAYOUT_PAGE: u32 = 50;
+
+/// Where a dashboard's panels sit, on the 24-column grid, without anything they show.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layout {
+    /// Panels and row bands, top to bottom; rows count from the top of the dashboard.
+    items: Vec<LayoutItem>,
+    /// The dashboard holds more than `items` shows.
+    more: bool,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct LayoutItem {
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    /// The panel type (`timeseries`, a plugin's id), or `row` for a row's band.
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// The layout of a stored, migrated model: panels outside rows first, then each row as a band of
+/// height 1 with its panels below it unless it is collapsed (as the dashboard opens).
+fn layout_of(model: &Value) -> Layout {
+    let grid = |p: &Value| -> Option<(u64, u64, u64, u64)> {
+        let g = &p["grid"];
+        Some((g["x"].as_u64()?, g["y"].as_u64()?, g["w"].as_u64()?, g["h"].as_u64()?))
+    };
+    let kind = |p: &Value| p["type"].as_str().unwrap_or("").chars().take(64).collect::<String>();
+    let panels: Vec<&Value> = model["panels"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    let rows: Vec<&Value> = model["rows"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    let row_ids: Vec<&str> = rows.iter().filter_map(|r| r["id"].as_str()).collect();
+    let in_row = |p: &Value| p["rowId"].as_str().is_some_and(|id| row_ids.contains(&id));
+    let mut items = Vec::new();
+    let mut bottom = 0u64;
+    for p in panels.iter().filter(|p| !in_row(p)) {
+        if let Some((x, y, w, h)) = grid(p) {
+            bottom = bottom.max(y.saturating_add(h));
+            items.push(LayoutItem { x, y, w, h, kind: kind(p) });
+        }
+    }
+    for row in rows {
+        let Some(id) = row["id"].as_str() else { continue };
+        items.push(LayoutItem { x: 0, y: bottom, w: u64::from(model::GRID_COLUMNS), h: 1, kind: "row".into() });
+        let top = bottom.saturating_add(1);
+        bottom = top;
+        if row["collapsed"].as_bool() == Some(true) {
+            continue;
+        }
+        for p in panels.iter().filter(|p| p["rowId"].as_str() == Some(id)) {
+            if let Some((x, y, w, h)) = grid(p) {
+                let y = top.saturating_add(y);
+                bottom = bottom.max(y.saturating_add(h));
+                items.push(LayoutItem { x, y, w, h, kind: kind(p) });
+            }
+        }
+    }
+    items.sort_by_key(|i| (i.y, i.x));
+    let more = items.len() > MAX_LAYOUT_ITEMS;
+    items.truncate(MAX_LAYOUT_ITEMS);
+    Layout { items, more }
+}
+
+/// The layouts of the dashboards `ids` at their current version, read through `conn`; a model
+/// this server cannot read leaves its dashboard without one.
+async fn layouts(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    ids: &[&str],
+) -> ApiResult<std::collections::HashMap<String, Layout>> {
+    let mut out = std::collections::HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    // `$2` onwards, one per id: numbers only, so nothing from the request reaches the SQL.
+    let list = (0..ids.len()).map(|i| format!("${}", i + 2)).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT d.id, v.model FROM dashboards d JOIN dashboard_versions v \
+         ON v.dashboard_id = d.id AND v.version = d.version WHERE d.org_id = $1 AND d.id IN ({list})"
+    );
+    let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql)).bind(org_id);
+    for id in ids {
+        query = query.bind(*id);
+    }
+    for (id, raw) in query.fetch_all(&mut *conn).await? {
+        if let Ok(model) = stored_model(&raw) {
+            out.insert(id, layout_of(&model));
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Serialize)]
@@ -448,11 +575,23 @@ pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str
     Ok(gone)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum Sort {
+    /// By title, then id (the default).
+    #[default]
+    Title,
+    /// Newest change first, then id.
+    Updated,
+    /// What the caller opened last first, then what they never opened by newest change, then id.
+    Opened,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListQuery {
     folder_id: Option<String>,
-    /// Part of the title, any case.
+    /// Part of the title, of a tag or of the name of the folder it is in, any case.
     q: Option<String>,
     /// `true` lists the trash instead.
     trashed: Option<bool>,
@@ -461,6 +600,14 @@ pub struct ListQuery {
     /// A team context: only dashboards outside other teams' spaces, in the team's own spaces and
     /// what was shared with the team (see `folders::TeamScope`).
     team: Option<String>,
+    /// `true`: only the dashboards the caller starred.
+    starred: Option<bool>,
+    /// `true`: only the dashboards the caller opened recently.
+    opened: Option<bool>,
+    /// `true`: each summary carries its panel layout (`limit` at most 50).
+    layout: Option<bool>,
+    #[serde(default)]
+    sort: Sort,
     limit: Option<u32>,
     cursor: Option<String>,
 }
@@ -471,49 +618,140 @@ pub(super) fn like_contains(needle: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Ordered by title (`collation`), then id. Dashboards the caller does not see (in a restricted folder without
-/// access, and no grant on the dashboard itself) are left out by the query itself, so every page
-/// is full.
+/// The caller's (`$2`) own views and stars, joined once to `dashboards`: `opened.viewed_at` is
+/// when they last opened the row's dashboard (from their recently opened list), `starred.star_id`
+/// is set when they starred it. Both tables hold one row per user and dashboard, so the join
+/// never repeats a dashboard; the columns are renamed so none clashes with `dashboards`.
+const CALLER_JOINS: &str = "LEFT JOIN (SELECT dashboard_id AS view_id, viewed_at FROM dashboard_views WHERE user_id = $2) opened \
+     ON opened.view_id = dashboards.id \
+     LEFT JOIN (SELECT dashboard_id AS star_id FROM dashboard_stars WHERE user_id = $2 AND org_id = $1) starred \
+     ON starred.star_id = dashboards.id";
+
+/// At most this many folders whose name matches a search widen it; a search that matches more
+/// folder names is not narrowing anything.
+const MAX_MATCHING_FOLDERS: usize = 200;
+
+/// The visible folders, not in the trash, whose name contains `needle` (lower case already).
+fn matching_folders(tree: &Tree, needle: &str) -> Vec<String> {
+    let mut ids: Vec<String> = tree
+        .rows
+        .values()
+        .filter(|f| f.deleted_at.is_none() && tree.visible(&f.id) && f.name.to_lowercase().contains(needle))
+        .map(|f| f.id.clone())
+        .collect();
+    ids.sort();
+    ids.truncate(MAX_MATCHING_FOLDERS);
+    ids
+}
+
+/// Ordered by title (`collation`), by the last change or by when the caller opened it last.
+/// Dashboards the caller does not see (in a restricted folder without access, and no grant on the
+/// dashboard itself) are left out by the query itself, so every page is full.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<DashboardSummary>>> {
-    let limit = page_limit(q.limit)? as usize;
-    let after: Option<(String, String)> = decode_cursor(q.cursor.as_deref())?;
-    let mut conn = state.db.acquire().await?;
-    if let Some(folder) = q.folder_id.as_deref() {
-        let tree = Tree::load(&mut conn, &ctx).await?;
-        if !tree.rows.contains_key(folder) || !tree.visible(folder) {
-            return Err(ApiError::not_found());
+    let limit = page_limit(q.limit)?;
+    let with_layout = q.layout.unwrap_or(false);
+    if with_layout && limit > MAX_LAYOUT_PAGE {
+        return Err(
+            ApiError::validation(format!("limit must be 1 to {MAX_LAYOUT_PAGE} with layout")).with_field("limit")
+        );
+    }
+    let limit = limit as usize;
+    // The cursor is the last row's (title, id), (updated time, id) or (opened time, updated
+    // time, id), by the sort; a never opened row counts as opened at 0.
+    let (after_title, after_time, after_opened, after_id) = match q.sort {
+        Sort::Title => {
+            let after: Option<(String, String)> = decode_cursor(q.cursor.as_deref())?;
+            let (t, i) = after.unzip();
+            (t, None, None, i)
         }
+        Sort::Updated => {
+            let after: Option<(i64, String)> = decode_cursor(q.cursor.as_deref())?;
+            let (t, i) = after.unzip();
+            (None, t, None, i)
+        }
+        Sort::Opened => match decode_cursor::<(i64, i64, String)>(q.cursor.as_deref())? {
+            Some((opened, updated, id)) => (None, Some(updated), Some(opened), Some(id)),
+            None => (None, None, None, None),
+        },
+    };
+    let mut conn = state.db.acquire().await?;
+    // Lower case by Unicode rules on both sides: `search_title` and `tag_key` are written by the
+    // server, folder names are compared here.
+    let needle = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
+    let pattern = needle.as_deref().map(like_contains);
+    // The folder tree, read once for the request: for the folder in the query and for the folder
+    // names a search matches.
+    let tree = if q.folder_id.is_some() || needle.is_some() { Some(Tree::load(&mut conn, &ctx).await?) } else { None };
+    if let (Some(folder), Some(tree)) = (q.folder_id.as_deref(), tree.as_ref())
+        && (!tree.rows.contains_key(folder) || !tree.visible(folder))
+    {
+        return Err(ApiError::not_found());
     }
     let index = AccessIndex::load(&mut conn, &ctx).await?;
     super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
-    // Lower case by Unicode rules on both sides: `search_title` is written by the server.
-    let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
-    // The cursor names the last title; the database compares its sort key (`collation`).
-    let (after_title, after_id) = after.unzip();
-    let after_key = after_title.as_deref().map(collation::key);
+    let folder_hits = match (needle.as_deref(), tree.as_ref()) {
+        (Some(needle), Some(tree)) => matching_folders(tree, needle),
+        _ => Vec::new(),
+    };
+    // `$17` onwards, one per matching folder: numbers only, so nothing from the request reaches
+    // the SQL.
+    let in_folders = if folder_hits.is_empty() {
+        String::new()
+    } else {
+        let list = (0..folder_hits.len()).map(|i| format!("${}", i + 17)).collect::<Vec<_>>().join(", ");
+        format!(" OR folder_id IN ({list})")
+    };
+    let (after, order) = match q.sort {
+        // Each names the other sorts' cursors too, which are NULL then: PostgreSQL needs every
+        // bound parameter in the statement to know its type.
+        Sort::Title => (
+            "(CAST($8 AS TEXT) IS NULL OR sort_title > $8 OR (sort_title = $8 AND id > $9)) \
+             AND CAST($15 AS BIGINT) IS NULL AND CAST($16 AS BIGINT) IS NULL"
+                .to_string(),
+            "sort_title, id".to_string(),
+        ),
+        Sort::Updated => (
+            "(CAST($15 AS BIGINT) IS NULL OR updated_at < $15 OR (updated_at = $15 AND id < $9)) \
+             AND CAST($8 AS TEXT) IS NULL AND CAST($16 AS BIGINT) IS NULL"
+                .to_string(),
+            "updated_at DESC, id DESC".to_string(),
+        ),
+        Sort::Opened => (
+            "(CAST($16 AS BIGINT) IS NULL OR COALESCE(opened.viewed_at, 0) < $16 \
+             OR (COALESCE(opened.viewed_at, 0) = $16 AND (updated_at < $15 OR (updated_at = $15 AND id < $9)))) \
+             AND CAST($8 AS TEXT) IS NULL"
+                .to_string(),
+            "COALESCE(opened.viewed_at, 0) DESC, updated_at DESC, id DESC".to_string(),
+        ),
+    };
     // A team context (`$12`) leaves out other teams' spaces in the query itself, so pages stay full.
     let sql = format!(
-        "{}{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
+        "{}{} SELECT {COLUMNS}, opened.viewed_at AS opened_at, \
+         CAST(CASE WHEN starred.star_id IS NULL THEN 0 ELSE 1 END AS BIGINT) AS starred \
+         FROM dashboards {CALLER_JOINS} WHERE org_id = $1 \
          AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
-         AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
+         AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\' \
+              OR id IN (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key LIKE $7 ESCAPE '\\'){in_folders}) \
          AND {} \
-         AND (CAST($8 AS TEXT) IS NULL OR sort_title > $8 OR (sort_title = $8 AND id > $9)) \
+         AND {after} \
          AND (CAST($11 AS TEXT) IS NULL OR id IN \
               (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
          AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
               OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard')) \
-         ORDER BY sort_title, id LIMIT $10",
+         AND (CAST($13 AS BIGINT) = 0 OR starred.star_id IS NOT NULL) \
+         AND (CAST($14 AS BIGINT) = 0 OR opened.viewed_at IS NOT NULL) \
+         ORDER BY {order} LIMIT $10",
         folders::VISIBILITY_CTE,
         folders::scope_cte(12),
         folders::dashboard_visible("dashboards"),
     );
     // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
-    let rows: Vec<DashboardRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let mut query = sqlx::query_as::<_, DashboardRow>(sqlx::AssertSqlSafe(sql))
         .bind(&ctx.org_id)
         .bind(&ctx.user.id)
         .bind(&ctx.role)
@@ -521,21 +759,145 @@ async fn list(
         .bind(q.trashed.unwrap_or(false) as i64)
         .bind(q.folder_id.as_deref())
         .bind(pattern.as_deref())
-        .bind(after_key.as_deref())
+        // The cursor names the last title; the database compares its sort key (`collation`).
+        .bind(after_title.as_deref().map(collation::key))
         .bind(after_id.as_deref())
         .bind(limit as i64 + 1)
         .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase))
         .bind(q.team.as_deref())
-        .fetch_all(&mut *conn)
-        .await?;
+        .bind(q.starred.unwrap_or(false) as i64)
+        .bind(q.opened.unwrap_or(false) as i64)
+        .bind(after_time)
+        .bind(after_opened);
+    for id in &folder_hits {
+        query = query.bind(id.as_str());
+    }
+    let rows: Vec<DashboardRow> = query.fetch_all(&mut *conn).await?;
+    let more = rows.len() > limit;
+    let rows = &rows[..rows.len().min(limit)];
     let mut items: Vec<DashboardSummary> = rows.iter().map(|r| DashboardSummary::new(r, &index)).collect();
-    let more = items.len() > limit;
-    items.truncate(limit);
+    if with_layout {
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let mut found = layouts(&mut conn, &ctx.org_id, &ids).await?;
+        for item in &mut items {
+            item.layout = found.remove(&item.id);
+        }
+    }
     let next_cursor = match items.last() {
-        Some(last) if more => Some(encode_cursor(&(&last.title, &last.id))),
+        Some(last) if more => Some(match q.sort {
+            Sort::Title => encode_cursor(&(&last.title, &last.id)),
+            Sort::Updated => encode_cursor(&(last.updated_at, &last.id)),
+            Sort::Opened => encode_cursor(&(last.opened_at.unwrap_or(0), last.updated_at, &last.id)),
+        }),
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CountQuery {
+    /// A team context, as for the list.
+    team: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCount {
+    /// `null`: the top level.
+    folder_id: Option<String>,
+    count: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagCount {
+    /// One of the spellings in use; the tag filter matches any case.
+    tag: String,
+    count: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Counts {
+    /// Every dashboard the list would show without a folder, outside the trash.
+    total: i64,
+    /// The same, per folder the caller sees (`null`: the top level); folders without any, and
+    /// folders hidden from the caller, are left out.
+    folders: Vec<FolderCount>,
+    /// Of those, the ones the caller starred.
+    starred: i64,
+    /// Of those, the ones the caller opened recently.
+    opened: i64,
+    /// The tags of those dashboards, most used first, at most `MAX_COUNTED_TAGS`.
+    tags: Vec<TagCount>,
+}
+
+/// At most this many tags are counted, the most used ones.
+const MAX_COUNTED_TAGS: i64 = 100;
+
+/// How many dashboards the list shows per folder, starred and opened, and the tags they carry,
+/// by the list's own visibility rules, so the folder tree and the tag filter can name them.
+async fn counts(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    QueryParams(q): QueryParams<CountQuery>,
+) -> ApiResult<Json<Counts>> {
+    let mut conn = state.db.acquire().await?;
+    super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
+    let scoped = "(folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
+         OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard'))";
+    let sql = format!(
+        "{}{} SELECT folder_id, \
+         CAST(CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN 1 ELSE 0 END AS BIGINT) AS hidden, \
+         CAST(COUNT(*) AS BIGINT), CAST(SUM(CASE WHEN starred.star_id IS NULL THEN 0 ELSE 1 END) AS BIGINT), \
+         CAST(SUM(CASE WHEN opened.viewed_at IS NULL THEN 0 ELSE 1 END) AS BIGINT) \
+         FROM dashboards {CALLER_JOINS} WHERE org_id = $1 AND deleted_at IS NULL AND {} AND {scoped} \
+         GROUP BY folder_id, hidden",
+        folders::VISIBILITY_CTE,
+        folders::scope_cte(5),
+        folders::dashboard_visible("dashboards"),
+    );
+    // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
+    let rows: Vec<(Option<String>, i64, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&ctx.org_id)
+        .bind(&ctx.user.id)
+        .bind(&ctx.role)
+        .bind(folders::sees_every_folder(&ctx))
+        .bind(q.team.as_deref())
+        .fetch_all(&mut *conn)
+        .await?;
+    let total = rows.iter().map(|r| r.2).sum();
+    let starred = rows.iter().map(|r| r.3).sum();
+    let opened = rows.iter().map(|r| r.4).sum();
+    // A dashboard reached through a grant inside a hidden folder counts in all, but its folder
+    // is not named: the caller does not see it.
+    let folder_counts = rows
+        .into_iter()
+        .filter(|(_, hidden, count, _, _)| *count > 0 && *hidden == 0)
+        .map(|(folder_id, _, count, _, _)| FolderCount { folder_id, count })
+        .collect();
+    let sql = format!(
+        "{}{} SELECT MIN(t.tag), COUNT(*) FROM dashboard_tags t JOIN dashboards ON dashboards.id = t.dashboard_id \
+         WHERE t.org_id = $1 AND dashboards.org_id = $1 AND dashboards.deleted_at IS NULL AND {} \
+         AND (dashboards.folder_id IS NULL OR dashboards.folder_id NOT IN (SELECT id FROM scope_out) \
+              OR dashboards.id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard')) \
+         GROUP BY t.tag_key ORDER BY COUNT(*) DESC, t.tag_key LIMIT $6",
+        folders::VISIBILITY_CTE,
+        folders::scope_cte(5),
+        folders::dashboard_visible("dashboards"),
+    );
+    let tags: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&ctx.org_id)
+        .bind(&ctx.user.id)
+        .bind(&ctx.role)
+        .bind(folders::sees_every_folder(&ctx))
+        .bind(q.team.as_deref())
+        .bind(MAX_COUNTED_TAGS)
+        .fetch_all(&mut *conn)
+        .await?;
+    let tags = tags.into_iter().map(|(tag, count)| TagCount { tag, count }).collect();
+    Ok(Json(Counts { total, folders: folder_counts, starred, opened, tags }))
 }
 
 #[derive(Deserialize)]
@@ -563,6 +925,8 @@ struct ImportedFrom<'a> {
     source: &'a str,
     source_version: Option<i64>,
     report: &'a Value,
+    /// The `uid` the dashboard had in Grafana, so its old address still finds it.
+    source_uid: Option<&'a str>,
 }
 
 /// Creates a dashboard as `POST /dashboards` does; an import passes its report, which is stored
@@ -630,7 +994,7 @@ async fn create_dashboard(
         summary["importedFrom"] = json!(imported.source);
         sqlx::query(
             "INSERT INTO dashboard_import_reports (dashboard_id, org_id, source, source_version, report, created_by, \
-             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             created_at, source_uid) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&id)
         .bind(&ctx.org_id)
@@ -639,6 +1003,7 @@ async fn create_dashboard(
         .bind(imported.report.to_string())
         .bind(&ctx.user.id)
         .bind(now)
+        .bind(imported.source_uid)
         .execute(&mut *tx)
         .await?;
     }
@@ -697,8 +1062,21 @@ async fn import_grafana(
         })?;
         sources.insert(grafana_ref.clone(), SourceTarget { id: ds.id, kind: ds.kind });
     }
-    let conversion = grafana::convert(&body.dashboard, &sources)
+    // Grafana's default data source (a panel without one) becomes the organization's default
+    // unless the caller mapped it, and only when the caller may query it (else it stays
+    // unmapped, as without a default).
+    if !sources.contains_key("default")
+        && let Some(id) = super::datasources::default_datasource(&state.db, &ctx.org_id).await?
+    {
+        let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
+        if index.datasource(&id).is_some_and(|held| held.contains(&Permission::DatasourcesQuery)) {
+            let ds = crate::datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
+            sources.insert("default".into(), SourceTarget { id: ds.id, kind: ds.kind });
+        }
+    }
+    let mut conversion = grafana::convert(&body.dashboard, &sources)
         .map_err(|e| ApiError::validation(e).with_field("dashboard").because("dashboards.import_unreadable"))?;
+    let source_uid = kept_source_uid(&state, &ctx, &body.dashboard, &mut conversion.report).await?;
     let report_value = serde_json::to_value(&conversion.report).map_err(|e| ApiError::internal("dashboards", e))?;
     if body.dry_run {
         // The checks of a save, without saving: the caller learns now what a save would refuse.
@@ -712,10 +1090,109 @@ async fn import_grafana(
         model: conversion.model.clone(),
         message: Some("Imported from Grafana".into()),
     };
-    let imported =
-        ImportedFrom { source: "grafana", source_version: conversion.report.source_version, report: &report_value };
+    let imported = ImportedFrom {
+        source: "grafana",
+        source_version: conversion.report.source_version,
+        report: &report_value,
+        source_uid: source_uid.as_deref(),
+    };
     let dashboard = create_dashboard(&state, &ctx, &info, create, Some(imported)).await?;
     Ok(Json(GrafanaImportAnswer { report: conversion.report, model: conversion.model, dashboard: Some(dashboard) }))
+}
+
+/// The longest Grafana `uid` kept with an import (Grafana's own limit is 40).
+const MAX_SOURCE_UID: usize = 200;
+
+/// A uid that cannot be one path segment of an address (`/d/<uid>`).
+fn path_unsafe(uid: &str) -> bool {
+    uid.is_empty() || uid == "." || uid == ".." || uid.len() > MAX_SOURCE_UID || uid.chars().any(char::is_control)
+}
+
+/// The Grafana `uid` an import keeps for `/d/<uid>`. Not one that already names something in the
+/// organization (a dashboard's id or a provisioned dashboard's uid, which `/d/<uid>` finds first
+/// anyway): the import keeps none then and its report says so.
+async fn kept_source_uid(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard: &Value,
+    report: &mut crate::provisioning::grafana::ImportReport,
+) -> ApiResult<Option<String>> {
+    use crate::provisioning::grafana::{ImportNote, ItemKind};
+    let Some(uid) = dashboard.get("uid").and_then(Value::as_str).map(str::trim).filter(|uid| !path_unsafe(uid)) else {
+        return Ok(None);
+    };
+    let taken = fetch(&state.db, &ctx.org_id, uid).await?.is_some_and(|row| row.deleted_at.is_none())
+        || provisioned_dashboard(&state.db, &ctx.org_id, uid).await?.is_some();
+    if !taken {
+        return Ok(Some(uid.to_string()));
+    }
+    if let Some(item) = report.items.iter_mut().find(|item| item.kind == ItemKind::Dashboard) {
+        item.notes.push(ImportNote {
+            code: "uid_not_kept".into(),
+            params: [("uid".to_string(), uid.to_string())].into(),
+            text: format!(
+                "the uid {uid} already names a dashboard here, so its Grafana address does not lead to this one"
+            ),
+        });
+    }
+    Ok(None)
+}
+
+/// The dashboard a provisioning set manages under `uid` in the organization.
+async fn provisioned_dashboard(db: &sqlx::AnyPool, org_id: &str, uid: &str) -> ApiResult<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT resource_id FROM provisioned_resources WHERE org_id = $1 AND kind = $2 AND uid = $3")
+            .bind(org_id)
+            .bind(ResourceKind::Dashboard.as_str())
+            .bind(uid)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|(id,)| id))
+}
+
+#[derive(Serialize)]
+pub struct ByUidAnswer {
+    id: String,
+}
+
+/// The live dashboard a uid names: the Grafana uid of an imported dashboard (the newest import
+/// first), the uid of a provisioned one, or a dashboard's own id. `not_found` when none is found
+/// or the caller may not read it, so the answer tells nothing about dashboards they cannot see.
+async fn by_uid(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, uid)): Path<(String, String)>,
+) -> ApiResult<Json<ByUidAnswer>> {
+    if path_unsafe(&uid) {
+        return Err(ApiError::not_found());
+    }
+    let live = |row: Option<DashboardRow>| row.filter(|row| row.deleted_at.is_none()).map(|row| row.id);
+    // A dashboard's own id first, then a provisioned uid, then the newest import's Grafana uid: an
+    // import can never take over an address that names something else.
+    let mut found = live(fetch(&state.db, &ctx.org_id, &uid).await?);
+    if found.is_none()
+        && let Some(id) = provisioned_dashboard(&state.db, &ctx.org_id, &uid).await?
+    {
+        found = live(fetch(&state.db, &ctx.org_id, &id).await?);
+    }
+    if found.is_none() {
+        let imported: Option<(String,)> = sqlx::query_as(
+            "SELECT r.dashboard_id FROM dashboard_import_reports r JOIN dashboards d ON d.id = r.dashboard_id \
+             WHERE r.org_id = $1 AND r.source_uid = $2 AND d.deleted_at IS NULL ORDER BY r.created_at DESC LIMIT 1",
+        )
+        .bind(&ctx.org_id)
+        .bind(&uid)
+        .fetch_optional(&state.db)
+        .await?;
+        found = imported.map(|(id,)| id);
+    }
+    let Some(id) = found else { return Err(ApiError::not_found()) };
+    // The rights on the one dashboard found; one the caller may not read is not found either.
+    match authz::check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&id)).await {
+        Ok(()) => Ok(Json(ByUidAnswer { id })),
+        Err(e) if matches!(e.status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN) => Err(ApiError::not_found()),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Serialize)]

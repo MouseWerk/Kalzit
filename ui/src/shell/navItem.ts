@@ -2,6 +2,7 @@ import type { LinkProps } from "@tanstack/react-router";
 import type { IconName } from "../components/Icon";
 import type { MessageKey } from "../i18n/i18n";
 import type { OrgPermissions } from "../org/useOrg";
+import type { PrimeQuery } from "./primeShell";
 
 /** A sub-page of a navigation entry, shown in its expandable list (or the rail's flyout). */
 export interface NavChild {
@@ -37,14 +38,28 @@ export interface NavItem {
    * A hook that shows the entry although `visible` hid it, from data the area loads (a grant on
    * one resource, say). The shell calls it only for a hidden entry, once per render of that entry;
    * it should read through TanStack Query, so the data is cached and not fetched again on every
-   * render, and answer false while loading.
+   * render, and answer undefined while loading: the entry's row is then held by a quiet
+   * placeholder, so the entries below it never move when the answer arrives.
    */
-  useGranted?: () => boolean;
+  useGranted?: () => boolean | undefined;
+  /**
+   * Loads what `useGranted` reads into the query cache before the shell first renders
+   * (src/shell/primeShell.ts), so a full page load draws the final navigation from the first
+   * frame. Called with the permissions the organization answered; asks nothing they forbid.
+   * `ensure` loads one query once, without retries, and skips one that already failed.
+   */
+  prime?: (ensure: PrimeQuery, orgId: string, permissions: OrgPermissions) => Promise<unknown>;
   /**
    * A hook for a neutral number after the label (alerting's firing rules), with the words a
    * screen reader says for it; null shows none. Read through TanStack Query, like `useGranted`.
    */
   useCount?: () => NavCount | null;
+  /**
+   * A hook that counts how often something new asked for attention since the page opened
+   * (alerting: a rule that started firing); each rise plays the entry's icon motion once (board
+   * Icons.dc.html). It starts at 0 and never counts what was already there when it loaded.
+   */
+  useAttention?: () => number;
   /** Sub-pages; the entry becomes a disclosure that lists the visible ones. */
   children?: readonly NavChild[];
   /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */

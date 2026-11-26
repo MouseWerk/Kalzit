@@ -3,11 +3,12 @@ import { THEMES, type Theme } from "../theme/theme";
 import { readPreference, writePreference } from "./storage";
 
 /**
- * Language and theme someone chose explicitly in this browser while no account's preferences
- * applied: on the sign-in and setup pages. Kept apart from the values the UI applies (which also
- * come from an account's preferences or the server's default), so signing in adopts only a real
- * choice, never what the previous user of a shared browser had. Tagged with the account it
- * belongs to (none on the sign-in page) and cleared on sign-out.
+ * Language and theme mode someone chose explicitly in this browser while no account's
+ * preferences applied: on the sign-in and setup pages (the variants are chosen only in the
+ * account settings). Kept apart from the values the UI applies (which also come from an
+ * account's preferences or the server's default), so signing in adopts only a real choice, never
+ * what the previous user of a shared browser had. Tagged with the account it belongs to (none on
+ * the sign-in page) and cleared on sign-out.
  */
 export interface LocalChoice {
   language?: Language;
@@ -48,7 +49,7 @@ function read(): LocalChoice {
  * account has claimed (its saving failed) is replaced, not added to, so no part of it passes to
  * whoever signs in next.
  */
-export function recordChoice(choice: { language?: Language; theme?: Theme }): void {
+export function recordChoice(choice: Omit<LocalChoice, "userId">): void {
   const before = read();
   const base = before.userId === undefined ? before : {};
   writePreference(LOCAL_CHOICE_KEY, JSON.stringify({ ...base, ...choice }));

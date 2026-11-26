@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -168,11 +168,100 @@ describe("selecting a panel while editing", () => {
   });
 
   it("does not select the panel when a control inside it is used", async () => {
-    setup();
+    setup([panel("p3", "Returns", { grid: { x: 12, y: 0, w: 12, h: 8 }, description: "Why." })]);
+    const { user } = await openEditing();
+    const card = await screen.findByRole("article", { name: "Returns" });
+    await user.click(within(card).getByRole("button", { name: "About Returns" }));
+    expect(card.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("selects the panel whose menu opens, on the first click, instead of the one selected", async () => {
+    setup([panel("p3", "Returns", { grid: { x: 12, y: 0, w: 12, h: 8 } })]);
     const { user, card } = await openEditing();
-    await user.click(within(card).getByRole("button", { name: "Panel menu of “Orders”" }));
+    await user.click(bodyOf(card));
+    expect(card.getAttribute("aria-current")).toBe("true");
+    const other = await screen.findByRole("article", { name: "Returns" });
+    await user.click(within(other).getByRole("button", { name: "Panel menu of “Returns”" }));
+    expect(await screen.findByRole("menu", { name: "Panel menu of “Returns”" })).toBeTruthy();
+    expect(other.getAttribute("aria-current")).toBe("true");
     expect(card.getAttribute("aria-current")).toBeNull();
     await user.keyboard("{Escape}");
+  });
+
+  it("selects the panel from its arrange handle", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    await user.click(within(card).getByRole("button", { name: "Arrange “Orders”" }));
+    expect(card.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("opens the editor from Edit in the selected panel's header", async () => {
+    setup();
+    const { user, card, location } = await openEditing();
+    await user.click(bodyOf(card));
+    const toolbar = within(card).getByRole("group", { name: "Actions for Orders" });
+    // A real press: pointer down and up on the button, which the header's drag leaves alone.
+    await user.click(within(toolbar).getByRole("button", { name: "Edit “Orders”" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main/panels/p1/edit"));
+  });
+
+  it("ends a drag whose release never reached the page, and listens no further", async () => {
+    setup();
+    const { card } = await openEditing();
+    const title = card.querySelector(".panel-card__title") as HTMLElement;
+    const pointer = (type: string, init: { x: number; buttons: number }) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: init.buttons,
+        clientX: init.x,
+        clientY: 10,
+      });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      return event;
+    };
+    act(() => {
+      title.dispatchEvent(pointer("pointerdown", { x: 10, buttons: 1 }));
+    });
+    // Past the threshold with the button held: a drag.
+    act(() => {
+      window.dispatchEvent(pointer("pointermove", { x: 120, buttons: 1 }));
+    });
+    expect(card.className).toContain("panel-card--dragging");
+    // The button is up without a pointerup: the drag ends as a cancel.
+    act(() => {
+      window.dispatchEvent(pointer("pointermove", { x: 130, buttons: 0 }));
+    });
+    expect(card.className).not.toContain("panel-card--dragging");
+    // Its listeners are gone: a later move with a button held starts nothing.
+    act(() => {
+      window.dispatchEvent(pointer("pointermove", { x: 300, buttons: 1 }));
+    });
+    expect(card.className).not.toContain("panel-card--dragging");
+  });
+
+  it("opens the panel in the editor on a double click on its content", async () => {
+    setup();
+    const { card, location } = await openEditing();
+    // A double click that selects no text (user-event would select a word of the table).
+    fireEvent.dblClick(bodyOf(card));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main/panels/p1/edit"));
+  });
+
+  it("opens the outline as edit mode starts, and selecting keeps it as the person left it", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    // Its room is there from the start, so a selection never narrows the canvas.
+    const outline = await screen.findByRole("navigation", { name: "Outline" });
+    expect(outline).toBeTruthy();
+    const rail = screen.getByRole("complementary", { name: "Dashboard tools" });
+    await user.click(within(rail).getByRole("button", { name: "Outline" }));
+    expect(screen.queryByRole("navigation", { name: "Outline" })).toBeNull();
+    await user.click(bodyOf(card));
+    expect(card.getAttribute("aria-current")).toBe("true");
+    // Closed by the person: selecting does not open it again.
+    expect(screen.queryByRole("navigation", { name: "Outline" })).toBeNull();
   });
 
   it("clamps X to the grid and pushes an overlapped panel down when Y changes", async () => {

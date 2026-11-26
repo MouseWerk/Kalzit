@@ -56,6 +56,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::OrgMember, restore),
+        route(Method::PUT, "/orgs/{orgId}/datasources/{datasourceId}/default", Access::OrgMember, set_default),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}/purge", Access::OrgMember, purge),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health)
             .long_running(),
@@ -135,6 +136,8 @@ struct ListItem {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    /// Whether it is the organization's default data source (never one in the trash).
+    is_default: bool,
     access: DatasourceAccess,
     /// The list's columns beyond name and kind, on live sources the caller may read.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -255,8 +258,8 @@ async fn stored_models(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResul
     Ok(rows.into_iter().map(|(model,)| model).collect())
 }
 
-/// id, name, kind, created_at, deleted_at, settings, updated_at.
-type ListRow = (String, String, String, i64, Option<i64>, String, i64);
+/// id, name, kind, created_at, deleted_at, settings, updated_at, is_default.
+type ListRow = (String, String, String, i64, Option<i64>, String, i64, i64);
 
 /// Newest first (ids are UUIDv7, so id order is creation order); the cursor is the last id.
 async fn list(
@@ -332,7 +335,7 @@ async fn list(
         format!("AND id IN ({})", placeholders.join(", "))
     };
     let sql = format!(
-        "SELECT id, name, kind, created_at, deleted_at, settings, updated_at FROM datasources \
+        "SELECT id, name, kind, created_at, deleted_at, settings, updated_at, is_default FROM datasources \
          WHERE org_id = $1 AND {deleted} {after} {only} ORDER BY id DESC LIMIT $2"
     );
     let mut q = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id).bind((limit + 1) as i64);
@@ -355,17 +358,22 @@ async fn list(
     } else {
         let sources: Vec<overview::SourceRow<'_>> = rows
             .iter()
-            .map(|(id, _, _, _, _, settings, updated_at)| overview::SourceRow { id, settings, updated_at: *updated_at })
+            .map(|(id, _, _, _, _, settings, updated_at, _)| overview::SourceRow {
+                id,
+                settings,
+                updated_at: *updated_at,
+            })
             .collect();
         let mut conn = state.db.acquire().await?;
         overview::details(&mut conn, &ctx, &index, &sources, state.clock.now_ms()).await?
     };
     let items = rows
         .into_iter()
-        .map(|(id, name, kind, created_at, deleted_at, _, _)| {
+        .map(|(id, name, kind, created_at, deleted_at, _, _, is_default)| {
             let access = access(&ctx, index.datasource(&id));
             let details = details.remove(&id);
-            ListItem { id, name, kind, created_at, deleted_at, access, details }
+            let is_default = is_default != 0 && deleted_at.is_none();
+            ListItem { id, name, kind, created_at, deleted_at, is_default, access, details }
         })
         .collect();
     Ok(Json(Page { items, next_cursor }))
@@ -384,6 +392,8 @@ struct DatasourceView {
     updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    /// Whether it is the organization's default data source (never one in the trash).
+    is_default: bool,
     access: DatasourceAccess,
     /// The last "Test connection" since the settings or secrets last changed, with its warnings,
     /// for everyone who may see the source.
@@ -400,9 +410,12 @@ async fn view_in(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, ds: Datasource) -
         secrets::set_fields(&mut *conn, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
     let access = access(ctx, AccessIndex::load(&mut *conn, ctx).await?.datasource(&ds.id));
     let last_test = datasources::last_test(&mut *conn, &ds.id).await?;
+    let (is_default,): (i64,) =
+        sqlx::query_as("SELECT is_default FROM datasources WHERE id = $1").bind(&ds.id).fetch_one(&mut *conn).await?;
     Ok(DatasourceView {
         access,
         last_test,
+        is_default: is_default != 0 && ds.deleted_at.is_none(),
         settings: datasources::with_effective_tls(&ds.kind, ds.settings),
         id: ds.id,
         name: ds.name,
@@ -998,7 +1011,7 @@ async fn delete(
     let mut tx = crate::db::begin(&state.db).await?;
     managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     let updated = sqlx::query(
-        "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+        "UPDATE datasources SET deleted_at = $1, updated_at = $1, is_default = 0 \
          WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
     )
     .bind(now)
@@ -1053,6 +1066,80 @@ async fn restore(
     let answer = view_in(&mut tx, &ctx, restored).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultBody {
+    /// `true` makes the source the organization's default (the previous one stops being it),
+    /// `false` takes it away, so the organization has none.
+    default: bool,
+}
+
+/// Makes a source the organization's default data source, or stops it being the default. It
+/// takes what changing the source takes (`datasources:write` on it); the source a new default
+/// replaces is changed with it, as one organization setting. Answers the source.
+async fn set_default(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<DsPath>,
+    JsonBody(body): JsonBody<DefaultBody>,
+) -> ApiResult<Json<DatasourceView>> {
+    let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Under the organization's lock, so two people making two sources the default end with one.
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let (current,): (i64,) =
+        sqlx::query_as("SELECT is_default FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL")
+            .bind(&ds.id)
+            .bind(&ctx.org_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(ApiError::not_found)?;
+    if (current != 0) != body.default {
+        // The source a new default replaces, named in the audit entry.
+        let replaced: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND is_default = 1 AND id <> $2")
+                .bind(&ctx.org_id)
+                .bind(&ds.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        // Every other source first: the index allows one default per organization.
+        sqlx::query("UPDATE datasources SET is_default = 0 WHERE org_id = $1 AND is_default = 1")
+            .bind(&ctx.org_id)
+            .execute(&mut *tx)
+            .await?;
+        if body.default {
+            sqlx::query("UPDATE datasources SET is_default = 1 WHERE id = $1 AND org_id = $2")
+                .bind(&ds.id)
+                .bind(&ctx.org_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let mut summary = json!({ "changed": ["default"], "default": body.default });
+        if let Some((replaced,)) = replaced {
+            summary["replaced"] = json!(replaced);
+        }
+        record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, summary, now)).await?;
+    }
+    let answer = view_in(&mut tx, &ctx, ds).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(answer))
+}
+
+/// The id of the organization's default data source, if it has one (in use, not in the trash).
+pub async fn default_datasource<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    org_id: &str,
+) -> ApiResult<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND is_default = 1 AND deleted_at IS NULL")
+            .bind(org_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|(id,)| id))
 }
 
 /// The most sources one bulk request names.
@@ -1117,7 +1204,7 @@ async fn bulk(
     }
     let (sql, action) = if trash {
         (
-            "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+            "UPDATE datasources SET deleted_at = $1, updated_at = $1, is_default = 0 \
              WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL",
             "datasource.deleted",
         )

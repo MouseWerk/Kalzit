@@ -402,6 +402,8 @@ function initialState(server: FakeServer): FakeAdminState {
         editable: false,
       }),
       setting("appearance.default_theme", "server", "system"),
+      setting("appearance.default_theme_light", "server", "light"),
+      setting("appearance.default_theme_dark", "server", "dark"),
       setting("datasources.max_rows", "server", 100000),
       setting("sessions.lifetime_hours", "server", 720, { editable: false }),
     ],
@@ -750,6 +752,22 @@ function handleOrg(
 ): Response {
   const [area, id, sub, subId] = rest;
 
+  if (area === "admin" && id === "summary" && method === "GET") {
+    // As the server: a number only where the caller may open its section.
+    const may = (permission: string) => state.callerPermissions.has(permission);
+    return json(200, {
+      ...(may("users:read") ? { members: state.members.length } : {}),
+      ...(may("teams:read") ? { teams: state.teams.length } : {}),
+      ...(may("roles:read") ? { roles: state.roles.length } : {}),
+      ...(may("serviceaccounts:write")
+        ? // The fake models no service accounts (they have their own fake).
+          { serviceAccounts: 0 }
+        : {}),
+      ...(server.state.user.isServerAdmin
+        ? { users: state.users.length, orgs: state.orgs.length }
+        : {}),
+    });
+  }
   if (area === "members") {
     return members(state, id, method, input, search);
   }
@@ -1207,6 +1225,10 @@ function grants(
 const SETTING_VALUES: Record<string, (value: unknown) => boolean> = {
   "appearance.default_theme": (value) =>
     typeof value === "string" && ["system", "light", "dark", "contrast"].includes(value),
+  "appearance.default_theme_light": (value) =>
+    typeof value === "string" && ["light", "paper", "calcite"].includes(value),
+  "appearance.default_theme_dark": (value) =>
+    typeof value === "string" && ["dark", "graphite", "night"].includes(value),
   "datasources.max_rows": (value) =>
     typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10_000_000,
   "dashboards.default_time_range": (value) =>
@@ -1304,10 +1326,7 @@ function settingsExtras(
         stored.value = stored.default;
         stored.version = stored.version === 0 ? 0 : stored.version + 1;
         stored.source = "default";
-        if (stored.key === "appearance.default_theme") {
-          server.state.branding.defaultTheme = stored.value;
-          server.state.preferences.defaults.theme = String(stored.value);
-        }
+        syncThemeDefault(server, stored);
         return stored;
       }
       stored.value = change.value;
@@ -1348,12 +1367,22 @@ function patchSetting(
   stored.source = "database";
   stored.updatedAt = T0 + 10 * DAY;
   stored.updatedBy = server.state.user.id;
-  if (stored.key === "appearance.default_theme") {
-    // The brand and every user's preferences read the same setting, as on the server.
-    server.state.branding.defaultTheme = stored.value;
-    server.state.preferences.defaults.theme = String(stored.value);
-  }
+  syncThemeDefault(server, stored);
   return json(200, stored);
+}
+
+/** The brand and every user's preferences read the theme defaults, as on the server. */
+function syncThemeDefault(server: FakeServer, stored: WireSetting): void {
+  const fields = {
+    "appearance.default_theme": ["defaultTheme", "theme"],
+    "appearance.default_theme_light": ["defaultThemeLight", "themeLight"],
+    "appearance.default_theme_dark": ["defaultThemeDark", "themeDark"],
+  } as const;
+  const field = fields[stored.key as keyof typeof fields];
+  if (field !== undefined) {
+    server.state.branding[field[0]] = stored.value;
+    server.state.preferences.defaults[field[1]] = String(stored.value);
+  }
 }
 
 function audit(

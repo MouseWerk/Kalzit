@@ -181,6 +181,7 @@
   "sharing.viewer.snapshotOf": "Snapshot vom {date} · eingefroren · läuft ab am {expires}",
   "sharing.viewer.fixedValues": "Fest vorgegebene Werte",
   "sharing.viewer.fixed": "fest vorgegeben",
+  "sharing.viewer.all": "Alle",
   "sharing.viewer.range": "Zeitraum",
   "sharing.viewer.last": "Letzte {duration}",
   "sharing.viewer.current": "aktuell",
@@ -213,5 +214,6 @@
   "sharing.reason.snapshot_storage_full": "Die Snapshots dieser Organisation bräuchten mehr Platz als erlaubt ({max}). Zieh die zurück, die niemand mehr braucht, und versuch es dann noch einmal.",
   "sharing.reason.busy": "Geteilte Dashboards sind gerade ausgelastet. Versuch es gleich noch einmal.",
   "sharing.reason.revoked": "Schon zurückgezogen. Das ist endgültig.",
-  "sharing.reason.expired": "Schon abgelaufen. Erstell eine neue Freigabe."
+  "sharing.reason.expired": "Schon abgelaufen. Erstell eine neue Freigabe.",
+  "sharing.viewer.filters": "{count} Filter"
 }

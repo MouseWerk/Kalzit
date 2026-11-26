@@ -1,4 +1,4 @@
-import { lazy, type ReactNode, Suspense } from "react";
+import { lazy, type ReactNode, Suspense, useMemo } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
 import { usePanelAlertMarks } from "../alertMarks";
@@ -10,11 +10,13 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatUnit, joinFormatted } from "../fieldConfig/units";
+import { axisTickFormat } from "../fieldConfig/units";
 import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { chartData } from "./align";
+import { planAxes, skippedPoints } from "./axes";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
@@ -89,27 +91,32 @@ function TimeSeriesPanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<TimeSeriesOptions>) {
-  const { language } = useI18n();
+  const { t, language } = useI18n();
   const alert = usePanelAlertMarks();
   const config = legacyLineWidth(legacyUnit(fieldConfig, options.unit), options.lineWidth);
   const series = buildSeries(frames, options.seriesName, config);
   // An alert rule's limits are dashed lines, unless the panel draws thresholds of its own.
   const styles = withAlertLimits(resolveStyles(series), alert?.limits ?? []);
+  // Each value axis follows the unit and decimals of its first series (`axes.ts`). The plan is
+  // memoized on its own: worked out next to the drawing, the compiler would tie the series to
+  // everything the drawing takes, the time range included, so an equal range in a new object
+  // (every drop of a dragged panel) would build new series and draw the chart again.
+  const { axes, axisOf, skipped } = useMemo(() => {
+    const plan = planAxes(series, styles, config.defaults);
+    const skipped = skippedPoints(chartData(series, styles).stacked.ys, plan.axes, plan.axisOf);
+    return { ...plan, skipped };
+  }, [series, styles, config.defaults]);
+  const left = axes.find(({ key }) => key === "y");
+  const right = axes.find(({ key }) => key === "y2");
+  const leftUnit = left?.unit;
+  const leftDecimals = left?.decimals;
+  const rightUnit = right?.unit;
+  const rightDecimals = right?.decimals;
   // No rows in the range is one muted line, not an empty chart with axes and a legend.
   const reason = emptyReason(frames, "noTimeSeries");
   if (series.length === 0 || reason === "noData") {
     return <EmptyPanel reason={reason} />;
   }
-  // The value axis follows the first series' unit and decimals; ends from the defaults. Series
-  // stacked to 100 % put percent on it, from 0 (or -100 with negative values) to 100 unless the
-  // ends are set.
-  const percent = styles.some((style) => style.stack === "percent");
-  const negative =
-    percent &&
-    series.some((s, i) => styles[i]?.stack === "percent" && s.values.some((value) => value < 0));
-  const axisOptions = series[0]?.options ?? config.defaults;
-  const axisUnit = percent ? "percent" : axisOptions.unit === "none" ? undefined : axisOptions.unit;
-  const axisDecimals = percent ? undefined : axisOptions.decimals;
   return (
     <TimeSeriesChart
       series={series}
@@ -117,17 +124,55 @@ function TimeSeriesPanel({
       timeRange={timeRange}
       title={title}
       legend={options.legend}
-      tooltip={options.tooltip.mode}
+      tooltip={options.tooltip}
       format={(index, value) =>
         displayText(displayValue(value, "number", series[index]?.options ?? {}, language))
       }
-      axisFormat={(value) => joinFormatted(formatUnit(value, axisUnit, axisDecimals, language))}
-      yRange={{
-        min: config.defaults.min ?? (percent ? (negative ? -100 : 0) : undefined),
-        max: config.defaults.max ?? (percent ? 100 : undefined),
-      }}
+      axes={axes}
+      axisOf={axisOf}
+      // An arrow over plain values, which the compiler keeps while units, decimals and language
+      // stay. A formatter made by a call here was made again with everything else the panel
+      // works out, also for a new time range object (every drop of a dragged panel), and a new
+      // formatter has uPlot draw the chart again (a long task per drop at 4x CPU throttling).
+      axisFormat={(value, key, ticks) =>
+        key === "y2"
+          ? formatTick(value, ticks, rightUnit, rightDecimals, language)
+          : formatTick(value, ticks, leftUnit, leftDecimals, language)
+      }
+      note={
+        skipped === 0
+          ? undefined
+          : t(skipped === 1 ? "panels.axis.skipped.one" : "panels.axis.skipped.other", {
+              count: skipped,
+            })
+      }
     />
   );
+}
+
+/** Tick formats by unit, decimals, language and set of ticks: the chart asks tick by tick. */
+const tickFormats = new Map<string, (value: number) => string>();
+/** Enough for the charts on a dashboard; past it the cache starts over. */
+const MAX_TICK_FORMATS = 256;
+
+/** A value axis tick as text; the axis' other ticks decide how many digits it takes. */
+function formatTick(
+  value: number,
+  ticks: readonly number[],
+  unit: string | undefined,
+  decimals: number | undefined,
+  language: string,
+): string {
+  const key = `${unit ?? ""}\u0000${decimals ?? ""}\u0000${language}\u0000${ticks.join(",")}`;
+  let format = tickFormats.get(key);
+  if (format === undefined) {
+    if (tickFormats.size >= MAX_TICK_FORMATS) {
+      tickFormats.clear();
+    }
+    format = axisTickFormat(ticks, unit, decimals, language);
+    tickFormats.set(key, format);
+  }
+  return format(value);
 }
 
 function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOptions>) {
@@ -145,6 +190,7 @@ function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOpti
       <LegendTooltipEditor
         legend={options.legend}
         tooltip={options.tooltip}
+        tooltipDetails
         onChange={(legend, tooltip) => onChange({ ...options, legend, tooltip })}
       />
     </>
@@ -161,6 +207,7 @@ export const timeseriesPanel: PanelPlugin<TimeSeriesOptions> = {
   Editor: TimeSeriesEditor,
   fieldOptions: [
     "colors",
+    "axes",
     "graphStyle",
     "standard",
     "range",

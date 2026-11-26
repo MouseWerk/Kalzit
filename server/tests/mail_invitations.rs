@@ -187,7 +187,7 @@ async fn test_app(setup: Setup) -> TestApp {
     }
     let smtp = if setup == Setup::Mail { Some(FakeSmtp::start().await) } else { None };
     if let Some(smtp) = &smtp {
-        // An unencrypted relay on this machine, which only the file may set.
+        // A plain relay without encryption, set in the file.
         config.smtp.host = "127.0.0.1".into();
         config.smtp.port = smtp.port;
         config.smtp.security = "none".into();
@@ -1060,11 +1060,6 @@ async fn settings_from_the_page_are_checked_before_they_are_saved() {
         json!({ "host": "127.0.0.1", "port": smtp.port, "security": security, "username": "",
                 "fromName": "Kalzit", "fromAddress": "kalzit@example.com", "replyTo": "" })
     };
-    // Unencrypted only from the file.
-    let r = app
-        .send(Method::PUT, "/api/admin/mail", Some(json!({ "settings": settings("none"), "version": 0 })), Some(&owner))
-        .await;
-    assert_eq!((r.field(), r.reason()), ("security", "mail.unencrypted_only_in_file"));
     // The fake server offers no STARTTLS: the save names the field, and nothing is stored.
     let r = app
         .send(
@@ -1096,6 +1091,20 @@ async fn settings_from_the_page_are_checked_before_they_are_saved() {
     let stored: Vec<(String,)> =
         sqlx::query_as("SELECT ciphertext FROM server_secrets").fetch_all(&app.state.db).await.unwrap();
     assert!(stored.is_empty());
+    // A plain relay (no encryption) can be set on the page too; the save checks it and the audit
+    // entry says the connection is unencrypted.
+    let plain = json!({ "settings": settings("none"), "version": 0 });
+    let r = app.send(Method::PUT, "/api/admin/mail", Some(plain), Some(&owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["settings"]["security"], "none");
+    let r = app.post("/api/admin/mail/test", json!({ "to": "x@example.com" }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body["tls"].is_null());
+    assert_eq!(smtp.mails().len(), 1);
+    let audit = app.audit().await;
+    let (_, summary) = audit.iter().rev().find(|(a, _)| a == "mail.settings_changed").unwrap();
+    let summary: serde_json::Value = serde_json::from_str(summary).unwrap();
+    assert_eq!((summary["security"].as_str(), summary["encrypted"].as_bool()), (Some("none"), Some(false)));
     drop(smtp);
     app.finish().await;
 }

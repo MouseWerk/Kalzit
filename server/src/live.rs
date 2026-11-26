@@ -441,6 +441,10 @@ pub struct Spec {
     /// The dashboard and panel whose stored queries these are, for the usage counts
     /// (`usage::record_panel`); `None` for free queries.
     pub panel: Option<(String, String)>,
+    /// Targets whose data source pick left the dashboard's ad hoc filters behind: their results
+    /// carry `query.filters_not_applied` (`routes::query::PanelRun::unfiltered`).
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub unfiltered: BTreeSet<String>,
 }
 
 impl Spec {
@@ -779,9 +783,12 @@ async fn run_feed(
         }
         // Live results leave out how long each query took: it differs on every run, and would
         // make unchanged results look new.
-        for outcome in response.results.values_mut() {
-            if let crate::shapes::QueryOutcome::Ok { elapsed_ms, .. } = outcome {
+        for (ref_id, outcome) in response.results.iter_mut() {
+            if let crate::shapes::QueryOutcome::Ok { elapsed_ms, result, .. } = outcome {
                 *elapsed_ms = None;
+                if spec.unfiltered.contains(ref_id) {
+                    result.add_notice(crate::routes::query::unfiltered_notice());
+                }
             }
         }
         let json = match serde_json::to_string(&response.results) {
@@ -921,6 +928,7 @@ mod tests {
             identifiers: None,
             refresh_ms: 5_000,
             panel: None,
+            unfiltered: BTreeSet::new(),
         };
         let mut other = spec.clone();
         assert_eq!(spec.key(), other.key());

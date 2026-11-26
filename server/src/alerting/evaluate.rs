@@ -128,6 +128,7 @@ pub async fn run_query(
         cursor: None,
         limit: None,
         steps: query.steps.clone(),
+        filters: Vec::new(),
     };
     // `run_queries` never reads or fills the query cache.
     let run = crate::datasources::run_queries(state, ctx, vec![item], range, None, None, &query.variables);
