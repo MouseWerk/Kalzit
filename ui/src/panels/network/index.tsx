@@ -1,3 +1,4 @@
+import { loadArea } from "../../i18n/i18n";
 import { type GraphPanelOptions, parseGraphOptions } from "../graph/options";
 import { lazyPanel } from "../lazy";
 import { NetworkPreview } from "../picker/previews";
@@ -10,7 +11,15 @@ export const networkPanel: PanelPlugin<GraphPanelOptions> = {
   description: "panels.describe.network",
   shapes: ["graph"],
   options: parseGraphOptions,
-  Panel: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.NetworkPanel)),
-  Editor: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.NetworkEditor)),
+  Panel: lazyPanel(() =>
+    loadArea("graphStyle")
+      .then(() => import("../graph/GraphPanels"))
+      .then((m) => m.NetworkPanel),
+  ),
+  Editor: lazyPanel(() =>
+    loadArea("graphStyle")
+      .then(() => import("../graph/GraphPanels"))
+      .then((m) => m.NetworkEditor),
+  ),
   Preview: NetworkPreview,
 };

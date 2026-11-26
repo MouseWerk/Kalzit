@@ -304,9 +304,10 @@ function fontRules(
 
 /**
  * The page's own `@font-face` rules with their files embedded, so the image uses Kalzit's fonts.
- * A file that cannot be read leaves its face out; the image then shows the fallback font.
+ * A file that cannot be read leaves its face out; the image then shows the fallback font. With
+ * `family`, only the faces of that font family (a graph's SVG file embeds the label font alone).
  */
-async function embeddedFonts(): Promise<string> {
+export async function embeddedFonts(family?: string): Promise<string> {
   const faces: { rule: CSSFontFaceRule; base: string }[] = [];
   for (const sheet of Array.from(document.styleSheets)) {
     let rules: CSSRuleList;
@@ -317,8 +318,14 @@ async function embeddedFonts(): Promise<string> {
     }
     fontRules(rules, sheet.href ?? document.baseURI, faces);
   }
+  const named = (rule: CSSFontFaceRule) =>
+    rule.style
+      .getPropertyValue("font-family")
+      .trim()
+      .replace(/^["']|["']$/g, "");
+  const wanted = family === undefined ? faces : faces.filter(({ rule }) => named(rule) === family);
   const texts = await Promise.all(
-    faces.map(async ({ rule, base }) => (await embedUrls(rule.cssText, base)) ?? ""),
+    wanted.map(async ({ rule, base }) => (await embedUrls(rule.cssText, base)) ?? ""),
   );
   return texts.filter((t) => t !== "").join("\n");
 }
