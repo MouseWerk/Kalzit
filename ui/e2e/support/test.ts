@@ -47,8 +47,6 @@ const WEBKIT_NOTICES_PER_DOCUMENT = 3;
 function recordStyleWrites(): void {
   const log = {
     doc: Math.random().toString(36).slice(2),
-    /** Set on the copy a document sends as it goes: it holds every write the document made. */
-    final: false,
     permitted: 0,
     foreign: [] as string[],
     refusedAttributes: [] as string[],
@@ -71,14 +69,10 @@ function recordStyleWrites(): void {
     }
   };
   report();
-  // The last copy, as the document goes (a navigation, a reload, the page closing). The guard
-  // waits for it when a notice arrives after the page left the document that caused it.
-  window.addEventListener("pagehide", () => {
-    if (!log.final) {
-      log.final = true;
-      report();
-    }
-  });
+  // One more copy as the document goes (a navigation, a reload, the page closing), for a write
+  // the observer has not reported yet. Chromium may lose it: Playwright drops a binding call whose
+  // document is already gone by the time it handles the call.
+  window.addEventListener("pagehide", () => report());
   // A style attribute the policy refused keeps its text but applies no declaration. Writes
   // through the CSSOM (element.style, as React does) are allowed and always apply.
   const checkAttribute = (element: Element) => {
@@ -138,17 +132,10 @@ function recordStyleWrites(): void {
 
 interface StyleLog {
   doc: string;
-  final: boolean;
   permitted: number;
   foreign: string[];
   refusedAttributes: string[];
 }
-
-/**
- * How long a notice from a document the page has left waits for that document's last copy. It
- * is sent as the document goes, so it normally arrives within milliseconds.
- */
-const LAST_COPY_TIMEOUT_MS = 10_000;
 
 /** The binding through which every top document sends copies of its log (recordStyleWrites). */
 const STYLE_REPORT = "__kalzitStyleReport";
@@ -211,8 +198,6 @@ class Guard {
   /** The last copy each top document sent of its log, and each page's current document. */
   private readonly reported = new Map<string, StyleLog>();
   private readonly current = new Map<Page, string>();
-  /** Checks waiting for a document's last copy, per document. */
-  private readonly waiting = new Map<string, (() => void)[]>();
   /** Style notices checked so far (passed or not), for probes that wait for one. */
   private checkedNotices = 0;
   private baseline = 0;
@@ -224,12 +209,6 @@ class Guard {
       this.reported.set(log.doc, log);
       if (page !== null) {
         this.current.set(page, log.doc);
-      }
-      if (log.final) {
-        for (const wake of this.waiting.get(log.doc) ?? []) {
-          wake();
-        }
-        this.waiting.delete(log.doc);
       }
     });
     await context.addInitScript(recordStyleWrites);
@@ -263,45 +242,25 @@ class Guard {
     // observer runs after the write the browser refused). The reporting document is the one that
     // sent the last copy before the notice arrived (a notice's location is the script that wrote
     // the style, not its document). If the page has gone on to another document by then (a
-    // navigation right after the editor wrote its styles), that document's last copy stands in
-    // for it: the one it sends as it goes, which holds every write it made. A copy that merely
-    // arrived after the notice is no proof: Firefox reports a refused style a task after the
-    // write, so the copy with the write may arrive before the notice, and no later one follows.
+    // navigation right after the editor wrote its styles), the newest copy that document sent
+    // stands in for it. Its copies arrive in order and before anything the page sends after it
+    // left the document, so once the read comes from another document no newer copy follows.
+    // The order of the notice and the copy with the write differs per engine (Firefox reports a
+    // refused style a task after the write), so the copy is not tied to the notice. A copy that
+    // misses a write can only fail the check, never pass it: a missed CodeMirror write lowers the
+    // notice budget, and a missed foreign style leaves its notice over the budget.
     const doc = this.current.get(page);
     this.checks.push(
-      styleLog(page)
-        .then((read) => (doc === undefined || read?.doc === doc ? read : this.lastCopy(doc)))
-        .then((log) => {
-          this.checkedNotices += 1;
-          const problem = this.styleProblem(log);
-          if (problem !== null) {
-            this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
-          }
-        }),
+      styleLog(page).then((read) => {
+        const log =
+          doc === undefined || read?.doc === doc ? read : (this.reported.get(doc) ?? null);
+        this.checkedNotices += 1;
+        const problem = this.styleProblem(log);
+        if (problem !== null) {
+          this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
+        }
+      }),
     );
-  }
-
-  /**
-   * The copy a document sent as it went, once it arrived; null when none came within
-   * `LAST_COPY_TIMEOUT_MS`, and the notice then fails as unreadable.
-   */
-  private lastCopy(doc: string): Promise<StyleLog | null> {
-    const final = () => {
-      const copy = this.reported.get(doc);
-      return copy?.final === true ? copy : null;
-    };
-    if (final() !== null) {
-      return Promise.resolve(final());
-    }
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(final()), LAST_COPY_TIMEOUT_MS);
-      const wakers = this.waiting.get(doc) ?? [];
-      wakers.push(() => {
-        clearTimeout(timer);
-        resolve(final());
-      });
-      this.waiting.set(doc, wakers);
-    });
   }
 
   /** Style notices checked so far, passed or not. */
