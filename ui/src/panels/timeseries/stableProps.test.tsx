@@ -70,7 +70,7 @@ describe("time series panel", () => {
       />,
     );
     const last = drawn.at(-1);
-    expect(last?.axes.map((a) => [a.key, a.unit, a.decimals])).toEqual([
+    expect(last?.axes?.map((a) => [a.key, a.unit, a.decimals])).toEqual([
       ["y", "short", 1],
       ["y2", "percent", 1],
     ]);
