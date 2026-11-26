@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="370" viewBox="0 0 880 370" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="430" viewBox="0 0 880 430" role="img" aria-labelledby="title desc">
 <title id="title">Kalzit milestone progress</title>
-<desc id="desc">Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 63 of 68 plan items done. M7 Expansion: in progress, 1 of 7 areas done. M8 Analysis depth: planned. M9 Plugin store: planned.</desc>
+<desc id="desc">Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: done. M7 Expansion: done. M8 Analysis depth: planned. M9 Plugin store: planned. M10 Icon set: planned. M11 Multi-model and own data: planned.</desc>
 <defs>
 <linearGradient id="sweep" x1="0" x2="1" y1="0" y2="0">
 <stop offset="0" stop-color="#17171a" stop-opacity="0"/>
@@ -16,13 +16,9 @@ text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica
 .track{fill:#e1e1e4}
 .fill{fill:#57575f;transform-box:fill-box;transform-origin:left center;animation:grow 1.2s cubic-bezier(.22,.7,.2,1) backwards}
 @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes sweep-m6{0%{transform:translateX(0)}55%,100%{transform:translateX(620.29px)}}
-.sweep-m6{animation:sweep-m6 4.8s ease-in-out 1.74s infinite}
-@keyframes sweep-m7{0%{transform:translateX(0)}55%,100%{transform:translateX(197.14px)}}
-.sweep-m7{animation:sweep-m7 4.8s ease-in-out 1.83s infinite}
 @media (prefers-reduced-motion:reduce){.fill,.sweep{animation:none}}
 </style>
-<rect x="0.5" y="0.5" width="879" height="369" rx="12" fill="#ffffff" stroke="#e1e1e4"/>
+<rect x="0.5" y="0.5" width="879" height="429" rx="12" fill="#ffffff" stroke="#e1e1e4"/>
 <text class="title" x="24" y="36">Milestones</text>
 <g class="row">
 <text class="id" x="24" y="72">M0</text>
@@ -70,19 +66,15 @@ text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica
 <text class="id" x="24" y="252">M6</text>
 <text class="name" x="64" y="252">Polish</text>
 <rect class="track" x="210" y="245" width="540" height="6" rx="3"/>
-<rect class="fill" x="210" y="245" width="500.29" height="6" rx="3" style="animation-delay:0.54s"/>
-<clipPath id="clip-m6"><rect x="210" y="245" width="500.29" height="6" rx="3"/></clipPath>
-<g clip-path="url(#clip-m6)"><rect class="sweep sweep-m6" x="90" y="245" width="120" height="6" fill="url(#sweep)"/></g>
-<text class="status current" x="856" y="252" text-anchor="end">63 of 68</text>
+<rect class="fill" x="210" y="245" width="540" height="6" rx="3" style="animation-delay:0.54s"/>
+<text class="status" x="856" y="252" text-anchor="end">Done</text>
 </g>
 <g class="row">
 <text class="id" x="24" y="282">M7</text>
 <text class="name" x="64" y="282">Expansion</text>
 <rect class="track" x="210" y="275" width="540" height="6" rx="3"/>
-<rect class="fill" x="210" y="275" width="77.14" height="6" rx="3" style="animation-delay:0.63s"/>
-<clipPath id="clip-m7"><rect x="210" y="275" width="77.14" height="6" rx="3"/></clipPath>
-<g clip-path="url(#clip-m7)"><rect class="sweep sweep-m7" x="90" y="275" width="120" height="6" fill="url(#sweep)"/></g>
-<text class="status current" x="856" y="282" text-anchor="end">1 of 7</text>
+<rect class="fill" x="210" y="275" width="540" height="6" rx="3" style="animation-delay:0.63s"/>
+<text class="status" x="856" y="282" text-anchor="end">Done</text>
 </g>
 <g class="row">
 <text class="id" x="24" y="312">M8</text>
@@ -95,5 +87,17 @@ text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica
 <text class="name" x="64" y="342">Plugin store</text>
 <rect class="track" x="210" y="335" width="540" height="6" rx="3"/>
 <text class="status" x="856" y="342" text-anchor="end">Planned</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="372">M10</text>
+<text class="name" x="64" y="372">Icon set</text>
+<rect class="track" x="210" y="365" width="540" height="6" rx="3"/>
+<text class="status" x="856" y="372" text-anchor="end">Planned</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="402">M11</text>
+<text class="name" x="64" y="402">Multi-model and own data</text>
+<rect class="track" x="210" y="395" width="540" height="6" rx="3"/>
+<text class="status" x="856" y="402" text-anchor="end">Planned</text>
 </g>
 </svg>

@@ -3,7 +3,8 @@ import { useRef } from "react";
 import { Icon } from "../components/Icon";
 import { WithTooltip } from "../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
-import { DOCS_URL } from "../help/docs";
+import { REPOSITORY_URL } from "../help/docs";
+import { HANDBOOK_START, handbookLocation, useHandbookEnabled } from "../help/handbook";
 import { useI18n } from "../i18n/i18n";
 import { useOrgPermissions } from "../org/useOrg";
 import { Keys } from "../shortcuts/Keys";
@@ -31,6 +32,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   const { t } = useI18n();
   const navigate = useNavigate();
   const permissions = useOrgPermissions();
+  const handbook = useHandbookEnabled();
   // The bar stays at the top while the page scrolls; what sticks below it starts at its height.
   const barRef = useRef<HTMLDivElement>(null);
   useHeightVar(barRef, "--top-bar-height");
@@ -69,23 +71,34 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
     });
   }
 
-  const help: ToolbarMenuEntry[] = [
-    {
-      key: "shortcuts",
-      label: t("shell.top.shortcuts"),
-      icon: "keyboard",
-      shortcut: "help.toggle",
-      onSelect: () => setOverlay("shortcuts"),
-    },
-    {
-      key: "docs",
-      label: t("shell.top.docs"),
-      icon: "help",
+  // Help: the built-in handbook, the shortcuts and, as the one link outside, the repository. With
+  // the handbook turned off (Administration > Appearance) only the shortcuts stay (decision 8).
+  const help: ToolbarMenuEntry[] = [];
+  if (handbook) {
+    help.push({
+      key: "handbook",
+      label: t("shell.top.handbook"),
+      icon: "documents",
+      onSelect: () => void navigate(handbookLocation(HANDBOOK_START)),
+    });
+  }
+  help.push({
+    key: "shortcuts",
+    label: t("shell.top.shortcuts"),
+    icon: "keyboard",
+    shortcut: "help.toggle",
+    onSelect: () => setOverlay("shortcuts"),
+  });
+  if (handbook) {
+    help.push({
+      key: "github",
+      label: t("shell.top.github"),
+      icon: "external",
       onSelect: () => {
-        window.open(DOCS_URL, "_blank", "noopener,noreferrer");
+        window.open(REPOSITORY_URL, "_blank", "noopener,noreferrer");
       },
-    },
-  ];
+    });
+  }
 
   return (
     <div ref={barRef} className="shell__header top-bar" data-sticky-bar="">

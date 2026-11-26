@@ -23,8 +23,18 @@ you disclose the problem.
 
 ## Supported versions
 
-Kalzit has no release yet. Security fixes go into the `main` branch; once releases exist, this
-section will name the versions that receive fixes.
+Kalzit is in early development (version 0.x). Security fixes go into `main` and ship in a new
+release of the latest minor version, as a patch release when they cannot wait for the next
+regular one (0.7.1 and 0.7.3 were such releases). Older versions receive no fixes; please update
+to the [latest release](https://github.com/MouseWerk/Kalzit/releases/latest).
+
+| Version | Security fixes |
+|---|---|
+| 0.7.x, latest release | Yes |
+| 0.6.x and older | No |
+
+After each milestone release, two independent security reviews look at the new code; their
+findings are fixed like any other report. Release notes name security fixes under "Fixed".
 
 ## Scope
 
@@ -38,6 +48,9 @@ documented configuration. Examples of what we treat as security problems:
   metadata addresses, files outside allowed directories);
 - secrets (data source passwords, tokens, the secrets key) leaking into responses, logs or the
   audit log;
+- public links and snapshots that show visitors more than the panel shows, or keep working after
+  they were revoked, expired or suspended;
+- a plugin or app escaping its sandbox, or reaching network targets its manifest does not grant;
 - cross-site scripting, request forgery or session problems in the web interface.
 
 A data source login with more rights than it needs is a configuration choice; Kalzit's read-only

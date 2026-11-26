@@ -26,9 +26,9 @@ function source(): Promise<string> {
   return owner.createSqliteSource(unique("Lager"), join(fixturesDir(), "sales.db"));
 }
 
-test("a dashboard from files is marked, read-only, and unlocked in an emergency", async ({
-  page,
-}) => {
+test("a dashboard from files is marked, read-only, and unlocked in an emergency", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const sourceId = await source();
   const set = unique("lager").replace(/[^A-Za-z0-9._-]/g, "-");
   const uid = `${set}-board`;
