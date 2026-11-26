@@ -427,8 +427,8 @@ Zeilen.
 {app="shop"}
 ```
 
-Die neuesten Logzeilen der `shop`-Streams (höchstens 1.000 Zeilen, wenn du kein niedrigeres Limit
-setzt).
+Die neuesten Logzeilen der `shop`-Streams (1.000 Zeilen, wenn du keine andere Höchstzahl setzt,
+höchstens 5.000).
 
 ```logql
 {app="shop"} |= "error"

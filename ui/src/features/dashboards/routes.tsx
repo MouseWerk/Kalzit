@@ -10,6 +10,12 @@ export interface DashboardsSearch {
    * the start page and the top bar's New menu).
    */
   create?: "dashboard" | "folder" | "import" | undefined;
+  /** Instead of a folder: the caller's starred or recently opened dashboards. */
+  view?: "starred" | "recent" | undefined;
+  /** The list order; newest change first when left out (last opened first in "recent"). */
+  sort?: "updated" | "title" | "opened" | undefined;
+  /** Only dashboards with this tag. */
+  tag?: string | undefined;
 }
 
 export interface DashboardSearch {
@@ -40,6 +46,12 @@ const dashboardsRoute = createRoute({
       search.create === "dashboard" || search.create === "folder" || search.create === "import"
         ? search.create
         : undefined,
+    view: search.view === "starred" || search.view === "recent" ? search.view : undefined,
+    sort:
+      search.sort === "updated" || search.sort === "title" || search.sort === "opened"
+        ? search.sort
+        : undefined,
+    tag: text(search.tag),
   }),
   component: lazyRouteComponent(() => import("./DashboardsPage"), "DashboardsPage"),
 });

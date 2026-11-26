@@ -206,7 +206,8 @@ Hat eine Quelle mehr Dokumente, als ein Panel zeigt (**Die Quelle hat weitere.**
 Dokumente laden** unter dem Panel die nächsten an, bei MongoDB, Elasticsearch und OpenSearch sowie
 JSON- und NDJSON-Dateien. Es setzt nur die gespeicherte Abfrage des Panels fort, sodass auch
 Betrachter es nutzen können; Aktualisieren oder ein anderer Zeitraum beginnt wieder mit der ersten
-Seite.
+Seite. Die Vorschau im Panel-Editor bietet es ebenso, für die gespeicherte wie für eine geänderte
+Abfrage.
 
 ### Datenlinks aus Feldern, Knoten und Kanten
 

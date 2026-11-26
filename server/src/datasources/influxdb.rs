@@ -583,6 +583,7 @@ impl DataSourcePlugin for InfluxDb {
                 let prepared = sql::prepare_query(self, conn, &sql_query, Engine::DataFusion).await?;
                 let body = c.sql(&prepared.sql, &prepared.binds, max_bytes, Some(&mut charge)).await?;
                 let mut frame = jsonl_frame(&body, &req)?;
+                frame.fill_gaps(prepared.fill);
                 frame.executed_query(prepared.sql);
                 frame
             }

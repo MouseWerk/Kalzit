@@ -10,7 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DARK_SURFACE_LUMINANCE, LIGHT_SURFACE_LUMINANCE } from "../appearance/contrast";
+import {
+  DARK_SURFACE_LUMINANCE,
+  LIGHT_DARK_SURFACE_LUMINANCE,
+  LIGHT_SURFACE_LUMINANCE,
+} from "../appearance/contrast";
 import {
   contrastRatio,
   oklchToLinearRgb,
@@ -607,6 +611,15 @@ describe("motion and typography", () => {
       "--duration-fast: 0ms",
       "--duration-normal: 0ms",
       "--duration-sidebar: 0ms",
+      "--duration-icon-press: 0ms",
+      "--duration-icon-short: 0ms",
+      "--duration-icon-draw: 0ms",
+      "--duration-icon: 0ms",
+      "--duration-icon-step: 0ms",
+      "--duration-icon-glint: 0ms",
+      "--duration-icon-long: 0ms",
+      "--duration-icon-stagger-short: 0ms",
+      "--duration-icon-stagger: 0ms",
       "--duration-pulse: 0ms",
       "--duration-spin: 0ms",
     ]);
@@ -848,6 +861,299 @@ describe("motion and typography", () => {
       rule.selector.split(",").some((part) => part.trim() === "legend"),
     );
     expect(legend?.declarations).toContainEqual({ property: "padding", value: "0" });
+  });
+});
+
+describe("icons in motion", () => {
+  const NO_PREFERENCE = /prefers-reduced-motion:\s*no-preference/;
+  const REDUCE = /prefers-reduced-motion:\s*reduce/;
+
+  /** Whether a declaration sets an animation going (a name other than none). */
+  function starts({ property, value }: { property: string; value: string }): boolean {
+    return (property === "animation" || property === "animation-name") && value !== "none";
+  }
+
+  /** Whether a declaration moves something: an animation, a transition or a press's scale. */
+  function moves(declaration: { property: string; value: string }): boolean {
+    const { property, value } = declaration;
+    return (
+      starts(declaration) ||
+      (property.startsWith("transition") && value !== "none") ||
+      (property === "scale" && value !== "none")
+    );
+  }
+
+  const selectors = (selector: string) => selector.split(/,(?![^(]*\))/).map((s) => s.trim());
+
+  it("stops every animation for reduced motion", () => {
+    const rules = allRules();
+    const stopped = new Set(
+      rules
+        .filter((rule) => rule.context.some((c) => REDUCE.test(c)))
+        .filter((rule) =>
+          rule.declarations.some(
+            (d) =>
+              (d.property === "animation" || d.property === "animation-name") && d.value === "none",
+          ),
+        )
+        .flatMap((rule) => selectors(rule.selector)),
+    );
+    // Durations the tokens set to 0ms for reduced motion: an animation timed by one of them ends
+    // at once on its last frame (the sidebar's peek slide, whose end its script waits for).
+    const zeroed = new Set(
+      rules
+        .filter((rule) => rule.file === TOKENS_FILE && rule.context.some((c) => REDUCE.test(c)))
+        .flatMap((rule) => rule.declarations)
+        .filter((d) => d.value === "0ms")
+        .map((d) => d.property),
+    );
+    const timedByZeroed = (rule: { declarations: { property: string; value: string }[] }) =>
+      rule.declarations.filter(starts).every(({ value }) => {
+        const duration = /var\((--duration-[\w-]+)\)/.exec(value)?.[1];
+        return duration !== undefined && zeroed.has(duration);
+      });
+    const running = rules.flatMap((rule) => {
+      if (rule.context.some((c) => c.startsWith("@keyframes"))) return [];
+      if (!rule.declarations.some(starts)) return [];
+      // Declared only when the person has no preference, or stopped by a reduced-motion rule.
+      if (rule.context.some((c) => NO_PREFERENCE.test(c))) return [];
+      if (timedByZeroed(rule)) return [];
+      return selectors(rule.selector).filter((selector) => !stopped.has(selector));
+    });
+    expect(running).toEqual([]);
+  });
+
+  it("moves an icon only on hover, keyboard focus, a press, a change of state or loading", () => {
+    const TRIGGER = /:hover|:focus-visible|:active|\[data-play\]|\[aria-busy="true"\]|\.icon--busy/;
+    const unprompted = allRules().flatMap((rule) => {
+      if (!/icon__(part|body)/.test(rule.selector)) return [];
+      if (!rule.declarations.some(moves)) return [];
+      const inside = rule.context.some((c) => NO_PREFERENCE.test(c));
+      // A press transitions the icon's scale back and forth; everything else needs its trigger.
+      const press = rule.declarations.every((d) => d.property.startsWith("transition"));
+      return inside && (press || TRIGGER.test(rule.selector)) ? [] : [where(rule, "moves")];
+    });
+    expect(unprompted).toEqual([]);
+  });
+
+  const TABLE_OR_LIST =
+    /(^|[\s>+~(,])(table|thead|tbody|tr|td|th|ul|ol|li|dl|dd|p)(?=$|[\s>+~:.[),])|\[role="(grid|treegrid|row|gridcell|tree|treeitem|list|listitem|listbox|option)"\]/;
+
+  it("keeps icons in tables, lists and running text still", () => {
+    const inLists = allRules().flatMap((rule) =>
+      /icon/.test(rule.selector) &&
+      rule.declarations.some(moves) &&
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector))
+        ? [where(rule, "moves")]
+        : [],
+    );
+    expect(inLists).toEqual([]);
+    // And a stop that wins over every trigger (they are wrapped in :where()), after all of them.
+    const motion = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        rule.context.some((c) => NO_PREFERENCE.test(c)) &&
+        /icon__part/.test(rule.selector),
+    );
+    const stop = motion.at(-1);
+    expect(stop?.declarations).toEqual([
+      { property: "animation-name", value: "none" },
+      { property: "scale", value: "none" },
+    ]);
+    for (const context of [
+      "table",
+      '[role="grid"]',
+      '[role="tree"]',
+      '[role="menu"]',
+      "main li",
+      "p",
+    ]) {
+      expect(stop?.selector).toContain(context);
+    }
+    // Loading may turn anywhere: the stop leaves busy icons alone.
+    expect(stop?.selector).toContain('.icon:not(.icon--busy, [aria-busy="true"] > .icon)');
+    const loading = loadingRule();
+    for (const rule of motion.slice(0, -1)) {
+      if (sameRule(rule, loading)) continue;
+      expect(rule.selector, rule.selector).toMatch(/^:where\(/);
+    }
+  });
+
+  /** The rule that turns refresh while its button is busy. */
+  function loadingRule() {
+    const found = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        /aria-busy/.test(rule.selector) &&
+        rule.declarations.some((d) => d.property === "animation"),
+    );
+    expect(found).toHaveLength(1);
+    return found[0];
+  }
+
+  /** `allRules()` hands out fresh copies, so a rule is found again by where it stands, not by reference. */
+  function sameRule(
+    a: { file: string; selector: string; context: readonly string[] } | undefined,
+    b: { file: string; selector: string; context: readonly string[] } | undefined,
+  ): boolean {
+    return (
+      a !== undefined &&
+      b !== undefined &&
+      a.file === b.file &&
+      a.selector === b.selector &&
+      a.context.join(" | ") === b.context.join(" | ")
+    );
+  }
+
+  /** Specificity as [ids, classes, elements]; :where counts nothing, :is and :not their largest. */
+  function specificity(selector: string): [number, number, number] {
+    const largest = (list: string) =>
+      selectors(list)
+        .map(specificity)
+        .reduce((a, b) => (compare(a, b) >= 0 ? a : b), [0, 0, 0] as [number, number, number]);
+    const total: [number, number, number] = [0, 0, 0];
+    let rest = selector;
+    // Functional pseudo-classes first, innermost argument lists included.
+    for (;;) {
+      const match = /:(where|is|not)\(/.exec(rest);
+      if (match === null) break;
+      let depth = 0;
+      let end = match.index + match[0].length;
+      for (; end < rest.length; end++) {
+        if (rest[end] === "(") depth++;
+        if (rest[end] === ")") {
+          if (depth === 0) break;
+          depth--;
+        }
+      }
+      const inner = rest.slice(match.index + match[0].length, end);
+      if (match[1] !== "where") {
+        const [a, b, c] = largest(inner);
+        total[0] += a;
+        total[1] += b;
+        total[2] += c;
+      }
+      rest = `${rest.slice(0, match.index)} ${rest.slice(end + 1)}`;
+    }
+    rest = rest.replace(/\[[^\]]*\]/g, () => {
+      total[1]++;
+      return " ";
+    });
+    total[0] += (rest.match(/#[\w-]+/g) ?? []).length;
+    total[1] += (rest.match(/\.[\w-]+|:(?!:)[\w-]+(\([^)]*\))?/g) ?? []).length;
+    total[2] += (rest.match(/(^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+    return total;
+  }
+
+  function compare(a: readonly number[], b: readonly number[]): number {
+    for (let i = 0; i < 3; i++) {
+      const d = (a[i] ?? 0) - (b[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+
+  it("reads specificity like the browser", () => {
+    expect(specificity(".icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(":where(.a .b:hover) .icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(':is(button[aria-busy="true"] > .icon, .x)[data-motion="spin"] .y')).toEqual(
+      [0, 4, 1],
+    );
+    expect(specificity(".icon:not(.a, [b] > .c) :is(.d, .e)")).toEqual([0, 4, 0]);
+    expect(specificity("main li")).toEqual([0, 0, 2]);
+  });
+
+  it("turns refresh in eight facet steps, 800 ms a turn, after a short wait, over every timing", () => {
+    const loading = loadingRule();
+    expect(loading?.declarations).toEqual([
+      {
+        property: "animation",
+        value: "icon-spin var(--duration-spin) steps(8, end) var(--duration-normal) infinite",
+      },
+    ]);
+    const tokens = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
+    const spin = tokens
+      .filter((rule) => rule.selector === ":root" && rule.context.length === 1)
+      .flatMap((rule) => rule.declarations)
+      .filter((d) => d.property === "--duration-spin");
+    expect(spin.map((d) => d.value)).toEqual(["0.8s"]);
+    // Every other rule that sets an icon part's timing loses to it, by specificity or by order.
+    const rules = allRules().filter((rule) => rule.file === "styles/components.css");
+    const at = rules.findIndex((rule) => sameRule(rule, loading));
+    expect(at).toBeGreaterThanOrEqual(0);
+    const own = specificity(loading?.selector ?? "");
+    const timing = /^animation(-duration|-timing-function|-delay)?$/;
+    const beaten = rules.flatMap((rule, index) => {
+      if (index === at || !/\.icon__part\s*$/.test(rule.selector)) return [];
+      if (!rule.declarations.some((d) => timing.test(d.property))) return [];
+      const order = compare(own, specificity(rule.selector));
+      return order > 0 || (order === 0 && at > index) ? [] : [rule.selector];
+    });
+    expect(beaten).toEqual([]);
+  });
+
+  it("plays the check and the star only on a change of state, never on hover or focus", () => {
+    const hovers = allRules().filter(
+      (rule) =>
+        /icon__part/.test(rule.selector) &&
+        /:hover|:focus-visible/.test(rule.selector) &&
+        rule.declarations.some(starts),
+    );
+    expect(hovers.length).toBeGreaterThan(0);
+    for (const rule of hovers) {
+      expect(rule.selector, rule.selector).toContain(
+        '.icon:not([data-motion="draw"], [data-motion="fill"])',
+      );
+    }
+  });
+
+  it("moves the shell's icons only for its navigation entries, not every sidebar button", () => {
+    // Icon motions only: the sidebar's own peek slide (shellUx.css) moves the whole box.
+    const shell = allRules().filter(
+      (rule) =>
+        /shell__sidebar/.test(rule.selector) &&
+        /\.icon\b/.test(rule.selector) &&
+        rule.declarations.some(starts),
+    );
+    expect(shell).toHaveLength(1);
+    expect(shell[0]?.selector).toMatch(/:is\(\.nav-link, \.nav-group__toggle\)/);
+    expect(shell[0]?.selector).not.toMatch(/a\[href\]|\bbutton\b/);
+  });
+
+  it("animates icons only with transforms and the check's stroke, never layout or color", () => {
+    const keyframes = allRules().filter((rule) =>
+      rule.context.some((c) => c.startsWith("@keyframes icon-")),
+    );
+    expect(keyframes.length).toBeGreaterThan(0);
+    const allowed = new Set(["transform", "stroke-dashoffset"]);
+    const other = keyframes.flatMap((rule) =>
+      rule.declarations
+        .filter((d) => !allowed.has(d.property))
+        .map((d) => `${rule.context.at(-1)} ${d.property}`),
+    );
+    expect(other).toEqual([]);
+    const transitions = allRules().flatMap((rule) =>
+      /icon__(part|body)/.test(rule.selector)
+        ? rule.declarations
+            .filter((d) => d.property.startsWith("transition"))
+            .filter((d) => !/^scale\b/.test(d.value))
+            .map((d) => where(rule, `${d.property}: ${d.value}`))
+        : [],
+    );
+    expect(transitions).toEqual([]);
+  });
+
+  it("catches an icon trigger in a table and a layout keyframe", () => {
+    const sample = parseCss(
+      '@layer components { @media (prefers-reduced-motion: no-preference) { :where(td .button:hover) .icon__part { animation-name: icon-lift; } :where([role="row"] a:hover) .icon__part { animation-name: icon-lift; } :where(.toolbar .button:hover) .icon__part { animation-name: icon-lift; } } }',
+    );
+    const found = sample.filter((rule) =>
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector)),
+    );
+    expect(found.map((rule) => rule.selector)).toEqual([
+      ":where(td .button:hover) .icon__part",
+      ':where([role="row"] a:hover) .icon__part',
+    ]);
   });
 });
 
@@ -1103,18 +1409,103 @@ describe("contrast in every theme", () => {
     return new Map(rules.flatMap((rule) => rule.declarations.map((d) => [d.property, d.value])));
   }
 
-  const base = declarationsOf(":root");
+  // The base tokens and the default sides of the neutral ones (Light and Dark).
+  const base = new Map([
+    ...declarationsOf(":root"),
+    ...declarationsOf(':root, [data-light="light"]'),
+    ...declarationsOf(':root, [data-dark="dark"]'),
+  ]);
   const contrast = declarationsOf(':root[data-theme="contrast"]');
-  // The vetted accent colors of the appearance settings, each over the base tokens.
+
+  // The theme variants (board Themes): each replaces one side of the neutral tokens. Light and
+  // Dark are the default sides themselves.
+  const LIGHT_VARIANTS = ["paper", "calcite"] as const;
+  const DARK_VARIANTS = ["graphite", "night"] as const;
+  const variants = [
+    { name: "light", tokens: base, scheme: "light" as const, own: new Map<string, string>() },
+    { name: "dark", tokens: base, scheme: "dark" as const, own: new Map<string, string>() },
+    ...LIGHT_VARIANTS.map((name) => {
+      const own = declarationsOf(`[data-light="${name}"]`);
+      return { name, tokens: new Map([...base, ...own]), scheme: "light" as const, own };
+    }),
+    ...DARK_VARIANTS.map((name) => {
+      const own = declarationsOf(`[data-dark="${name}"]`);
+      return { name, tokens: new Map([...base, ...own]), scheme: "dark" as const, own };
+    }),
+  ];
+
+  // The neutral tokens a variant may change: surfaces, text, lines, focus and the monochrome
+  // chart colors, plus the warning threshold on the light side (it would fall below 3:1 on the
+  // sunken surfaces of the light variants otherwise). Everything else is the scheme's.
+  const SIDE_TOKENS = [
+    "bg",
+    "bg-surface",
+    "bg-raised",
+    "bg-hover",
+    "bg-active",
+    "border",
+    "border-strong",
+    "text",
+    "text-muted",
+    "focus-ring",
+    "chart-mono",
+    "chart-mono-compare",
+    "tone-warn",
+  ];
+
+  it("composes the neutral tokens from a light and a dark side", () => {
+    // The formatter may wrap a long value inside its parentheses.
+    const tidy = (map: Map<string, string>) =>
+      new Map(
+        [...map].map(([key, value]) => [key, value.replace(/\(\s+/g, "(").replace(/\s+\)/g, ")")]),
+      );
+    const root = tidy(declarationsOf(":root"));
+    const preview = tidy(declarationsOf(":root [data-light], :root [data-dark]"));
+    for (const name of SIDE_TOKENS) {
+      const composed = `light-dark(var(--light-${name}), var(--dark-${name}))`;
+      expect(root.get(`--${name}`), name).toBe(composed);
+      // A preview tile composes them again from its own side.
+      expect(preview.get(`--${name}`), name).toBe(composed);
+    }
+    expect([...preview.keys()].sort()).toEqual(SIDE_TOKENS.map((name) => `--${name}`).sort());
+    expect(declarationsOf(":root [data-light]").get("color-scheme")).toBe("light");
+    expect(declarationsOf(":root [data-dark]").get("color-scheme")).toBe("dark");
+  });
+
+  it("defines both default sides completely", () => {
+    for (const side of ["light", "dark"] as const) {
+      const own = declarationsOf(`:root, [data-${side}="${side}"]`);
+      expect([...own.keys()].sort(), side).toEqual(
+        SIDE_TOKENS.map((name) => `--${side}-${name}`).sort(),
+      );
+    }
+  });
+
+  it("changes only the neutral tokens in a variant, and every one of them", () => {
+    for (const variant of variants.slice(2)) {
+      const side = variant.scheme;
+      // The dark variants keep the dark warning threshold; the light ones need their own.
+      const expected = SIDE_TOKENS.filter((name) => side === "light" || name !== "tone-warn").map(
+        (name) => `--${side}-${name}`,
+      );
+      expect([...variant.own.keys()].sort(), variant.name).toEqual(expected.sort());
+      for (const value of variant.own.values()) {
+        expect(value, variant.name).toMatch(/^oklch\([^()]*\)$/);
+      }
+    }
+  });
+
+  // The vetted accent colors of the appearance settings, each over the base tokens and over
+  // every variant.
   const ACCENT_NAMES = ["copper", "blue", "teal", "green", "violet", "rose", "amber", "graphite"];
   const accentThemes = ACCENT_NAMES.flatMap((accent) => {
     const tokens = declarationsOf(
       `:root:not([data-theme="contrast"])[data-accent="${accent}"], :root:not([data-theme="contrast"]) [data-accent="${accent}"]`,
     );
-    return (["light", "dark"] as const).map((scheme) => ({
-      name: `${accent} accent (${scheme})`,
-      tokens: new Map([...base, ...tokens]),
-      scheme,
+    return variants.map((variant) => ({
+      name: `${accent} accent (${variant.name})`,
+      tokens: new Map([...variant.tokens, ...tokens]),
+      scheme: variant.scheme,
       accentTokens: tokens.size,
     }));
   });
@@ -1126,11 +1517,17 @@ describe("contrast in every theme", () => {
   });
 
   // light and dark use the base tokens with a fixed scheme; system uses them with either scheme.
+  // The variants are the base tokens with one side replaced.
   const themes = [
-    { name: "light", tokens: base, scheme: "light" },
-    { name: "dark", tokens: base, scheme: "dark" },
+    ...variants.map(({ name, tokens, scheme }) => ({ name, tokens, scheme })),
     { name: "contrast (light system)", tokens: new Map([...base, ...contrast]), scheme: "light" },
     { name: "contrast (dark system)", tokens: new Map([...base, ...contrast]), scheme: "dark" },
+    // High contrast has no variants: a variant chosen underneath must not weaken it.
+    ...variants.slice(2).map(({ name, tokens, scheme }) => ({
+      name: `contrast over ${name}`,
+      tokens: new Map([...tokens, ...contrast]),
+      scheme,
+    })),
     ...accentThemes,
   ] as const;
 
@@ -1280,16 +1677,28 @@ describe("contrast in every theme", () => {
     });
   }
 
-  // A custom accent is checked against the surfaces it has the least contrast on
-  // (appearance/contrast.ts and server/src/appearance.rs); those must stay the binding ones.
+  // A custom accent is checked against the surfaces it has the least contrast on over every
+  // variant (appearance/contrast.ts and server/src/appearance.rs): the sunken surface of Paper and
+  // the cards of Night. Those must stay the binding ones, so a color valid once stays valid in
+  // every variant.
   it("pins the custom accent's reference surfaces to the tokens", () => {
     const surfaces = ["--bg", "--bg-surface", "--bg-raised"];
-    const luminance = (scheme: "light" | "dark", name: string) =>
-      relativeLuminance(oklchToLinearRgb(resolveColor(base, scheme, name)));
-    const darkestLight = Math.min(...surfaces.map((name) => luminance("light", name)));
-    const lightestDark = Math.max(...surfaces.map((name) => luminance("dark", name)));
-    expect(darkestLight).toBeCloseTo(LIGHT_SURFACE_LUMINANCE, 4);
-    expect(lightestDark).toBeCloseTo(DARK_SURFACE_LUMINANCE, 4);
+    const luminances = (scheme: "light" | "dark") =>
+      variants
+        .filter((variant) => variant.scheme === scheme)
+        .flatMap((variant) =>
+          surfaces.map((name) =>
+            relativeLuminance(oklchToLinearRgb(resolveColor(variant.tokens, scheme, name))),
+          ),
+        );
+    expect(Math.min(...luminances("light"))).toBeCloseTo(LIGHT_SURFACE_LUMINANCE, 4);
+    expect(Math.max(...luminances("dark"))).toBeCloseTo(DARK_SURFACE_LUMINANCE, 4);
+    // Accents saved before the variants were checked against Light and Dark alone; they keep
+    // that check (decision 2), so its surfaces are pinned to those two themes' tokens.
+    const plain = (scheme: "light" | "dark") =>
+      surfaces.map((name) => relativeLuminance(oklchToLinearRgb(resolveColor(base, scheme, name))));
+    expect(Math.min(...plain("light"))).toBeCloseTo(LIGHT_DARK_SURFACE_LUMINANCE.light, 4);
+    expect(Math.max(...plain("dark"))).toBeCloseTo(LIGHT_DARK_SURFACE_LUMINANCE.dark, 4);
   });
 
   for (const scheme of ["light", "dark"] as const) {
@@ -1315,12 +1724,22 @@ describe("contrast in every theme", () => {
     });
   }
 
-  // Threshold states must be told apart without color vision too; they also carry a name for
-  // screen readers, but on the screen the color is what shows the state.
-  for (const scheme of ["light", "dark"] as const) {
-    it(`keeps threshold states distinguishable for every color vision (${scheme})`, () => {
+  // The variants keep the series of their scheme (checked above for each scheme); threshold
+  // states and the heat ramp are checked in every variant, since the warning threshold and the
+  // surfaces change. Threshold states must be told apart without color vision too; they also
+  // carry a name for screen readers, but on the screen the color is what shows the state.
+  for (const { name: variant, tokens, scheme } of variants) {
+    it(`keeps the series of the scheme in the ${variant} variant`, () => {
+      for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        expect(resolveColor(tokens, scheme, `--chart-${n}`)).toBe(
+          resolveColor(base, scheme, `--chart-${n}`),
+        );
+      }
+    });
+
+    it(`keeps threshold states distinguishable for every color vision (${variant})`, () => {
       const states = ["ok", "warn", "critical"].map((name) =>
-        resolveColor(base, scheme, `--tone-${name}`),
+        resolveColor(tokens, scheme, `--tone-${name}`),
       );
       const tooClose: string[] = [];
       for (const vision of VISIONS) {
@@ -1336,9 +1755,9 @@ describe("contrast in every theme", () => {
       expect(tooClose).toEqual([]);
     });
 
-    it(`grows the heat ramp steadily away from the surface (${scheme})`, () => {
-      const surface = resolveColor(base, scheme, "--bg-surface");
-      const ramp = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => resolveColor(base, scheme, `--heat-${n}`));
+    it(`grows the heat ramp steadily away from the surface (${variant})`, () => {
+      const surface = resolveColor(tokens, scheme, "--bg-surface");
+      const ramp = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => resolveColor(tokens, scheme, `--heat-${n}`));
       const contrast = ramp.map((color) => contrastRatio(color, surface));
       for (let i = 1; i < contrast.length; i++) {
         expect(contrast[i] ?? 0, `heat-${i + 1} after heat-${i}`).toBeGreaterThan(

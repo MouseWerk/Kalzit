@@ -210,6 +210,374 @@
     font-size: var(--font-size-sm);
   }
 
+  /*
+   * The dashboards page: a sticky side column (views, folders, more places), then a toolbar
+   * with search, tag filter, order and list or tiles, then the list.
+   */
+  /* Sticky, and scrolling on its own when a long folder tree would push the trash out of reach. */
+  .dashboards-side {
+    position: sticky;
+    top: calc(var(--top-bar-height, 0px) + var(--space-4));
+    gap: var(--space-1);
+    max-height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-8));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /*
+   * The list has five columns: beside the side column it only fits where the page has the room
+   * for both, whatever takes the rest of the window (the sidebar open or folded). With less room
+   * (a laptop or a narrow window) the side column goes above the list and scrolls away with the
+   * page, instead of names breaking letter by letter and the table reaching past the window.
+   */
+  .dashboards-layout {
+    container: dashboards-layout / inline-size;
+  }
+
+  @container dashboards-layout (max-width: 60rem) {
+    .browser.dashboards-browser {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dashboards-side {
+      position: static;
+      max-height: none;
+      overflow-y: visible;
+    }
+  }
+
+  /* Content wider than the list column (a long unbroken value) scrolls inside the list. */
+  .dashboard-table-frame {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .dashboards-side__group {
+    display: grid;
+    gap: var(--space-px);
+  }
+
+  .dashboards-side__separator {
+    width: 100%;
+    margin: var(--space-2) 0;
+    border: 0;
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  /* The folder caption in normal case, as the other side entries read. */
+  .dashboards-side .folder-tree__heading {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .dashboards-side__entry {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .dashboards-side__entry > .icon {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .dashboards-side__entry:hover {
+    background: var(--bg-hover);
+  }
+
+  .dashboards-side__entry:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* The current view: neutral tint and weight, no frame or bar. */
+  .dashboards-side__entry[data-current="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dashboards-side__action {
+    color: var(--text-muted);
+  }
+
+  .dashboards-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .dashboards-toolbar__search {
+    flex: 1 1 var(--size-field);
+    min-width: 0;
+    max-width: var(--size-form);
+  }
+
+  /* List or tiles: two toggle buttons joined, the chosen one tinted. */
+  .dashboards-display {
+    display: inline-flex;
+    gap: var(--space-px);
+    border: var(--border-width) solid var(--border);
+    background: var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .dashboards-display__option {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .dashboards-display__option:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .dashboards-display__option[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dashboards-display__option:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* Recently opened: up to four compact links above "All dashboards". */
+  .dashboards-recent {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .dashboards-recent__title {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dashboards-recent__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dashboards-recent__link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .dashboards-recent__link:hover {
+    background: var(--bg-hover);
+  }
+
+  .dashboards-recent__text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .dashboards-recent__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dashboards-recent__detail {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* A small neutral mark before a dashboard's name. */
+  .dashboard-row__mini {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--size-kind-mark-small);
+    height: var(--size-kind-mark-small);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  /* A row is one link for the pointer: the name's link covers it; the star stays above. */
+  .dashboard-row {
+    position: relative;
+  }
+
+  .dashboard-row:hover {
+    background: var(--bg-hover);
+  }
+
+  .dashboard-row__title {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dashboard-row__link {
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .dashboard-row__link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+
+  /* Keyboard focus on the name's link rings the whole row it stands for. */
+  .dashboard-row:has(.dashboard-row__link:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .dashboard-row__changed {
+    white-space: nowrap;
+  }
+
+  .dashboard-table__star {
+    width: calc(var(--size-target-min) + var(--space-4));
+  }
+
+  .dashboard-star {
+    position: relative;
+    z-index: var(--z-sticky-column);
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--size-target-min);
+    min-height: var(--size-target-min);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .dashboard-star[aria-pressed="true"] {
+    color: var(--text);
+  }
+
+  .dashboard-star:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .dashboard-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .dashboard-tag {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  /* Tiles: a schematic sketch of the panel layout, then name, folder and time. */
+  .dashboard-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-preview), 100%), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dashboard-tile {
+    position: relative;
+    display: grid;
+    min-width: 0;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .dashboard-tile:hover {
+    background: var(--bg-hover);
+  }
+
+  .dashboard-sketch {
+    aspect-ratio: 2;
+    padding: var(--space-2);
+    border-block-end: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .dashboard-sketch__svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .dashboard-tile__meta {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3) var(--space-3);
+  }
+
+  .dashboard-tile__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .dashboard-tile__link {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+    text-decoration: none;
+  }
+
+  .dashboard-tile__link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+
+  .dashboard-tile__detail {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
   .dashboard-list__team {
     display: inline-flex;
     align-items: center;
@@ -320,9 +688,29 @@
     padding: var(--space-1) var(--space-1) 0 var(--space-3);
   }
 
+  /*
+   * While editing the header stays one line: the title gives way, the actions never wrap out of
+   * the card. A narrow panel leaves Edit, Duplicate and the size to its menu, which holds them
+   * too, so the menu button is always there.
+   */
   .panel-card--editing .panel-card__header {
+    container: panel-header / inline-size;
+    flex-wrap: nowrap;
     cursor: move;
     touch-action: none;
+  }
+
+  /*
+   * Only where the actions really do not fit: handle, size, Edit, Duplicate and the menu take
+   * about 13rem, plus room for a few letters of the title. A literal, as container conditions
+   * cannot read tokens; with the outline open (--size-drawer, 22rem) a third of a wide canvas
+   * stays above it, so three panels across still show Edit.
+   */
+  @container panel-header (max-width: 16rem) {
+    .panel-card__mini,
+    .panel-card__size {
+      display: none;
+    }
   }
 
   .panel-card__title {
@@ -330,6 +718,10 @@
     min-width: 0;
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
+  }
+
+  .panel-card--editing .panel-card__title {
+    flex: 1 1 auto;
   }
 
   /* A refresh keeps the last answer drawn; only the title quiets while the new one is on its way. */
@@ -345,6 +737,12 @@
     min-width: 0;
     gap: var(--space-1);
     cursor: default;
+  }
+
+  .panel-card--editing .panel-card__actions {
+    flex: none;
+    flex-wrap: nowrap;
+    align-items: center;
   }
 
   /*
@@ -443,11 +841,8 @@
     border-style: solid;
   }
 
-  /* The selected panel's size in grid units, quiet in the bottom corner. */
+  /* The selected panel's size in grid units, quiet in its header, never over its content. */
   .panel-card__size {
-    position: absolute;
-    inset-block-end: var(--space-2);
-    inset-inline-end: var(--space-4);
     padding: 0 var(--space-1);
     border-radius: var(--radius-sm);
     background: var(--bg-active);
@@ -455,6 +850,7 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-2xs);
     font-variant-ligatures: none;
+    white-space: nowrap;
     pointer-events: none;
   }
 
@@ -684,6 +1080,13 @@
   @media (max-width: 48rem) {
     .browser {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* One column on a phone: the side column scrolls away above the list. */
+    .dashboards-side {
+      position: static;
+      max-height: none;
+      overflow-y: visible;
     }
 
     /* One column on small screens: every panel full width, in reading order. */

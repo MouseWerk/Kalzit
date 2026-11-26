@@ -22,6 +22,7 @@ import {
   type TextRange,
 } from "../dashboards/timeRange";
 import { errorMessage } from "../dashboards/ui/errors";
+import { usePanelPages } from "../dashboards/usePanelPages";
 import { panelDistribution } from "../dashboards/usePanelResults";
 import { datasourcesQuery } from "../datasources/api";
 import { KindMark } from "../datasources/kindMarks";
@@ -159,6 +160,20 @@ function AnalysisView({
     options: model.visualization.options ?? {},
     fieldConfig: model.visualization.fieldConfig ?? {},
   };
+  // Pages after a document set the source has more of, through the analysis's own route.
+  const paged = usePanelPages(
+    {
+      orgId,
+      dashboardId: "",
+      panel,
+      range: timeRange ?? { from: 0, to: 0 },
+      variables: {},
+      source: "stored",
+      run,
+      route: { kind: "analysis", analysisId: analysis.id },
+    },
+    result,
+  );
   const place = placeLabel(t, folders.data ?? [], analysis.folderId);
   return (
     <div className="explore">
@@ -184,6 +199,7 @@ function AnalysisView({
           <button
             type="button"
             className="button button--secondary"
+            aria-busy={result.isFetching || undefined}
             onClick={() => apply(range)}
             disabled={result.isFetching}
           >
@@ -226,8 +242,9 @@ function AnalysisView({
                 error={result.error}
                 onRetry={() => void result.refetch()}
                 fetching={result.isFetching}
-                outcomes={result.data ?? []}
-                revision={String(result.dataUpdatedAt)}
+                outcomes={paged.outcomes}
+                revision={`${result.dataUpdatedAt}:${paged.pageCount}`}
+                more={paged.more}
                 kindOf={kindOf}
                 distribution={panelDistribution(
                   {

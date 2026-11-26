@@ -4,6 +4,7 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "rea
 import { forgetAccountData, logout, type Me, meQuery, ssoStartUrl } from "../api/auth";
 import { isApiError } from "../api/client";
 import { useBrand } from "../appearance/brand";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { isBuiltInRole, roleLabel } from "../features/admin/catalog";
 import { formatDateTime } from "../features/admin/components/format";
@@ -319,7 +320,7 @@ function Join({ token, head, facts }: { token: string; head: ReactNode; facts: R
             if (!join.isPending) join.mutate();
           }}
         >
-          {join.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {join.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {t("access.invite.join")}
         </button>
       </div>
@@ -559,7 +560,7 @@ function NewAccount({
               className="button button--primary button--block access__submit"
               aria-disabled={accept.isPending}
             >
-              {accept.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+              {accept.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
               {t("access.invite.accept")}
             </button>
           </>

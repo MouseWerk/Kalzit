@@ -41,7 +41,9 @@ export function lookFrom(value: { accent?: unknown; density?: unknown; fontSize?
 export function applyLook(element: HTMLElement, look: Look): void {
   const custom = !isAccentName(look.accent);
   const check = custom ? checkAccent(look.accent) : null;
-  if (check === null || !check.passes) {
+  // A stored accent from before the theme variants was checked against Light and Dark only; it
+  // keeps showing rather than falling back to copper by itself.
+  if (check === null || !check.shows) {
     element.dataset.accent = custom ? "copper" : look.accent;
     element.style.removeProperty("--accent-custom");
     delete element.dataset.accentOn;

@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOCS_REF } from "../help/docs";
-import { GUIDE_SOURCES, prepareGuide } from "../help/HelpPage";
+import { GUIDE_SOURCES, once, prepareGuide } from "../help/HelpPage";
 import { setLanguage } from "../i18n/i18n";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
@@ -733,7 +733,8 @@ describe("setup, step 3 and the finish", () => {
     await toOrgStep(user);
     await user.click(screen.getByRole("radio", { name: /Light/ }));
     await user.click(screen.getByRole("button", { name: "Theme: Light" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    // The menu names Dark as a mode and as a variant; the mode comes first.
+    await user.click(screen.getAllByRole("menuitemradio", { name: "Dark" })[0] as HTMLElement);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(true);
   });
@@ -917,6 +918,19 @@ describe("help pages", () => {
     } finally {
       failed.mockRestore();
     }
+  });
+
+  it("imports a guide page once and tries again after a failed load", async () => {
+    const load = vi
+      .fn<() => Promise<{ default: string }>>()
+      .mockRejectedValueOnce(new Error("Failed to fetch dynamically imported module"))
+      .mockResolvedValue({ default: "# Guide" });
+    const source = once(load);
+    await expect(source()).rejects.toThrow("Failed to fetch");
+    expect(await source()).toBe("# Guide");
+    expect(await source()).toBe("# Guide");
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(GUIDE_SOURCES.en.installation()).toBe(GUIDE_SOURCES.en.installation());
   });
 
   it("knows only the shipped pages", async () => {

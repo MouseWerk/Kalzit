@@ -11,7 +11,7 @@
     "The texts of the report pages load with their pages the same way (#325); only the navigation entry and the two lines of the dashboard menu stay in the language catalogs.",
     "total raised to 3.1 MB with #326 (owner decision of 2026-11-19): measured 3.03 MB with the new on-demand pages (traces, the server settings for CORS, registration and backups, apps); the first page load and the language limits are unchanged.",
     "Raised with #387: the language catalogs to 175 kB (owner decision of 2026-11-23), since the German one reached 166.1 kB with the sidebar texts and the pending M8 pages (handbook, themes, dashboards, administration) add more; splitting the catalogs per area stays M8 work (Performance und Tempo).",
-    "total raised to 3.175 MB with #356 (pending the owner's decision): measured 3.09 MB with the graph style rules, whose code loads only with a graph panel or a table that has rules; the icon set a rule can put on a node (about 29 kB, loaded on first use), the rule editor (14 kB) and the drawing of rules on the canvas (8 kB) are the bulk; the first page load, the languages and every single chunk stay within their limits.",
+    "total raised to 3.3 MB (owner decision of 2026-11-23): one raise for the M8 graph pages of 0.8.1 (canvas, style rules, layouts, export, map panel, about 3.16 MB measured with all of them) and the built-in handbook (#383); the first page load, the language catalogs and every single chunk are unchanged. Making the whole bundle smaller stays M8 work (Performance und Tempo).",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
@@ -23,5 +23,5 @@
     "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
-  "total": 3175000
+  "total": 3300000
 }
