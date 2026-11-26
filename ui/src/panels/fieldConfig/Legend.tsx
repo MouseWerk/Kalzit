@@ -1,4 +1,5 @@
 import { type ReactNode, useRef, useState } from "react";
+import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { type Calc, percentileOf } from "../calcs";
 import { useStyleVars } from "../styleVars";
@@ -139,7 +140,12 @@ export function Legend({
                         onClick={() => sortBy(column.key)}
                       >
                         {column.label}
-                        {active ? (sort.descending ? " ↓" : " ↑") : null}
+                        {active ? (
+                          <Icon
+                            name={sort.descending ? "chevronDown" : "chevronUp"}
+                            className="icon--inline"
+                          />
+                        ) : null}
                       </button>
                     ) : (
                       column.label
