@@ -283,6 +283,7 @@ impl GraphBuilder {
             schema,
             truncated: self.truncated.take(),
             notices: Some(std::mem::take(&mut self.notices)).filter(|n| !n.is_empty()),
+            suggested: None,
         }
     }
 }

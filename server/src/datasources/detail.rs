@@ -62,6 +62,8 @@ mod tests {
         "variables",
         "dashboards",
         "analysis",
+        // Graph algorithm steps that run in the source's library (docs/api/datasources.md).
+        "algorithm",
         "source",
         "sqlite",
         "mysql",

@@ -135,6 +135,23 @@ pub trait DataSourcePlugin: Send + Sync {
     fn pushdown(&self, _query: &Value, _step: &crate::analysis::StepKind, _max_rows: usize) -> Option<Value> {
         None
     }
+    /// The graph algorithm library of this kind's sources (`analysis::algo::library`): algorithm
+    /// steps run there on the result's subgraph where it can, else on the server. `None`: always
+    /// on the server. TigerGraph has none yet; an administrator-installed, read-only library query
+    /// limited to a vertex set would be offered here.
+    fn algorithm_library(&self) -> Option<crate::analysis::algo::library::Library> {
+        None
+    }
+    /// Runs a job of `algorithm_library` within `timeout` and answers the rows of each of its
+    /// queries, values as JSON (ids as the result names them).
+    async fn run_algorithm(
+        &self,
+        _conn: &Connection,
+        _job: &crate::analysis::algo::library::Job,
+        _timeout: Duration,
+    ) -> Result<Vec<Vec<Vec<Value>>>, SourceError> {
+        Err(SourceError::rejected("algorithm.no_library", "this kind of source has no algorithm library"))
+    }
     /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
     /// the login may only read). A refusal names the settings field at fault; a source that
     /// cannot be reached is not refused.
@@ -1778,9 +1795,8 @@ fn valid_steps(item: &QueryItem) -> (Vec<crate::analysis::Step>, Option<crate::s
                 let id = raw.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
                 let detail = Detail::new("steps.invalid", format!("the step is not valid: {e}")).with("detail", e);
                 let place = crate::shapes::StepPlace {
-                    id,
-                    ran_in: crate::shapes::RanIn::Server,
                     error: Some(error_body("validation", detail)),
+                    ..crate::shapes::StepPlace::new(id, crate::shapes::RanIn::Server)
                 };
                 return (steps, Some(place));
             }
@@ -2197,16 +2213,28 @@ async fn execute(
     match outcome {
         Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
-        Ok(Ok((_, Ok((result, in_source))))) => {
+        Ok(Ok((conn, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
             if steps.is_empty() && invalid.is_none() {
                 return QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None };
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
-            let name = item.ref_id.clone();
-            let ran =
-                tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
-                    .await;
+            // An organization's lower limits always apply; without them no algorithm step runs.
+            let algorithms = if steps.iter().any(|s| s.kind.is_algorithm()) {
+                match crate::analysis::algo::AlgoLimits::load(state, Some(&ctx.org_id)).await {
+                    Ok(limits) => limits,
+                    Err(e) => {
+                        tracing::warn!("graph algorithm limits not read: {e:?}");
+                        let detail =
+                            Detail::new("steps.failed", "the limits of graph algorithm steps could not be read");
+                        return outcome_error("internal", detail);
+                    }
+                }
+            } else {
+                crate::analysis::algo::AlgoLimits::default()
+            };
+            let after = AfterQuery { name: item.ref_id.clone(), in_source, timeout_secs: left, algorithms };
+            let ran = graph_steps_after(kind.plugin.as_ref(), &conn, steps, result, after).await;
             match ran {
                 Ok((result, mut places)) => {
                     // A stored step that is no longer valid says so; the steps before it ran.
@@ -2228,57 +2256,229 @@ async fn execute(
     }
 }
 
-/// The graph steps of one query after it answered: the first already ran in the source when
-/// `in_source`; the others run here one by one. A failing step keeps the result before it and
-/// says why; the steps after it do not run.
-fn graph_steps_on_server(
-    steps: &[crate::analysis::Step],
-    name: &str,
-    mut result: QueryResult,
+/// Sets the cancel flag of the steps of a query when the request that runs them goes away (its
+/// future is dropped), so an algorithm computing in another thread stops at its next look.
+struct CancelOnDrop(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// What the steps after a query need to know besides the steps themselves.
+struct AfterQuery {
+    /// The query's reference id.
+    name: String,
+    /// Whether the first enabled step already ran in the source with the query.
     in_source: bool,
     timeout_secs: u64,
-) -> (QueryResult, Vec<crate::shapes::StepPlace>) {
+    algorithms: crate::analysis::algo::AlgoLimits,
+}
+
+/// The graph steps of one query after it answered: the first already ran in the source when
+/// `in_source`; the others run one by one, an algorithm step in the source's library where it can
+/// (`analysis::algo::library`), every other step on the server. A failing step keeps the result
+/// before it and says why; the steps after it do not run.
+async fn graph_steps_after(
+    plugin: &dyn DataSourcePlugin,
+    conn: &Connection,
+    steps: Vec<crate::analysis::Step>,
+    mut result: QueryResult,
+    after: AfterQuery,
+) -> Result<(QueryResult, Vec<crate::shapes::StepPlace>), tokio::task::JoinError> {
+    use crate::analysis::algo::library;
     use crate::shapes::{RanIn, StepPlace};
-    let control = crate::analysis::steps::Control::new(
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        timeout_secs,
-    );
+    let AfterQuery { name, in_source, timeout_secs, algorithms } = after;
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel = CancelOnDrop(cancelled.clone());
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let failed = |id: String, detail: Detail, reason: Option<&str>| StepPlace {
+        error: Some(error_body("validation", detail)),
+        reason: reason.map(String::from),
+        ..StepPlace::new(id, RanIn::Server)
+    };
     let mut places = Vec::new();
-    let mut enabled = steps.iter().filter(|s| !s.disabled);
+    let mut enabled = steps.into_iter().filter(|s| !s.disabled);
     if in_source && let Some(first) = enabled.next() {
-        places.push(StepPlace { id: first.id.clone(), ran_in: RanIn::Database, error: None });
+        places.push(StepPlace::new(first.id, RanIn::Database));
     }
     for step in enabled {
-        // Each step reads the graph as the one before left it; a failure keeps that graph. A
-        // trace is read only by a trace step, which makes a frame or a graph of it.
-        use crate::analysis::{graph::GraphOut, steps, trace::TraceOut};
-        let ran = match &result {
-            QueryResult::Trace { trace } if step.kind.is_trace_step() => {
-                crate::analysis::trace::apply(&step.kind, trace, &control)
+        let mut reason: Option<&str> = None;
+        if step.kind.is_algorithm() && matches!(result, QueryResult::Graph { .. }) {
+            let library = match step.place {
+                crate::analysis::Place::Auto => plugin.algorithm_library(),
+                crate::analysis::Place::Server => None,
+            };
+            // Sizing and reading a large graph takes a moment: in a blocking thread.
+            let kind = step.kind.clone();
+            let (back, routed) = tokio::task::spawn_blocking(move || {
+                let QueryResult::Graph { graph } = &result else { unreachable!("a graph, checked above") };
+                let routed = library::route(library, &kind, graph, &algorithms);
+                (result, routed)
+            })
+            .await?;
+            result = back;
+            match routed {
+                Ok(Err(_)) if step.place == crate::analysis::Place::Server => {
+                    reason = Some(library::reason::PLACE_SERVER);
+                }
+                Err(detail) => {
+                    places.push(failed(step.id, detail, None));
+                    break;
+                }
+                Ok(Err(why)) => reason = Some(why),
+                Ok(Ok(job))
+                    if conn.pushdown.refused(&job.memo_key())
+                        || job.slow_keys().any(|key| conn.pushdown.refused(&key)) =>
+                {
+                    reason = Some(library::reason::LIBRARY_FAILED);
+                }
+                Ok(Ok(job)) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    let time = left.min(Duration::from_secs(algorithms.timeout_secs)).max(Duration::from_secs(1));
+                    let why = match tokio::time::timeout(time, plugin.run_algorithm(conn, &job, time)).await {
+                        Ok(Ok(answers)) => match merge_blocking(&step.kind, &job, answers, &mut result).await? {
+                            Ok((out, summary)) => {
+                                result = match out {
+                                    crate::analysis::graph::GraphOut::Graph(graph) => QueryResult::Graph { graph },
+                                    crate::analysis::graph::GraphOut::Frame(frame) => QueryResult::Frame { frame },
+                                };
+                                places.push(StepPlace {
+                                    summary: Some(summary),
+                                    ..StepPlace::new(step.id, RanIn::Database)
+                                });
+                                continue;
+                            }
+                            // An answer Kalzit cannot read is not guessed at, nor silently
+                            // replaced: the step says so, and may be run on the server.
+                            Err(detail) => {
+                                places.push(StepPlace {
+                                    ran_in: RanIn::Database,
+                                    ..failed(step.id, detail, Some(library::reason::ANSWER_UNREADABLE))
+                                });
+                                break;
+                            }
+                        },
+                        // A library that lacks what the step needs is not asked again for a while
+                        // (the memo's ten minutes), nor one that ran out of time for results of
+                        // this size and larger (a procedure that cannot be stopped may still be
+                        // running); memory or a lost connection may pass, so the next run asks
+                        // the library again.
+                        Ok(Err(e)) => {
+                            let detail = e.detail();
+                            if detail.reason == "algorithm.unsupported" {
+                                conn.pushdown.remember(&job.memo_key());
+                            } else if detail.reason == "algorithm.timeout" {
+                                conn.pushdown.remember(&job.slow_key());
+                            }
+                            detail.message
+                        }
+                        Err(_) => {
+                            conn.pushdown.remember(&job.slow_key());
+                            format!("no answer within {} s", time.as_secs())
+                        }
+                    };
+                    tracing::debug!("graph algorithm not run in the source: {}", scrub(&why, std::iter::empty()));
+
+                    reason = Some(library::reason::LIBRARY_FAILED);
+                }
             }
-            QueryResult::Trace { .. } => Err(steps::trace_needs_projection(name)),
-            _ if step.kind.is_trace_step() => Err(steps::not_trace(name)),
-            QueryResult::Graph { graph } => {
-                crate::analysis::graph::apply(&step.kind, graph, &control).map(|out| match out {
-                    GraphOut::Graph(graph) => TraceOut::Graph(graph),
-                    GraphOut::Frame(frame) => TraceOut::Frame(frame),
-                })
+        }
+        // An algorithm waits for one of the server's places without holding a thread; a step
+        // that does not get one within its time fails like one that computed too long.
+        let slot = if step.kind.is_algorithm() && matches!(result, QueryResult::Graph { .. }) {
+            let until = deadline.min(Instant::now() + Duration::from_secs(algorithms.timeout_secs));
+            match crate::analysis::algo::acquire(algorithms.max_parallel, until, algorithms.timeout_secs).await {
+                Ok(slot) => Some(slot),
+                Err(detail) => {
+                    places.push(failed(step.id, detail, reason));
+                    break;
+                }
             }
-            _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
+        } else {
+            None
         };
+        // On the server, in a thread of its own; a request that goes away stops it.
+        let secs = deadline.saturating_duration_since(Instant::now()).as_secs().max(1);
+        let (flag, kind, label) = (cancelled.clone(), step.kind.clone(), name.clone());
+        let held = slot.is_some();
+        let (back, ran) = tokio::task::spawn_blocking(move || {
+            let _slot = slot;
+            let control = crate::analysis::steps::Control::new(flag, secs)
+                .with_algorithm_limits(algorithms)
+                .with_algorithm_slot(held);
+            server_step(&kind, &label, result, &control)
+        })
+        .await?;
+        result = back;
         match ran {
-            Ok(TraceOut::Trace(trace)) => result = QueryResult::Trace { trace },
-            Ok(TraceOut::Graph(graph)) => result = QueryResult::Graph { graph },
-            Ok(TraceOut::Frame(frame)) => result = QueryResult::Frame { frame },
+            Ok(summary) => places.push(StepPlace {
+                summary,
+                reason: reason.map(String::from),
+                ..StepPlace::new(step.id, RanIn::Server)
+            }),
             Err(detail) => {
-                let error = error_body("validation", detail);
-                places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: Some(error) });
+                places.push(failed(step.id, detail, reason));
                 break;
             }
         }
-        places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: None });
     }
-    (result, places)
+    Ok((result, places))
+}
+
+/// A library's answers merged into the graph `result` (`library::merge`), in a blocking thread.
+async fn merge_blocking(
+    kind: &crate::analysis::StepKind,
+    job: &crate::analysis::algo::library::Job,
+    answers: Vec<Vec<Vec<Value>>>,
+    result: &mut QueryResult,
+) -> Result<Result<(crate::analysis::graph::GraphOut, crate::shapes::StepSummary), Detail>, tokio::task::JoinError> {
+    let (kind, job) = (kind.clone(), job.clone());
+    let taken = std::mem::replace(result, QueryResult::Graph { graph: Default::default() });
+    let (back, merged) = tokio::task::spawn_blocking(move || {
+        let QueryResult::Graph { graph } = &taken else { unreachable!("a graph") };
+        let merged = crate::analysis::algo::library::merge(&kind, graph, &job, &answers);
+        (taken, merged)
+    })
+    .await?;
+    *result = back;
+    Ok(merged)
+}
+
+/// One graph or trace step on the server: the result after it and its summary, or the result as
+/// it was and why the step failed. A trace is read only by a trace step, which makes a frame or a
+/// graph of it.
+fn server_step(
+    kind: &crate::analysis::StepKind,
+    name: &str,
+    result: QueryResult,
+    control: &crate::analysis::steps::Control,
+) -> (QueryResult, Result<Option<crate::shapes::StepSummary>, Detail>) {
+    use crate::analysis::{graph::GraphOut, steps, trace::TraceOut};
+    let ran = match &result {
+        QueryResult::Trace { trace } if kind.is_trace_step() => {
+            crate::analysis::trace::apply(kind, trace, control).map(|out| (out, None))
+        }
+        QueryResult::Trace { .. } => Err(steps::trace_needs_projection(name)),
+        _ if kind.is_trace_step() => Err(steps::not_trace(name)),
+        QueryResult::Graph { graph } => {
+            crate::analysis::graph::apply_summarized(kind, graph, control).map(|(out, s)| {
+                let out = match out {
+                    GraphOut::Graph(graph) => TraceOut::Graph(graph),
+                    GraphOut::Frame(frame) => TraceOut::Frame(frame),
+                };
+                (out, s)
+            })
+        }
+        _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
+    };
+    match ran {
+        Ok((TraceOut::Trace(trace), s)) => (QueryResult::Trace { trace }, Ok(s)),
+        Ok((TraceOut::Graph(graph), s)) => (QueryResult::Graph { graph }, Ok(s)),
+        Ok((TraceOut::Frame(frame), s)) => (QueryResult::Frame { frame }, Ok(s)),
+        Err(detail) => (result, Err(detail)),
+    }
 }
 
 /// Opens the change feed of one query for live updates (`DataSourcePlugin::watch`), with the

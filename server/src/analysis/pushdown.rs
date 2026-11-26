@@ -347,6 +347,7 @@ pub fn normalize(step: &StepKind, result: QueryResult, max_rows: usize) -> Resul
                     schema: GraphSchema::default(),
                     truncated: None,
                     notices: None,
+                    suggested: None,
                 },
             },
         });
