@@ -4,7 +4,9 @@ import { t } from "./support/i18n";
 import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
-test("someone new to SQL starts in Explore from a starter and sees the rows", async ({ page }) => {
+test("someone new to SQL starts in Explore from a starter and sees the rows", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const owner = await Api.owner();
   const id = await owner.createSqliteSource(unique("Verkäufe"), join(fixturesDir(), "sales.db"));
   await owner.dispose();

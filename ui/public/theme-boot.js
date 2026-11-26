@@ -17,10 +17,31 @@
       return fallback;
     }
   };
+  // The pages before sign-in (PRE_SIGN_IN_PATHS there) show the server's default variants as last
+  // seen, never the variant an account stored, which is chosen only in the account settings.
+  const preSignInPaths = [
+    "/login",
+    "/anmelden",
+    "/setup",
+    "/invite",
+    "/reset-password",
+    "/register",
+    "/confirm-email",
+  ];
+  const base = document.querySelector('meta[name="kalzit-base-path"]')?.getAttribute("content");
+  let path = window.location.pathname;
+  if (base && /^(\/[A-Za-z0-9._~-]+)+$/.test(base) && path.startsWith(base)) {
+    path = path.slice(base.length) || "/";
+  }
+  const preSignIn = preSignInPaths.some((page) => path === page || path.startsWith(`${page}/`));
   const root = document.documentElement;
   root.dataset.theme = read("kalzit.theme", themes, "system");
-  root.dataset.light = read("kalzit.themeLight", lightVariants, "light");
-  root.dataset.dark = read("kalzit.themeDark", darkVariants, "dark");
+  root.dataset.light = preSignIn
+    ? read("kalzit.defaultThemeLight", lightVariants, "light")
+    : read("kalzit.themeLight", lightVariants, "light");
+  root.dataset.dark = preSignIn
+    ? read("kalzit.defaultThemeDark", darkVariants, "dark")
+    : read("kalzit.themeDark", darkVariants, "dark");
   // The look an admin chose (accent, density, font size), as src/appearance/look.ts last applied
   // it; the app checks and applies it again once it loads.
   try {

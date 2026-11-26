@@ -880,6 +880,7 @@ describe("panel time options", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await panelAction(user, "Edit “Orders”");
     const dialog = await screen.findByRole("region", { name: "Edit panel" });
+    await user.click(within(dialog).getByRole("button", { name: /Query options/ }));
     await fill(user, within(dialog).getByRole("textbox", { name: /Own time range/ }), "yesterday");
     expect(within(dialog).getByText(/Enter a range relative to now/)).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Save dashboard…" })).toHaveProperty(
@@ -1316,7 +1317,8 @@ describe("JSON, import and export", () => {
     const shop = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
     expect(shop).toBeDefined();
     const { user, location } = renderApp("/dashboards");
-    await user.click(await screen.findByRole("button", { name: "Import…" }));
+    await user.click(await screen.findByRole("button", { name: "Import" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Import…" }));
     const dialog = screen.getByRole("dialog", { name: "Import dashboard" });
     await fill(
       user,

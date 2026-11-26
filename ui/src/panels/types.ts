@@ -179,10 +179,21 @@ export interface PanelEditorProps<Options> {
    * field (the XY chart's X and Y). Absent where there is no preview.
    */
   fields?: readonly PanelField[];
+  /**
+   * The columns of the preview's tables after the steps, by shown name, for options set per
+   * column (the table footer). Absent where there is no preview.
+   */
+  tableColumns?: readonly TableColumn[];
 }
 
 /** A field of the preview, by name and type. */
 export interface PanelField {
+  name: string;
+  type: FieldType;
+}
+
+/** One column the panel shows: its shown name and its type. */
+export interface TableColumn {
   name: string;
   type: FieldType;
 }

@@ -149,6 +149,18 @@ setzt** eine Dashboard-Variable auf den Wert der Zeile in der **Spalte für die 
 Name, den die Kopfzeile zeigt, oder der Feldname; leer nimmt die erste Spalte); diese Zelle wird
 zu einer Schaltfläche, sodass auch die Tastatur sie erreicht.
 
+**Fußzeile** fügt unten eine Zeile an, die beim Scrollen stehen bleibt: eine Rechnung je Spalte,
+etwa **Summe**, **Mittel**, **Anzahl** (als „4 von 2.000 Zeilen“), **Min**, **Max**, **Median**,
+**p95** oder **Erster** und **Letzter** (die leere Zellen überspringen; **Erste Zeile** und
+**Letzte Zeile** nicht). **Alle Zahlenspalten** setzt eine Rechnung für jede Zahlenspalte, **Je
+Spalte** setzt oder ändert sie für eine Spalte. **Rechnet über** alle Zeilen der Abfrage oder nur
+die Zeilen, die die Spaltenfilter behalten; eine Zeile unter der Tabelle sagt immer, worüber,
+und „über die geladenen N Zeilen“, wenn das Zeilenlimit der Abfrage die Antwort gekürzt hat.
+Summe, Mittel und Perzentile tragen die Einheit der Spalte; Anzahlen und die Varianz sind reine
+Zahlen. Importierte Grafana-Tabellen behalten die erste Rechnung ihrer Fußzeile; wo Grafana anders
+rechnet (seine Differenz für Zähler, die Streuung der Grundgesamtheit, eine Zeilenzahl), sagt es
+der Import-Bericht.
+
 ## Kreisdiagramm
 
 **Form** Kreis oder Ring. **Beschriftung** Keine, Prozent, Name oder Wert; **Position der
@@ -322,6 +334,23 @@ ausgewählter Knoten werden gezeichnet, egal was sie verdecken, sodass sie über
 können. Eine Auswahl gibt einer Variablen mit mehreren Werten höchstens 100 Werte und sagt das;
 ein Klick auf einen Knoten, dessen Nachbarn sich nicht laden lassen, öffnet stattdessen seine
 Details.
+
+Die Werkzeuge auf der Zeichenfläche (oben links) bestimmen, wie der Zeiger wählt (**Zeiger** V,
+**Rechteck** R, **Lasso** L; Umschalt nimmt dazu, Alt nimmt weg, ein Doppelklick hält das
+Werkzeug fest), öffnen die **Suche** (F), tragen **Rückgängig** und **Wiederholen** mit dem
+Verlauf dieser Ansicht und zoomen. Einen Knoten zu ziehen verschiebt ihn und heftet ihn dort an,
+wo du ihn loslässt; **Lösen** (P) lässt das Layout ihn wieder platzieren. Beim Ansehen merkt sich
+der Server deine angehefteten Knoten, ihre Plätze und was du ausgeblendet hast, für dich; im
+Panel-Editor werden angeheftete Knoten mit dem Panel für alle gespeichert. Bleibt der Zeiger auf
+einem Knoten oder einer Kante stehen (oder mit I auf der Tastatur), erscheint seine Info-Karte;
+der Panel-Editor wählt dafür bis zu vier Properties je Label. Ein Klick auf eine Kante wählt sie
+und öffnet ihre eigenen Details. Ein Rechtsklick (oder Umschalt+F10) öffnet das Menü eines
+Knotens, einer Kante, der Auswahl oder der freien Fläche, mit **Ausblenden** (H),
+**Ausgeblendete einblenden** (Umschalt+H), **Auswahl umkehren** (Strg+I) und mehr. Die Suche
+durchsucht Beschriftungen und Properties dessen, was das Panel geladen hat, und springt zu jedem
+Treffer; die Minikarte (M) zeigt, wo du bist. Strg+Z nimmt den letzten Schritt der Ansicht zurück:
+Verschieben, Anheften, Ausblenden, Explorer-Schritte, geöffnete Gruppen; Zoom und Auswahl gehören
+nicht dazu. Alle Tasten stehen unter **Graph** in der Tastaturhilfe (?).
 
 ![Ein Netzwerk-Panel mit einem ausgewählten Kunden und den Details neben der Zeichnung](../../screenshots/graph-inspector-dark.png)
 

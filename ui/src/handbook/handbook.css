@@ -1,0 +1,745 @@
+@layer components {
+  /*
+   * The built-in handbook (docs/design/blueprint/Handbook.dc.html): contents on the left, the
+   * article in the middle, "On this page" on the right; contents and "On this page" stay while the
+   * page scrolls. Calm like the rest of the help layer: the current page, the section being read
+   * and the chosen hit are a quiet tint with weight, never a colored frame or bar.
+   */
+
+  .hb {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--size-handbook-nav) minmax(0, 1fr) var(--size-handbook-toc);
+    gap: var(--space-8);
+    align-items: start;
+  }
+
+  .hb-skip {
+    position: absolute;
+    inset-inline-start: var(--space-4);
+    translate: 0 -200%;
+  }
+
+  .hb-skip:focus-visible {
+    z-index: var(--z-sticky);
+    translate: 0;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+  }
+
+  .hb-side,
+  .hb-toc {
+    position: sticky;
+    top: calc(var(--top-bar-height, 0px) + var(--space-4));
+    display: grid;
+    gap: var(--space-4);
+    max-height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-8));
+    min-width: 0;
+  }
+
+  .hb-side {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .hb-side__toggle,
+  .hb-toc__toggle {
+    display: none;
+  }
+
+  .hb-nav {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: var(--space-4);
+  }
+
+  .hb-nav__heading,
+  .hb-toc__title {
+    margin: 0 0 var(--space-1);
+    padding-inline: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .hb-nav__list,
+  .hb-toc__list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .hb-nav__link,
+  .hb-toc__link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--nav-row-height);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+  }
+
+  .hb-nav__link:hover,
+  .hb-toc__link:hover {
+    background: var(--bg-hover);
+  }
+
+  .hb-nav__link[aria-current="page"],
+  .hb-toc__link[aria-current="location"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-toc__link {
+    color: var(--text-muted);
+  }
+
+  .hb-toc__link[aria-current="location"] {
+    color: var(--text);
+  }
+
+  .hb-toc__list [data-level="3"] .hb-toc__link {
+    padding-inline-start: var(--space-5);
+  }
+
+  .hb-toc__list {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .hb-toc__count {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .hb-nav__about {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding-inline: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .hb-mark {
+    flex: none;
+    margin-inline-start: auto;
+    padding: 0 var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .hb-main {
+    min-width: 0;
+  }
+
+  /* The article */
+
+  .hb-article {
+    display: grid;
+    gap: var(--space-3);
+    max-width: var(--size-handbook-article);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .hb-article > *,
+  .hb-callout__body > * {
+    margin: 0;
+  }
+
+  .hb-article ul,
+  .hb-article ol {
+    display: grid;
+    gap: var(--space-1);
+    padding-inline-start: var(--space-5);
+  }
+
+  .hb-article li > * + * {
+    margin-top: var(--space-2);
+  }
+
+  .hb-article li > :is(p, ul, ol, figure, .hb-callout) {
+    margin-bottom: 0;
+  }
+
+  .hb-article code {
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .hb-title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+  }
+
+  .hb-title:focus-visible {
+    outline: var(--focus-outline);
+  }
+
+  .hb-heading {
+    position: relative;
+    margin-top: var(--space-5);
+    line-height: var(--line-height-tight);
+    scroll-margin-top: calc(var(--top-bar-height, 0px) + var(--space-4));
+  }
+
+  h2.hb-heading {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  h3.hb-heading,
+  h4.hb-heading {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-heading__anchor {
+    margin-inline-start: var(--space-2);
+    color: var(--text-muted);
+    text-decoration: none;
+    visibility: hidden;
+  }
+
+  .hb-heading:hover .hb-heading__anchor,
+  .hb-heading__anchor:focus-visible {
+    visibility: visible;
+  }
+
+  .hb-note {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .hb-external {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-half);
+  }
+
+  .hb-external .icon {
+    align-self: center;
+    width: var(--icon-size-inline);
+    height: var(--icon-size-inline);
+  }
+
+  .hb-app {
+    vertical-align: baseline;
+  }
+
+  .hb-app__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* Code blocks: the language and Copy on top, long lines scroll inside, the page never. */
+  .hb-code {
+    display: grid;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .hb-code__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .hb-code__body {
+    margin: 0;
+    padding: var(--space-3);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    line-height: var(--line-height);
+  }
+
+  .hb-article .hb-code__body code {
+    padding: 0;
+    background: none;
+    font-size: var(--font-size-sm);
+    overflow-wrap: normal;
+  }
+
+  .hb-code__body:focus-visible,
+  .hb-table:focus-visible {
+    outline: var(--focus-outline);
+  }
+
+  /* Tables scroll sideways in their frame; a quiet head, no stripes. */
+  .hb-table {
+    overflow-x: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .hb-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height);
+  }
+
+  .hb-table th,
+  .hb-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .hb-table th {
+    background: var(--bg-raised);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* Callouts: a calm surface with icon and word, no bar on the left. */
+  .hb-callout {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .hb-callout[data-tone="warning"] {
+    background: var(--warning-bg);
+  }
+
+  .hb-callout__label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-callout__body {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  /* Pictures: dark screenshots stand in a frame, so in the light design they do not look broken. */
+  .hb-figure {
+    margin: 0;
+  }
+
+  .hb-figure img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .hb-figure a:focus-visible {
+    display: block;
+    border-radius: var(--radius-md);
+    outline: var(--focus-outline);
+  }
+
+  .hb-figure__missing {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .hb-inline-image {
+    max-height: 1.5em;
+    vertical-align: middle;
+  }
+
+  /* Previous and next, then the version and the links outside. */
+  .hb-footer {
+    display: grid;
+    gap: var(--space-4);
+    margin-top: var(--space-8);
+    padding-top: var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .hb-pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+
+  .hb-pager__link {
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+  }
+
+  .hb-pager__link:hover {
+    background: var(--bg-hover);
+  }
+
+  .hb-pager__link--previous {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .hb-pager__link--next {
+    grid-row: 1;
+    grid-column: 2;
+    text-align: end;
+  }
+
+  .hb-pager__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .hb-pager__page {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-footer__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .hb-footer__meta a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  /* States: off, page not found, a tab older than the server. */
+  .hb-state {
+    display: grid;
+    gap: var(--space-3);
+    max-width: var(--size-handbook-article);
+  }
+
+  .hb-state__text {
+    margin: 0;
+  }
+
+  .hb-state__title {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-state__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  /* The search: a field on top of the contents, its list over the page. */
+  .hb-search {
+    position: relative;
+  }
+
+  .hb-search__field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  .hb-search__field input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .hb-search__field input::placeholder {
+    color: var(--text-placeholder);
+    opacity: 1;
+  }
+
+  .hb-search__popup {
+    position: absolute;
+    z-index: var(--z-menu);
+    inset-inline-start: 0;
+    top: calc(100% + var(--space-1));
+    display: grid;
+    gap: var(--space-2);
+    width: min(var(--size-handbook-search), calc(100vw - var(--space-8)));
+    max-height: 70dvh;
+    overflow-y: auto;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .hb-search__list {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .hb-search__list:empty {
+    display: none;
+  }
+
+  .hb-search__group {
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .hb-search__option {
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .hb-search__option:hover {
+    background: var(--bg-hover);
+  }
+
+  .hb-search__option[aria-selected="true"] {
+    background: var(--bg-active);
+  }
+
+  .hb-search__where {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .hb-search__page {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-search__section {
+    color: var(--text-muted);
+  }
+
+  .hb-search__snippet {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height);
+  }
+
+  .hb-search__snippet mark {
+    padding: 0 var(--space-half);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-search__state,
+  .hb-search__none-title {
+    margin: 0;
+    padding: 0 var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .hb-search__state {
+    color: var(--text-muted);
+  }
+
+  .hb-search__none-title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .hb-search__none {
+    display: grid;
+    gap: var(--space-2);
+    padding-top: var(--space-1);
+  }
+
+  .hb-search__ways {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  .hb-search__keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-2) var(--space-2) 0;
+    border-top: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Without "On this page" on the right below 72rem: it moves above the article as a list. */
+  @media (max-width: 72rem) {
+    .hb {
+      grid-template-columns: var(--size-handbook-nav) minmax(0, 1fr);
+    }
+
+    .hb-toc {
+      position: static;
+      grid-row: 1;
+      grid-column: 2;
+      max-height: none;
+    }
+
+    .hb-main {
+      grid-column: 2;
+    }
+
+    .hb-side {
+      grid-row: 1 / span 2;
+    }
+  }
+
+  @media (max-width: 72rem) {
+    .hb-toc__title {
+      display: none;
+    }
+
+    .hb-toc__toggle {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      width: 100%;
+      min-height: var(--control-height);
+      padding: 0 var(--space-3);
+      border: var(--border-width) solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+      color: var(--text);
+      font: inherit;
+      font-size: var(--font-size-sm);
+      font-weight: var(--font-weight-semibold);
+    }
+
+    .hb-toc__toggle .icon {
+      margin-inline-start: auto;
+    }
+
+    .hb-toc:not([data-open]) .hb-toc__list {
+      display: none;
+    }
+  }
+
+  /* One column on narrow screens: the contents are a list of their own behind a button. */
+  @media (max-width: 48rem) {
+    .hb {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-4);
+    }
+
+    .hb-side {
+      position: static;
+      max-height: none;
+      grid-template-rows: none;
+    }
+
+    .hb-toc,
+    .hb-main {
+      grid-column: 1;
+      grid-row: auto;
+    }
+
+    .hb-side__toggle {
+      display: inline-flex;
+      justify-self: start;
+    }
+
+    .hb-nav:not([data-open]) {
+      display: none;
+    }
+
+    .hb-nav__link {
+      min-height: var(--control-height);
+    }
+
+    .hb-search__popup {
+      width: 100%;
+    }
+
+    .hb-pager {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hb-pager__link--next,
+    .hb-pager__link--previous {
+      grid-row: auto;
+      grid-column: 1;
+      text-align: start;
+    }
+  }
+
+  /* System contrast themes: states take the system's selection colors, frames the text color. */
+  @media (forced-colors: active) {
+    .hb-nav__link[aria-current="page"],
+    .hb-toc__link[aria-current="location"],
+    .hb-search__option[aria-selected="true"],
+    .hb-search__snippet mark {
+      background: Highlight;
+      color: HighlightText;
+      forced-color-adjust: none;
+    }
+
+    .hb-callout,
+    .hb-note,
+    .hb-mark {
+      border: var(--border-width) solid CanvasText;
+    }
+
+    .hb-article a {
+      text-decoration: underline;
+    }
+  }
+}

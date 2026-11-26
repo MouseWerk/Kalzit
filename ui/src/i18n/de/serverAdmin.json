@@ -57,7 +57,7 @@
   "serverAdmin.reason.password_sign_in_off": "Die lokale Anmeldung ist aus.",
   "serverAdmin.reason.role_too_high": "Höchstens Bearbeiter.",
   "serverAdmin.signup.ok": "Ok",
-  "serverAdmin.backup.guide": "Anleitung zum Wiederherstellen",
+  "serverAdmin.backup.guide": "Im Handbuch: Wiederherstellen",
   "serverAdmin.backup.running": "Sichert…",
   "serverAdmin.backup.done": "Sicherung abgelegt.",
   "serverAdmin.backup.last": "Letzte Sicherung",

@@ -41,3 +41,4 @@ form = "url"
 [binaries]
 windows-x64 = "bin/windows-x64/kalzit-csv-http.exe"
 linux-x64 = "bin/linux-x64/kalzit-csv-http"
+linux-arm64 = "bin/linux-arm64/kalzit-csv-http"
