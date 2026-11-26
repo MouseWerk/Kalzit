@@ -221,14 +221,17 @@ export async function settle(page: Page): Promise<void> {
         element.scrollTo(Math.round(element.scrollLeft), Math.round(element.scrollTop));
       }
     }
-    // A page scrolled to its very end (a result scrolled into view) pushes the sticky sidebar up
-    // by the fraction of a pixel the page's height has beyond a whole one, drawn a pixel apart
-    // from run to run. One pixel short of the end, the sidebar stays at the top.
+    // A page scrolled near its end (a result scrolled into view) pushes the sticky sidebar up by
+    // a fraction of a pixel, drawn a pixel apart from run to run. Scrolled back by whole pixels
+    // until the sidebar is no longer pushed, it stays at the top.
     const page = document.scrollingElement;
-    if (page !== null) {
-      const end = page.scrollHeight - page.clientHeight;
-      if (page.scrollTop > 0 && page.scrollTop >= end - 1) {
-        page.scrollTo(page.scrollLeft, Math.max(0, end - 2));
+    const sidebar = document.querySelector(".shell__sidebar");
+    if (page !== null && sidebar !== null && getComputedStyle(sidebar).position === "sticky") {
+      for (let step = 0; step < 8 && page.scrollTop > 0; step++) {
+        if (sidebar.getBoundingClientRect().top >= 0) {
+          break;
+        }
+        page.scrollTo(page.scrollLeft, Math.ceil(page.scrollTop) - 1);
       }
     }
   });
