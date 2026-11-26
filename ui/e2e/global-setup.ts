@@ -238,7 +238,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const binary = locateBinary();
   const run = prepareRunDir();
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  const logPath = join(OUTPUT_DIR, "server.log");
+  // A run after the e2e tests in the same checkout (the visual comparison) keeps their log.
+  const logPath = join(OUTPUT_DIR, process.env.KALZIT_E2E_SERVER_LOG ?? "server.log");
   const logFile = createWriteStream(logPath);
   let child: ChildProcess | undefined;
   const cleanUp = async () => {
