@@ -519,5 +519,9 @@
   "dashboards.empty.starredTitle": "Noch keine Favoriten",
   "dashboards.empty.starredText": "Markiere ein Dashboard mit dem Stern, dann findest du es hier.",
   "dashboards.empty.recentTitle": "Noch nichts geöffnet",
-  "dashboards.empty.recentText": "Die Dashboards, die du öffnest, erscheinen hier, das zuletzt geöffnete zuerst."
+  "dashboards.empty.recentText": "Die Dashboards, die du öffnest, erscheinen hier, das zuletzt geöffnete zuerst.",
+  "dashboards.editor.panelDescription": "Beschreibung",
+  "dashboards.editor.panelDescriptionHint": "Erscheint hinter dem Info-Zeichen im Panel-Kopf. Markdown für Links und Hervorhebung; Variablen wie $host werden ersetzt.",
+  "dashboards.editor.panelTransparent": "Transparenter Hintergrund",
+  "dashboards.editor.panelTransparentHint": "Ohne Fläche und Rahmen; für Text, Kennzahlen und Bilder über einem ruhigen Raster."
 }

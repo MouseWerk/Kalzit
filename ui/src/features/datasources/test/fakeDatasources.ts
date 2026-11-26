@@ -328,6 +328,8 @@ export interface StoredDatasource {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  /** The organization's default data source (`PUT .../default`); one per organization. */
+  isDefault?: boolean;
   /** The last connection test the server kept (`lastTest`), with its warnings. */
   lastTest?: {
     ok: boolean;
@@ -369,6 +371,8 @@ export interface FakeDatasourcesState {
   tests: Record<string, unknown>[];
   /** Data sources that dashboards still use, with how many: their purge answers `in_use`. */
   purgeBlocked: Record<string, number>;
+  /** The sources a stored "Test connection" ran on (`POST .../health`), in order. */
+  healthChecks: string[];
   /** What a test of unsaved settings answers; healthy by default. */
   testHealth?: WireHealth;
   /** Answers one valid query item. Defaults to `defaultOutcome`. */
@@ -670,6 +674,7 @@ function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
     secrets,
     createdAt: ds.createdAt,
     updatedAt: ds.updatedAt,
+    isDefault: ds.isDefault === true && ds.deletedAt === undefined,
   };
   if (ds.deletedAt !== undefined) {
     view.deletedAt = ds.deletedAt;
@@ -797,6 +802,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       },
     },
     health: {},
+    healthChecks: [],
     tests: [],
     purgeBlocked: {},
     // MongoDB queries run against the fake collections; everything else as `defaultOutcome`.
@@ -977,6 +983,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
           name: ds.name,
           kind: ds.kind,
           createdAt: ds.createdAt,
+          isDefault: ds.isDefault === true && ds.deletedAt === undefined,
         };
         if (ds.deletedAt !== undefined) item.deletedAt = ds.deletedAt;
         const access = accessOf(ds.id);
@@ -1034,7 +1041,10 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       for (const d of chosen) {
         if (d !== undefined) {
           if (restore) delete d.deletedAt;
-          else d.deletedAt = Date.now();
+          else {
+            d.deletedAt = Date.now();
+            d.isDefault = false;
+          }
         }
       }
       state.bulk.push(body);
@@ -1187,16 +1197,22 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       if (Object.keys(body).length > 0) {
         return validation(Object.keys(body)[0] ?? "");
       }
-      return json(
-        200,
-        state.health[ds.id] ?? {
-          ok: true,
-          reason: "health.connected",
-          params: { engine: "PostgreSQL", version: "17.2" },
-          message: "PostgreSQL 17.2",
-          latencyMs: 12,
-        },
-      );
+      const result = state.health[ds.id] ?? {
+        ok: true,
+        reason: "health.connected",
+        params: { engine: "PostgreSQL", version: "17.2" },
+        message: "PostgreSQL 17.2",
+        latencyMs: 12,
+      };
+      // Kept as the source's last test, as the server does.
+      ds.lastTest = {
+        ok: result.ok,
+        warnings: result.warnings ?? [],
+        testedAt: Date.now(),
+        latencyMs: result.latencyMs,
+      };
+      state.healthChecks.push(ds.id);
+      return json(200, result);
     }
     if (!may(ds.id, "write")) {
       return error(403, "forbidden");
@@ -1209,6 +1225,18 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
             current: view(ds),
           })
         : null;
+    // The organization's default: one source at most, the previous one stops being it.
+    if (parts[2] === "default" && parts.length === 3 && method === "PUT") {
+      const extra = unknownKey(body, ["default"]);
+      if (extra !== undefined || typeof body.default !== "boolean") {
+        return validation(extra ?? "default");
+      }
+      if (body.default) {
+        for (const other of state.datasources) other.isDefault = false;
+      }
+      ds.isDefault = body.default;
+      return json(200, view(ds));
+    }
     if (parts.length === 2 && method === "PATCH") {
       const extra = unknownKey(body, ["name", "settings", "secrets", "expectedUpdatedAt"]);
       if (extra !== undefined) {
@@ -1274,6 +1302,10 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         ds.name = body.name.trim();
       }
       if (body.settings !== undefined) ds.settings = settings;
+      // The last test checked what was stored before (Update in the doc).
+      if (body.settings !== undefined || Object.keys(secrets).length > 0) {
+        delete ds.lastTest;
+      }
       for (const [field, value] of Object.entries(secrets)) {
         if (value === null) {
           delete ds.secrets[field];
@@ -1291,6 +1323,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         return refusedStale;
       }
       ds.deletedAt = Date.now();
+      ds.isDefault = false;
       return new Response(null, { status: 204 });
     }
     if (parts[2] === "purge" && method === "DELETE") {

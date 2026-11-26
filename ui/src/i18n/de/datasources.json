@@ -1507,5 +1507,17 @@
   "datasources.reason.frame.fill_no_time": "Leere Zeitabschnitte wurden nicht ergänzt: Das Ergebnis hat keine Zeitspalte.",
   "datasources.reason.frame.fill_order": "Leere Zeitabschnitte wurden nicht ergänzt: {column} braucht eine steigende Zeit pro Zeile. Sortier mit ORDER BY und gruppier auf eine Zeile pro Abschnitt.",
   "datasources.reason.frame.fill_row_limit": "Leere Zeitabschnitte wurden nicht ergänzt: Dafür wären mehr als {rows} Zeilen nötig. Wähl ein größeres Intervall oder einen kürzeren Zeitraum.",
-  "datasources.reason.source.protocol_error": "Die Datenquelle konnte einen Wert dieser Abfrage nicht lesen. Meist enthält eine Variable einen Wert, der nicht zum Typ passt, den die Abfrage an dieser Stelle erwartet, etwa Text, wo eine Zahl oder ein Intervall hingehört. Prüf die Variablen und Casts in der Abfrage."
+  "datasources.reason.source.protocol_error": "Die Datenquelle konnte einen Wert dieser Abfrage nicht lesen. Meist enthält eine Variable einen Wert, der nicht zum Typ passt, den die Abfrage an dieser Stelle erwartet, etwa Text, wo eine Zahl oder ein Intervall hingehört. Prüf die Variablen und Casts in der Abfrage.",
+  "datasources.default.field": "Standard-Datenquelle",
+  "datasources.default.hint": "Explore und neue Panels beginnen damit, wenn keine Quelle gewählt ist. Die Organisation hat eine Standard-Datenquelle.",
+  "datasources.default.badge": "Standard",
+  "datasources.default.set": "„{name}“ ist jetzt die Standard-Datenquelle.",
+  "datasources.default.unset": "„{name}“ ist nicht mehr die Standard-Datenquelle.",
+  "datasources.menu.setDefault": "Als Standard festlegen",
+  "datasources.menu.unsetDefault": "Nicht mehr Standard",
+  "datasources.default.managedHint": "Die Standard-Datenquelle ist eine Einstellung der Organisation außerhalb der Dateien; du kannst sie hier ändern, obwohl die Dateien diese Quelle verwalten.",
+  "datasources.reason.steps.pattern": "{pattern} ist kein regulärer Ausdruck, den dieser Schritt lesen kann.",
+  "datasources.reason.steps.filter_value": "„{value}“ lässt sich nicht mit dem Feld {field} vergleichen.",
+  "datasources.reason.steps.stack_types": "Das Feld {field} ist in einer Tabelle {first} und in einer anderen {other}.",
+  "datasources.reason.steps.result_rows": "Der Schritt ergäbe mehr als {max} Zeilen."
 }

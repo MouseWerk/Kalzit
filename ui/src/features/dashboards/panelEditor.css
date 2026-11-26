@@ -219,6 +219,12 @@
     margin: 0 0 var(--space-3);
   }
 
+  /* The panel's description in the group "Panel": a few lines, taller on demand. */
+  .panel-editor__description {
+    min-height: var(--size-editor-min);
+    resize: vertical;
+  }
+
   /* The query options above the queries (ParityEditors board, frame 5): one quiet row that
      names its values while closed. */
   .query-options {

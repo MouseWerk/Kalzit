@@ -34,6 +34,7 @@ may not read.
 | `POST /provisioning/resources/{kind}/{uid}/unlock` | `provisioning:write` | | `200 Provisioned` |
 | `POST /dashboards/import/grafana` | member; `dashboards:write` where it goes | `GrafanaImportRequest` | `200 { report, model, dashboard \| null }` |
 | `GET /dashboards/{dashboardId}/import-report` | member; `dashboards:read` on it | | `200 { source, sourceVersion, report, createdAt, createdBy }` |
+| `GET /dashboards/by-uid/{uid}` | member; `dashboards:read` on the dashboard | | `200 { id }` for the live dashboard the uid names, in this order: a dashboard id, the uid of a provisioned dashboard, the Grafana `uid` of the newest import; `404` when none is live, the caller may not read it, or the uid is `.` or `..`. An import keeps no Grafana uid that already names a dashboard or a provisioned uid (its report notes `uid_not_kept`) |
 
 ```ts
 interface SetRequest {
@@ -93,5 +94,9 @@ interface SetRequest {
 | `provisioning.invalid_files` | `count`, `path`, `detail` | `422 validation`: files that do not read or do not pass their checks; `path` and `detail` name the first |
 | `provisioning.changed` | | `409 conflict`: something the plan read changed before the apply took the lock |
 | `provisioning.read_only` | `kind`, `set`, `uid`, `path` | `409 conflict`: the resource is managed by a provisioning set; change its file, or unlock it |
+
+The organization's default data source is a setting outside the files: `PUT /datasources/{id}/default`
+([data sources](datasources.md#default-data-source)) also works on a data source a set manages, and an
+apply does not set it (a source an apply prunes to the trash loses it, as any source in the trash).
 | `datasource.connection_failed` | | In `ApplyResult.warnings`: the connection test after the apply failed |
 | `dashboards.import_unreadable` | | `422 validation`: the Grafana JSON is not a dashboard the import reads |
