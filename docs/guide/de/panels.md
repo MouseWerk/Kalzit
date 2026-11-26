@@ -444,8 +444,8 @@ Im Panel-Editor wird die Wahl mit dem Panel gespeichert.
 ![Explorer-Modus: die Bestellungen eines Kunden als Schritt in der Zeile Schritte geladen](../../screenshots/graph-explorer-dark.png)
 
 Eine **Hierarchie** ordnet höchstens 10.000 gezeichnete Knoten an (geschlossene Gruppen zählen als
-ein Knoten); ein größeres Ergebnis bietet **Als Netzwerk zeigen** an. Kanten, die einen Kreis schließen, werden vermerkt. Standardmäßig nutzt sie das
-eigene Schichten-Layout von Kalzit. Unter **Layout** kannst du stattdessen **ELK geschichtet**
+ein Knoten); ein größeres Ergebnis bietet **Als Netzwerk zeigen** an. Kanten, die einen Kreis
+schließen, werden vermerkt. Standardmäßig nutzt sie das eigene Schichten-Layout von Kalzit. Unter **Layout** kannst du stattdessen **ELK geschichtet**
 wählen (den Eclipse Layout Kernel), mit seiner **Richtung** (von oben nach unten, von links nach
 rechts, von unten nach oben, von rechts nach links), **Knotenabstand** und **Schichtabstand** in px
 und der **Kantenführung** (rechtwinklig oder Polylinie; Kanten werden trotzdem gerade gezeichnet,
