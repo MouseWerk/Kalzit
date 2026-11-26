@@ -26,9 +26,10 @@ import { showErrorToast } from "../../lib/toasts";
 import { liveNote } from "../../live/text";
 import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
-import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { parseFieldConfig, shownFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry";
+import { inline } from "../../panels/text/markdown";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
@@ -62,23 +63,27 @@ import { linkHref } from "./links";
 import {
   clampGrid,
   type GridPos,
+  type Hold,
+  holdOf,
   type PanelModel,
+  panelUses,
   storedQueryVariables,
   type VariableValues,
   variableTexts,
 } from "./model";
 import { PanelMenu, type PanelMenuItem } from "./PanelMenu";
 import { TIME_PANELS, timeNote } from "./panelTime";
+import { queryLimits } from "./queryLimits";
 import {
   documentsOf,
   errorsOf,
+  filtersNotApplied,
   graphsOf,
   isTruncated,
   otherShapes,
   type TargetOutcome,
   tracesOf,
 } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -210,8 +215,10 @@ export function PanelCard({
   // shows the cell it will land in; both are styled through the CSSOM, without a render per move.
   const [dragging, setDragging] = useState<"move" | "resize" | null>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
-  // Set between a drop and the render that puts the card into its new cell.
-  const settling = useRef(false);
+  // Ends the press being tracked (its window listeners), without dropping: run before a new
+  // press and when the card goes, so no listener outlives the drag.
+  const endPress = useRef<(() => void) | null>(null);
+  useEffect(() => () => endPress.current?.(), []);
 
   // A keyboard move can change the panel's place in reading order, and moving a focused element
   // in the document drops its focus; the handle takes it back so arrow keys keep working.
@@ -239,7 +246,9 @@ export function PanelCard({
     },
     [observe],
   );
-  const live = usePanelLive({ ...query, panel }, inView);
+  // A query variable at "All" this panel uses has no values yet: it waits, or says why not.
+  const hold = holdOf(panelUses(panel), query.held);
+  const live = usePanelLive({ ...query, panel }, inView && hold === null);
   // Paused by the person: the panel keeps its last result and says so.
   const liveText =
     query.live?.paused === true
@@ -251,7 +260,8 @@ export function PanelCard({
   const kindOf = useSourceKinds(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
-  const note = timeNote(panel);
+  // Hidden by the query options; the inspector still names an own range or shift.
+  const note = panel.hideTimeNote === true ? {} : timeNote(panel);
   const noteText = [
     note.last === undefined ? null : t("dashboardTools.time.last", { range: note.last }),
     note.shift === undefined ? null : t("dashboardTools.time.shifted", { shift: note.shift }),
@@ -259,6 +269,7 @@ export function PanelCard({
     .filter((part) => part !== null)
     .join(", ");
   const links = (panel.links ?? []).flatMap((link) => {
+    if (holdOf(link.url, query.held) !== null) return [];
     const href = linkHref(link.url, view?.values ?? query.variables);
     return href === null ? [] : [{ ...link, href }];
   });
@@ -318,16 +329,6 @@ export function PanelCard({
       placeAt(placeholderRef.current, panel.grid);
     }
   }, [dragging, panel.grid]);
-  // A dropped card stands in its new cell now: the drag's offset goes in the same frame.
-  const { x: gridX, y: gridY, w: gridW, h: gridH } = panel.grid;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the cell's values stand for its move
-  useLayoutEffect(() => {
-    if (settling.current) {
-      settling.current = false;
-      ref.current?.style.removeProperty("translate");
-    }
-  }, [gridX, gridY, gridW, gridH]);
-
   function onHandleKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (edit === undefined) {
       return;
@@ -366,10 +367,17 @@ export function PanelCard({
     if (edit === undefined || event.button !== 0 || singleColumn) {
       return;
     }
+    // The header's buttons (Edit, Duplicate, the menu, the description) are clicked, never
+    // dragged; the arrange handle and the header's empty space drag.
+    if (!dragsFrom(event.target, event.currentTarget)) {
+      return;
+    }
+    // No text selection while the pointer moves over the header.
     event.preventDefault();
+    endPress.current?.();
     const target = event.currentTarget;
     const card = ref.current;
-    target.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
     const start = { x: event.clientX, y: event.clientY, grid: { ...panel.grid } };
     const cell = edit.cellSize();
     const key = (g: GridPos) => `${g.x},${g.y},${g.w},${g.h}`;
@@ -377,7 +385,18 @@ export function PanelCard({
     let next = start.grid;
     let placed = key(start.grid);
     let frame = 0;
-    setDragging(mode);
+    // A press that does not move past the threshold stays a click: nothing is captured, so the
+    // click lands where it was pressed (it selects the panel, or the handle's own click).
+    let started = false;
+    const begin = () => {
+      started = true;
+      try {
+        target.setPointerCapture(pointerId);
+      } catch {
+        // The pointer is already gone (released between the move and this call).
+      }
+      setDragging(mode);
+    };
     // At most once per frame: the card's offset and the placeholder's cell. Nothing renders and
     // the dashboard changes once, on release.
     const follow = () => {
@@ -402,34 +421,77 @@ export function PanelCard({
       }
     };
     const onMove = (move: globalThis.PointerEvent) => {
+      if (move.pointerId !== pointerId) {
+        return;
+      }
+      // The button is up, but its release never reached the page (let go outside the window,
+      // or taken by a dialog): the press ends here, as a cancel.
+      if ((move.buttons & 1) === 0) {
+        finish(false);
+        return;
+      }
       pointer = { x: move.clientX, y: move.clientY };
+      if (!started) {
+        if (!pastThreshold(start, pointer)) {
+          return;
+        }
+        begin();
+      }
       if (frame === 0) {
         frame = requestAnimationFrame(follow);
       }
     };
     const onUp = (up: globalThis.PointerEvent) => {
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUp);
-      target.removeEventListener("pointercancel", onUp);
+      if (up.pointerId === pointerId) {
+        finish(up.type === "pointerup");
+      }
+    };
+    /** Ends the press: a drop where the pointer is (`drop`), else back where it started. */
+    const finish = (drop: boolean) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (endPress.current === cancel) {
+        endPress.current = null;
+      }
+      if (!started) {
+        return;
+      }
       cancelAnimationFrame(frame);
-      if (up.type === "pointerup") {
+      if (drop) {
         follow();
       } else {
         next = start.grid;
       }
+      swallowClick();
       setDragging(null);
+      // A dragged panel is the selected one. Selected here, with the drop, not by the click the
+      // browser sends after the release: that click came while the drop's transition was still
+      // pending, so React drew the whole dashboard for it at once (one long task per drop,
+      // 52 to 68 ms at 4x CPU throttling).
+      const select = edit.selected ? undefined : edit.onSelect;
       if (key(next) === key(start.grid)) {
         card?.style.removeProperty("translate");
+        select?.();
         return;
       }
-      // The drop renders as a transition, in slices that leave the main thread free between
-      // them, so it makes no long task; the card keeps its offset until it stands in its cell.
-      settling.current = true;
-      startTransition(() => edit.onGrid(next, false));
+      // The card stands in its new cell in this frame (the drop's offset goes with it); the
+      // dashboard follows as a transition, in slices that leave the main thread free, so it
+      // makes no long task and the panels it pushes move right after.
+      placeAt(card, next);
+      card?.style.removeProperty("translate");
+      startTransition(() => {
+        edit.onGrid(next, false);
+        select?.();
+      });
     };
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUp);
-    target.addEventListener("pointercancel", onUp);
+    const cancel = () => finish(false);
+    endPress.current = cancel;
+    // On the window: before the threshold nothing is captured and the pointer may leave the
+    // header; after it the captured events still pass through the window.
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   const imageFailed = t("dashboards.panel.imageFailed");
@@ -439,6 +501,28 @@ export function PanelCard({
   }, [imaging, title, imageFailed]);
   const outcomes = paged.outcomes;
   const noData = results.data === undefined;
+  // Its own element, so a panel that does not wait keeps the same body while nothing it shows
+  // changes (moving another panel draws only that one again).
+  const body = (
+    <PanelBody
+      panel={panel}
+      title={title}
+      range={range}
+      pending={firstLoad(results)}
+      error={results.error}
+      outcomes={outcomes}
+      revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+      more={paged.more}
+      variables={variableTexts(query.variables)}
+      kindOf={kindOf}
+      onRetry={retry}
+      fetching={results.isFetching}
+      distribution={panelDistribution(
+        { ...query, panel, manual: query.manual ?? query.run },
+        kindOf,
+      )}
+    />
+  );
   // Every action of the panel, in one menu: its links first, then viewing, then editing.
   const menuItems: PanelMenuItem[] = [
     ...links.map((link) => ({
@@ -606,15 +690,25 @@ export function PanelCard({
             ? undefined
             : (event) => {
                 // Controls inside the card do their own thing; anywhere else selects it.
-                const control = (event.target as HTMLElement).closest(OWN_CONTROLS);
-                if (control !== null && event.currentTarget.contains(control)) {
-                  return;
+                if (selectsOnClick(event.target, event.currentTarget)) {
+                  edit.onSelect?.();
                 }
-                edit.onSelect?.();
+              }
+        }
+        onDoubleClick={
+          edit === undefined || alone
+            ? undefined
+            : (event) => {
+                // A double click on the panel's content opens it in the editor in one step.
+                if (
+                  !event.defaultPrevented &&
+                  isBodyDoubleClick(event.target, event.currentTarget)
+                ) {
+                  edit.onEdit();
+                }
               }
         }
       >
-        {selected && edit !== undefined ? <SizeBadge w={panel.grid.w} h={panel.grid.h} /> : null}
         <header
           className="panel-card__header"
           onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
@@ -640,7 +734,11 @@ export function PanelCard({
             </span>
           )}
           {panel.description === undefined ? null : (
-            <PanelDescription title={title} description={panel.description} />
+            <PanelDescription
+              title={title}
+              description={panel.description}
+              variables={variableTexts(query.variables)}
+            />
           )}
           <PanelAlertBadge rules={panelRules} title={title} />
           {limitText === null ? null : (
@@ -659,6 +757,7 @@ export function PanelCard({
                   aria-label={t("dashboards.panel.arrange", { title })}
                   title={t("dashboards.panel.arrangeHint")}
                   onKeyDown={onHandleKey}
+                  onClick={() => edit.onSelect?.()}
                 >
                   <Icon name="grip" />
                 </button>
@@ -667,13 +766,28 @@ export function PanelCard({
                 </span>
               </>
             )}
-            {/* After the handle, so selecting with Enter there leads on to these with Tab. */}
+            {/* After the handle, so selecting with Enter there leads on to these with Tab. In the
+                header, not over the content; narrow panels leave both to the menu. */}
             {selected && edit !== undefined ? (
-              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+              <>
+                <SizeBadge w={panel.grid.w} h={panel.grid.h} />
+                <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+              </>
             ) : null}
-            <PanelMenu title={title} items={menuItems} />
+            {/* Opening a panel's menu while editing makes it the selected panel. */}
+            <PanelMenu
+              title={title}
+              items={menuItems}
+              onOpen={selected ? undefined : edit?.onSelect}
+            />
           </div>
         </header>
+        {filtersNotApplied(outcomes) ? (
+          <p className="panel-card__filters-note" title={t("dashboards.filters.notAppliedLong")}>
+            <Icon name="filter" size="small" />
+            <span>{t("dashboards.filters.notApplied")}</span>
+          </p>
+        ) : null}
         <div className="panel-card__body">
           <PanelAlertMarksContext value={alertMarks}>
             <PanelAnnotationsContext.Provider value={annotations}>
@@ -686,24 +800,7 @@ export function PanelCard({
                   (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
                 }
               >
-                <PanelBody
-                  panel={panel}
-                  title={title}
-                  range={range}
-                  pending={firstLoad(results)}
-                  error={results.error}
-                  outcomes={outcomes}
-                  revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
-                  more={paged.more}
-                  variables={variableTexts(query.variables)}
-                  kindOf={kindOf}
-                  onRetry={retry}
-                  fetching={results.isFetching}
-                  distribution={panelDistribution(
-                    { ...query, panel, manual: query.manual ?? query.run },
-                    kindOf,
-                  )}
-                />
+                {hold === null ? body : <PanelHold hold={hold} />}
               </PanelViewHost>
             </PanelAnnotationsContext.Provider>
           </PanelAlertMarksContext>
@@ -733,7 +830,7 @@ export function PanelCard({
             title={title}
             range={range}
             variables={storedQueryVariables(query.variables, query.saved ?? [])}
-            intervalMs={intervalFor(range)}
+            intervalMs={queryLimits(panel, range).intervalMs}
             onClose={() => setSummarizing(false)}
           />
         ) : null}
@@ -767,6 +864,20 @@ async function saveImage(card: RefObject<HTMLElement | null>, title: string, fai
   }
 }
 
+/**
+ * Takes the click the browser sends right after a drag's release (on the card or the handle,
+ * where the press began): a drag is not a click. The click comes in the same task as the
+ * release, so the listener goes again at the next one if no click came.
+ */
+function swallowClick() {
+  const swallow = (click: MouseEvent) => {
+    click.stopPropagation();
+    click.preventDefault();
+  };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+}
+
 /** Puts the drag placeholder into a grid cell. */
 function placeAt(element: HTMLElement | null, grid: GridPos) {
   if (element === null) {
@@ -776,6 +887,27 @@ function placeAt(element: HTMLElement | null, grid: GridPos) {
   element.style.setProperty("--row", String(grid.y + 1));
   element.style.setProperty("--w", String(grid.w));
   element.style.setProperty("--h", String(grid.h));
+}
+
+/**
+ * A panel that waits for the values of a query variable at "All": loading, or the error of the
+ * variable's options query, instead of a run with an empty list.
+ */
+function PanelHold({ hold }: { hold: Hold }) {
+  const { t } = useI18n();
+  if (hold.error === null) {
+    return (
+      <p className="panel-empty" role="status">
+        {t("dashboards.variables.waiting", { name: hold.name })}
+      </p>
+    );
+  }
+  return (
+    <div className="panel-error" role="alert">
+      <Icon name="alert" />
+      <span>{t("dashboards.variables.allFailed", { name: hold.name, detail: hold.error })}</span>
+    </div>
+  );
 }
 
 /**
@@ -791,8 +923,8 @@ function exportPanelData(
 ) {
   const common = {
     timeRange: query.range,
-    maxDataPoints: MAX_DATA_POINTS,
-    intervalMs: intervalFor(query.range),
+    maxDataPoints: queryLimits(panel, query.range).maxDataPoints,
+    intervalMs: queryLimits(panel, query.range).intervalMs,
     format: choice.format,
     language: choice.language,
     ...(choice.frame === undefined ? {} : { frame: choice.frame }),
@@ -922,7 +1054,10 @@ export function PanelBody({
   const stored = panel.options;
   const options = useMemo(() => plugin?.options(stored), [plugin, stored]);
   const storedConfig = panel.fieldConfig;
-  const fieldConfig = useMemo(() => parseFieldConfig(storedConfig), [storedConfig]);
+  const fieldConfig = useMemo(
+    () => shownFieldConfig(parseFieldConfig(storedConfig)),
+    [storedConfig],
+  );
   if (plugin === undefined) {
     // A plugin's panel type is a reverse domain name: its plugin is not there, off or blocked.
     return (
@@ -1238,7 +1373,19 @@ function pluginSeries(
  * toggled by a tap or click (touch screens have no hover). Screen readers get it once, through
  * `aria-describedby`; the text is plain, never markup.
  */
-function PanelDescription({ title, description }: { title: string; description: string }) {
+/**
+ * The panel's description behind the info sign in its header: inline Markdown (links, emphasis,
+ * code) line by line, with dashboard variables such as $host filled in as text.
+ */
+function PanelDescription({
+  title,
+  description,
+  variables,
+}: {
+  title: string;
+  description: string;
+  variables: Readonly<Record<string, string>>;
+}) {
   const { t } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -1262,13 +1409,17 @@ function PanelDescription({ title, description }: { title: string; description: 
         <Icon name="info" />
       </button>
       <span className="panel-card__about-text" id={id} role="tooltip">
-        {description}
+        {description.split("\n").flatMap((line, index) => [
+          // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one text, in order
+          ...(index === 0 ? [] : [<br key={`br${index}`} />]),
+          ...inline(line, `l${index}`, variables),
+        ])}
       </span>
     </span>
   );
 }
 
-/** The selected panel's size in grid units, quiet in the bottom corner. */
+/** The selected panel's size in grid units, quiet in its header. */
 function SizeBadge({ w, h }: { w: number; h: number }) {
   return (
     <span className="panel-card__size" aria-hidden="true" data-no-image="">
@@ -1318,8 +1469,76 @@ function MiniToolbar({
   );
 }
 
+/**
+ * Surfaces that take focus only for the keyboard (a chart's readout, a table that scrolls): a
+ * click on them is a click on the panel's content, not on a control.
+ */
+const FOCUS_ONLY = ":not(.ts__plot):not(.readout):not(.vt)";
+
 /** What a click must not select the panel through: its own controls and labels. */
 const OWN_CONTROLS =
   "button, a, input, select, textarea, label, summary, [contenteditable], " +
   '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], ' +
-  '[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])';
+  `[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])${FOCUS_ONLY}`;
+
+/** Widgets with pointer gestures of their own (a graph canvas, a grid, a tree). */
+const OWN_POINTER_WIDGETS =
+  '[role="application"], [role="grid"], [role="tree"], [role="treegrid"], .trace-overview';
+
+/** How far (in px) a press moves before it is a drag rather than a click. */
+export const DRAG_THRESHOLD = 4;
+
+/** Whether the pointer moved far enough from where it was pressed to start a drag. */
+export function pastThreshold(
+  start: { x: number; y: number },
+  now: { x: number; y: number },
+): boolean {
+  return Math.hypot(now.x - start.x, now.y - start.y) >= DRAG_THRESHOLD;
+}
+
+/**
+ * Whether a click on `target` in the card `card` selects the panel while editing: anywhere on it
+ * (its chart and table included) except on a control inside it, which does its own thing.
+ */
+export function selectsOnClick(target: EventTarget | null, card: Element): boolean {
+  if (!(target instanceof Element) || !card.contains(target)) {
+    return false;
+  }
+  const control = target.closest(OWN_CONTROLS);
+  return control === null || !card.contains(control);
+}
+
+/**
+ * Whether a press on `target` inside the drag area `area` may start a drag: the area itself,
+ * its plain text, and the arrange handle do; any other control in it (Edit, Duplicate, the
+ * menu, the description) is pressed and clicked as a control.
+ */
+export function dragsFrom(target: EventTarget | null, area: Element): boolean {
+  if (!(target instanceof Element) || !area.contains(target)) {
+    return false;
+  }
+  if (target.closest(".panel-card__handle") !== null) {
+    return true;
+  }
+  const control = target.closest(OWN_CONTROLS);
+  return control === null || !area.contains(control);
+}
+
+/**
+ * Whether a double click on `target` in the card `card` opens the panel in the editor: on its
+ * content or its title, not on a control inside it (a table's sort button, a link, a field),
+ * and not when it selected text (a double click selects a word, which must stay possible).
+ */
+export function isBodyDoubleClick(target: EventTarget | null, card: Element): boolean {
+  if (!(target instanceof Element) || !card.contains(target)) {
+    return false;
+  }
+  if ((window.getSelection()?.toString() ?? "") !== "") {
+    return false;
+  }
+  if (target.closest(".panel-card__body, .panel-card__title") === null) {
+    return false;
+  }
+  const control = target.closest(`${OWN_CONTROLS}, ${OWN_POINTER_WIDGETS}`);
+  return control === null || !card.contains(control);
+}

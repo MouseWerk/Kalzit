@@ -41,6 +41,16 @@ impl QueryResult {
         }
     }
 
+    /// Adds a notice to the result, whatever its shape.
+    pub fn add_notice(&mut self, notice: Notice) {
+        match self {
+            QueryResult::Frame { frame } => frame.meta.get_or_insert_with(FrameMeta::default).notices.push(notice),
+            QueryResult::Documents { documents } => documents.notices.push(notice),
+            QueryResult::Graph { graph } => graph.notices.get_or_insert_with(Vec::new).push(notice),
+            QueryResult::Trace { trace } => trace.notices.push(notice),
+        }
+    }
+
     /// Removes what shows how a result was made rather than what it is, for people without an
     /// account (`sharing`): the executed statement, a document set's paging cursor and the
     /// notices, whose texts may come from the source. Truncation flags stay.
@@ -596,6 +606,81 @@ pub struct QueryItem {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(type = "unknown[]", optional))]
     pub steps: Vec<Value>,
+    /// Ad hoc filters (a dashboard's "Freie Filter") that narrow this query. The source builds
+    /// them into the query itself, keys checked and values escaped or bound; a source that cannot
+    /// answers `query.filters_unsupported` (docs/api/datasources.md, "Ad hoc filters").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(type = "AdhocFilter[]", optional))]
+    pub filters: Vec<AdhocFilter>,
+}
+
+/// One ad hoc filter: a key (label, field or column), a comparison and a value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdhocFilter {
+    pub key: String,
+    pub operator: FilterOperator,
+    pub value: String,
+}
+
+/// How an ad hoc filter compares. Not every source takes every one: Prometheus and Loki have no
+/// `<` and `>`, SQL has no pattern match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum FilterOperator {
+    #[serde(rename = "=")]
+    Equal,
+    #[serde(rename = "!=")]
+    NotEqual,
+    /// Matches the regular expression (as the source reads it).
+    #[serde(rename = "=~")]
+    Matches,
+    #[serde(rename = "!~")]
+    NotMatches,
+    #[serde(rename = "<")]
+    Less,
+    #[serde(rename = ">")]
+    Greater,
+}
+
+impl FilterOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "=",
+            Self::NotEqual => "!=",
+            Self::Matches => "=~",
+            Self::NotMatches => "!~",
+            Self::Less => "<",
+            Self::Greater => ">",
+        }
+    }
+}
+
+/// Ad hoc filters one query (and one dashboard) takes at most.
+pub const MAX_ADHOC_FILTERS: usize = 20;
+/// Longest key of an ad hoc filter.
+pub const MAX_FILTER_KEY_CHARS: usize = 200;
+/// Longest value of an ad hoc filter.
+pub const MAX_FILTER_VALUE_CHARS: usize = 1000;
+
+/// The bounds of a list of ad hoc filters: at most `MAX_ADHOC_FILTERS`, a key of 1 to
+/// `MAX_FILTER_KEY_CHARS` characters without control characters, a value of at most
+/// `MAX_FILTER_VALUE_CHARS` (control characters allowed: each source escapes or binds it).
+pub fn check_filters(filters: &[AdhocFilter]) -> Result<(), String> {
+    if filters.len() > MAX_ADHOC_FILTERS {
+        return Err(format!("at most {MAX_ADHOC_FILTERS} filters"));
+    }
+    for f in filters {
+        let chars = f.key.chars().count();
+        if chars == 0 || chars > MAX_FILTER_KEY_CHARS || f.key.chars().any(char::is_control) {
+            return Err(format!("a filter key needs 1 to {MAX_FILTER_KEY_CHARS} characters, no control characters"));
+        }
+        if f.value.chars().count() > MAX_FILTER_VALUE_CHARS || f.value.contains('\0') {
+            return Err(format!("a filter value takes at most {MAX_FILTER_VALUE_CHARS} characters, no NUL"));
+        }
+    }
+    Ok(())
 }
 
 /// Where a graph step of a query ran, and why it failed when it did (the result is then the one
@@ -819,6 +904,31 @@ pub struct VariableOptionsResponse {
     pub options: Vec<VariableOption>,
     /// True when the list was cut at the option limit or the query's row limit.
     pub truncated: bool,
+    /// How many values the variable's regex left out; absent when none (or no regex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub unmatched: Option<u32>,
+}
+
+/// `POST /api/orgs/{orgId}/query/variable-options`: the options a variable being edited would
+/// offer, run as a free query (`datasources:query` on its source). `variable` is a variable of
+/// the dashboard model, of type `query`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VariablePreviewRequest {
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub variable: Value,
+    pub time_range: TimeRange,
+    /// The other variables' values, as for a free query.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// The saved dashboard the variable belongs to: another variable at "All" (`$__all`) among
+    /// `variables` is filled in from its saved definition, as the options route does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub dashboard_id: Option<String>,
 }
 
 /// `POST /api/orgs/{orgId}/query/distribution`: how the values of one field path are spread
@@ -1334,6 +1444,8 @@ mod tests {
             SpanLink::decl(&cfg),
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
+            AdhocFilter::decl(&cfg),
+            FilterOperator::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
             LiveSubscribe::decl(&cfg),
             LiveSubscribeType::decl(&cfg),
@@ -1345,6 +1457,7 @@ mod tests {
             VariableOptionsRequest::decl(&cfg),
             VariableOption::decl(&cfg),
             VariableOptionsResponse::decl(&cfg),
+            VariablePreviewRequest::decl(&cfg),
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),

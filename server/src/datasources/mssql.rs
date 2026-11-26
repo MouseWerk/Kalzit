@@ -158,6 +158,11 @@ impl DataSourcePlugin for MsSql {
         "mssql"
     }
 
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Frame]
     }
@@ -272,6 +277,7 @@ impl DataSourcePlugin for MsSql {
         }
         let mut frame =
             frame.unwrap_or_else(|| FrameBuilder::new(Vec::new(), req.limits.max_rows, req.limits.budget.clone()));
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql.clone());
         if binary {
             frame.notice(

@@ -56,7 +56,9 @@ async function ownParent(prefix: string, team: string): Promise<{ id: string; na
 const row = (page: import("@playwright/test").Page, name: string) =>
   page.getByRole("treeitem", { name: new RegExp(`^${name}, `) });
 
-test("an admin adds a policy, reorders the tree by keyboard and checks a way", async ({ page }) => {
+test("an admin adds a policy, reorders the tree by keyboard and checks a way", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const pointName = unique("Bereitschaft Lager");
   await createWebhook(pointName);
   const team = unique("lager").replace(/[^a-z0-9_]/gi, "_");

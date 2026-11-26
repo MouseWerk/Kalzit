@@ -59,11 +59,24 @@ export function useOrgPermissions(): OrgPermissions {
     ...orgQuery(org?.id ?? ""),
     enabled: org !== undefined,
   });
+  return orgPermissionsOf(
+    query.data?.permissions,
+    me.isServerAdmin,
+    org === undefined || query.data !== undefined || query.isError,
+  );
+}
+
+/** The permissions from what `GET /api/orgs/{orgId}` answered (none while it has not). */
+export function orgPermissionsOf(
+  permissions: readonly string[] | undefined,
+  isServerAdmin: boolean,
+  loaded: boolean,
+): OrgPermissions {
   // Strings, not Permission: the server may grant permissions newer than this UI knows.
-  const granted = new Set<string>(query.data?.permissions ?? []);
+  const granted = new Set<string>(permissions ?? []);
   return {
     has: (permission) => granted.has(permission),
-    isServerAdmin: me.isServerAdmin,
-    loaded: org === undefined || query.data !== undefined || query.isError,
+    isServerAdmin,
+    loaded,
   };
 }

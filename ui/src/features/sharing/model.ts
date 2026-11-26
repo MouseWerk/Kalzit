@@ -175,12 +175,16 @@ export function fixedValueText(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
 
-/** The variables a public page shows, each with its fixed value as text. */
+/**
+ * The variables a public page shows, each with its fixed value as text. Ad hoc filters come only
+ * as their number (`value` is the count), data source variables without a value.
+ */
 export function fixedVariables(
   variables: readonly PublicVariable[],
-): { name: string; label: string; value: string }[] {
+): { name: string; type: string; label: string; value: string }[] {
   return variables.map((variable) => ({
     name: variable.name,
+    type: variable.type,
     label: variable.label === undefined || variable.label === "" ? variable.name : variable.label,
     value: fixedValueText(variable.value),
   }));

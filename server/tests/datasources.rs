@@ -415,6 +415,99 @@ async fn postgres_panels_bind_mixed_variables() {
     t.finish().await;
 }
 
+/// Variables reach PostgreSQL as text, also where it expects an interval or an integer (an interval
+/// variable in `date_bin($bucket::interval, ...)`, `n = $id` on an `integer` column), and the time
+/// macros group, fill and filter as written; a value that does not fit is explained in plain words.
+#[tokio::test]
+async fn postgres_time_macros_and_interval_variables() {
+    let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
+    let (host, port, user, password, database) = parts(&url);
+    let t = T::new(None).await;
+    let id = t
+        .create(
+            "postgres",
+            json!({ "host": host, "port": port, "database": database, "user": user }),
+            secrets(password),
+        )
+        .await;
+    // Rows at 00:10, 00:20 and 02:30 UTC on 2023-11-14 (Unix 1699920000 is 00:00).
+    let rows = "(VALUES (timestamptz '2023-11-14 00:10:00+00', 1699920600, 1::int), \
+                (timestamptz '2023-11-14 00:20:00+00', 1699921200, 2::int), \
+                (timestamptz '2023-11-14 02:30:00+00', 1699929000, 3::int)) AS e(created_at, u, n)";
+    let hour = 3_600_000_i64;
+    let start = 1_699_920_000_000_i64;
+    let range = json!({ "from": start, "to": start + 3 * hour });
+    let (app, id, range) = (&t, &id, &range);
+    let run = |sql: String, variables: Value| {
+        let body = json!({
+            "queries": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+            "timeRange": range,
+            "variables": variables
+        });
+        async move {
+            let (status, body) = app.send(Method::POST, "/query", Some(body)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["results"]["A"].clone()
+        }
+    };
+    let values = |r: &Value, i: usize| r["result"]["frame"]["fields"][i]["values"].clone();
+
+    // G10: an interval variable as text, cast to an interval in the query.
+    let r = run(
+        format!(
+            "SELECT date_bin($bucket::interval, created_at, timestamptz '2000-01-01') AS t, count(*) AS c \
+             FROM {rows} GROUP BY 1 ORDER BY 1"
+        ),
+        json!({ "bucket": "1h" }),
+    )
+    .await;
+    assert_eq!(values(&r, 0), json!([start, start + 2 * hour]), "{r}");
+    assert_eq!(values(&r, 1), json!(["2", "1"]), "{r}");
+    assert!(
+        r["result"]["frame"]["meta"]["executedQuery"].as_str().unwrap().contains("CAST(CAST($1 AS text) AS interval)"),
+        "{r}"
+    );
+
+    // A text variable against an integer column, and an integer one against text.
+    let r = run(format!("SELECT n FROM {rows} WHERE n = $id ORDER BY n"), json!({ "id": "2" })).await;
+    assert_eq!(values(&r, 0), json!([2]), "{r}");
+    let r = run(format!("SELECT n FROM {rows} WHERE n::text = $id ORDER BY n"), json!({ "id": 3 })).await;
+    assert_eq!(values(&r, 0), json!([3]), "{r}");
+
+    // The time macros, with an interval variable and filled gaps.
+    let r = run(
+        format!(
+            "SELECT $__timeGroupAlias(created_at, $bucket, 0), sum(n)::float8 AS s FROM {rows} \
+             WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1"
+        ),
+        json!({ "bucket": "1h" }),
+    )
+    .await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["name"], "time", "{r}");
+    assert_eq!(values(&r, 0), json!([start, start + hour, start + 2 * hour, start + 3 * hour]), "{r}");
+    assert_eq!(values(&r, 1), json!([3.0, 0.0, 3.0, 0.0]), "{r}");
+    let r = run(
+        format!(
+            "SELECT $__unixEpochGroupAlias(u, 1h), count(*) AS c FROM {rows} \
+             WHERE $__unixEpochFilter(u) AND u >= $__unixEpochFrom() GROUP BY 1 ORDER BY 1"
+        ),
+        json!({}),
+    )
+    .await;
+    let buckets: Vec<f64> = values(&r, 0).as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert_eq!(buckets, [1_699_920_000.0, 1_699_927_200.0], "{r}");
+    let r =
+        run(format!("SELECT $__time(created_at), $__timeEpoch(created_at) FROM {rows} ORDER BY 1 LIMIT 1"), json!({}))
+            .await;
+    assert_eq!(values(&r, 0), json!([start + 600_000]), "{r}");
+
+    // A value PostgreSQL cannot read as the type it expects is the database's own error, as before.
+    let r = run(format!("SELECT n FROM {rows} WHERE n = $id"), json!({ "id": "zwei" })).await;
+    assert_eq!(r["error"]["code"], "datasource_error", "{r}");
+    assert_eq!(r["error"]["reason"], "source.error", "{r}");
+    t.finish().await;
+}
+
 /// A query with far more rows than the row limit answers at once with the cut rows: the server
 /// stops producing rows instead of sending all of them, and the source stays usable.
 #[tokio::test]

@@ -685,6 +685,15 @@ fn ai_cache(policies: &[&redact::DataPolicy]) -> CacheUse {
     CacheUse::read(false).scoped(format!("ai:{}", prints.join(";")))
 }
 
+/// The first excluded field an ad hoc filter's key names: filtering by a field's values tells them
+/// through what the answer keeps, so such a query is refused like one that names the field.
+pub(crate) fn filters_name_excluded(
+    policy: &redact::DataPolicy,
+    filters: &[crate::shapes::AdhocFilter],
+) -> Option<String> {
+    filters.iter().find_map(|f| policy.excluded_named_in(&f.key))
+}
+
 fn names_excluded(policy: &redact::DataPolicy, query: &Value) -> Option<String> {
     policy.excluded_named_in(&prompts::query_text(query)).or_else(|| policy.excluded_named_in(&searchable_text(query)))
 }
@@ -723,6 +732,7 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         cursor: None,
         limit: None,
         steps: Vec::new(),
+        filters: Vec::new(),
     };
     let items = vec![item];
     crate::datasources::check_items(&items)?;
@@ -796,13 +806,7 @@ fn current_values(model: &crate::dashboards::model::DashboardModel) -> BTreeMap<
         .variables
         .iter()
         .filter(|v| !matches!(v.kind, VariableType::Constant))
-        .filter_map(|v| {
-            let value = match &v.current {
-                Some(Value::Object(m)) => m.get("value").cloned(),
-                other => other.clone(),
-            }?;
-            (!value.is_null()).then(|| (v.name.clone(), value))
-        })
+        .filter_map(|v| crate::dashboards::variables::saved_value(v).map(|value| (v.name.clone(), value)))
         .collect()
 }
 
@@ -817,10 +821,16 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let panel = linked.as_ref().unwrap_or(stored);
     // The values the dashboard opens with: each variable's current value as it was saved.
     let current = current_values(&model);
-    let run = match crate::routes::query::stored_items(&model, panel, &current, None, &BTreeMap::new()) {
-        Ok(run) => run,
+    let (state, ctx) = (scope.state, scope.ctx);
+    let (no_values, no_cursors) = (BTreeMap::new(), BTreeMap::new());
+    let (run, saved) = match crate::routes::query::stored_items(state, ctx, &model, panel, &current, None, &no_cursors)
+        .await
+    {
+        Ok(run) => (run, true),
         // A saved value that is no longer an option: the dashboard's own defaults then.
-        Err(_) => crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?,
+        Err(_) => {
+            (crate::routes::query::stored_items(state, ctx, &model, panel, &no_values, None, &no_cursors).await?, false)
+        }
     };
     // Hidden queries stay out, unless a step reads them (`stored_items` keeps only those).
     let hidden: BTreeSet<String> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();
@@ -840,8 +850,33 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         return Err(ApiError::validation("the panel has no query to run").because("ai.query_empty"));
     }
     crate::datasources::check_items(&items)?;
-    let datasource_ids: Vec<String> =
-        items.iter().map(|i| i.datasource_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    // A saved "All" of a query variable without a custom value is read from the variable's
+    // options query, as the signed-in person: its source passes the same checks as the panel's.
+    // Only the variables the panel uses (and those their queries use) are read; each options
+    // query passes the checks of the panel's own queries below.
+    let all_queries: Vec<(String, Value)> = if saved {
+        let sources = crate::routes::query::all_sources(&model, &current, &crate::routes::query::panel_uses(panel));
+        let needed = crate::routes::query::needed_variables(&model, &crate::routes::query::panel_uses(panel));
+        model
+            .variables
+            .iter()
+            .filter(|v| needed.contains(&v.name) && v.include_all)
+            .filter(|v| current.get(&v.name).is_some_and(crate::dashboards::variables::is_all))
+            .filter(|v| crate::dashboards::variables::all_without_query(v).is_none())
+            .filter_map(|v| Some((v.datasource_id.clone()?, v.query.clone()?)))
+            .filter(|(ds, _)| sources.contains(ds))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let all_sources: BTreeSet<String> = all_queries.iter().map(|(ds, _)| ds.clone()).collect();
+    let datasource_ids: Vec<String> = items
+        .iter()
+        .map(|i| i.datasource_id.clone())
+        .chain(all_sources.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut policies = BTreeMap::new();
     let mut outward = false;
     let access = DatasourceAccess::load(&scope.state.db, scope.ctx).await?;
@@ -877,8 +912,20 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     }
     // As for a free query: a stored query that names an excluded field could pass its values
     // under another name, and so could a step that reads one into a new field or a new name.
-    for item in &items {
-        if let Some(field) = names_excluded(&policies[&item.datasource_id], &item.query) {
+    // An ad hoc filter on an excluded field narrows by its values, so the answer tells them too.
+    let filtered = items.iter().find_map(|i| filters_name_excluded(&policies[&i.datasource_id], &i.filters));
+    if let Some(field) = filtered {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("a filter of this panel names {field}, a field excluded from AI"),
+        )
+        .because("ai.query_names_excluded_field")
+        .param("field", field));
+    }
+    let checked = items.iter().map(|i| (&i.datasource_id, &i.query)).chain(all_queries.iter().map(|(d, q)| (d, q)));
+    for (datasource_id, query) in checked {
+        if let Some(field) = names_excluded(&policies[datasource_id], query) {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "ai_unavailable",
@@ -903,16 +950,37 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let queries: BTreeMap<String, (String, Value)> =
         items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
+    let (variables, identifiers) = if all_sources.is_empty() {
+        (run.variables, run.identifiers)
+    } else {
+        // A failed options query is the answer, never a run with an empty list.
+        let filled = crate::routes::query::expand_all(
+            scope.state,
+            scope.ctx,
+            &model,
+            &current,
+            range,
+            &crate::routes::query::panel_uses(panel),
+            crate::routes::query::AllRights::Reader,
+        )
+        .await?;
+        let again =
+            crate::routes::query::stored_items(scope.state, scope.ctx, &model, panel, &filled, None, &BTreeMap::new())
+                .await?;
+        (again.variables, again.identifiers)
+    };
+    // The panel's query options bound the run as every run of the panel (`query::PanelLimits`).
+    let (interval_ms, max_data_points) = run.limits.apply(range, None, None);
     let QueryResponse { mut results } = run_queries_cached(
         scope.state,
         scope.ctx,
         items,
         range,
-        None,
-        None,
-        &run.variables,
-        Some(&run.identifiers),
-        &ai_cache(&policies.values().collect::<Vec<_>>()),
+        interval_ms,
+        max_data_points,
+        &variables,
+        Some(&identifiers),
+        &ai_cache(&policies.values().collect::<Vec<_>>()).at_most(run.limits.cache_ttl_ms),
     )
     .await;
     let records: Vec<ResultRecord> = if steps.is_empty() {
@@ -973,6 +1041,17 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
                 read.extend(aggregations.iter().map(|a| a.field.as_str()));
             }
             StepKind::Pivot { row, column, value, .. } => read.extend([row.as_str(), column.as_str(), value.as_str()]),
+            StepKind::Sort { by, .. } => read.extend(by.iter().map(|k| k.field.as_str())),
+            // A new name carries the values on; filters and orders tell about the values.
+            StepKind::Organize { rename, .. } => read.extend(rename.keys().map(String::as_str)),
+            StepKind::FilterRows { conditions, .. } => read.extend(conditions.iter().map(|c| c.field.as_str())),
+            StepKind::ReduceSeries { fields, .. } => read.extend(fields.iter().map(String::as_str)),
+            // These keep each field under its name, where the rules still find it.
+            StepKind::FilterFields { .. }
+            | StepKind::Limit { .. }
+            | StepKind::Convert { .. }
+            | StepKind::Stack { .. }
+            | StepKind::SeriesToRows { .. } => {}
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
@@ -1020,8 +1099,10 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
     None
 }
 
-/// The excluded field a join of the panel's enabled steps takes in with one of its frames: the
-/// field names of the queries' frames, before any step ran.
+/// The excluded field a step of the panel's enabled steps takes in with all fields of one of its
+/// frames, under other names or as values: a join (it names fields `<refId>.<field>`), series to
+/// rows (field names become values) and a reduce over every series. Checked on the field names
+/// of the queries' frames, before any step ran.
 fn joined_excluded(
     policy: &redact::DataPolicy,
     steps: &[crate::analysis::Step],
@@ -1029,17 +1110,42 @@ fn joined_excluded(
 ) -> Option<String> {
     use crate::analysis::StepKind;
     use crate::analysis::steps::Input;
+    // The queries whose fields each result holds by now: a stack or series to rows puts all of
+    // its queries into the first, a join puts the right one into the left.
+    let mut holds: BTreeMap<&str, BTreeSet<&str>> =
+        inputs.iter().map(|(name, _)| (name.as_str(), BTreeSet::from([name.as_str()]))).collect();
+    let merge = |holds: &mut BTreeMap<&str, BTreeSet<&str>>, into: &str, from: &[&str]| {
+        let taken: BTreeSet<&str> = from.iter().flat_map(|f| holds.get(f).cloned().unwrap_or_default()).collect();
+        if let Some(target) = holds.get_mut(into) {
+            target.extend(taken);
+        }
+    };
+    let excluded_in = |queries: &BTreeSet<&str>| {
+        inputs.iter().filter(|(name, _)| queries.contains(name.as_str())).find_map(|(_, input)| match input {
+            Input::Frame(frame) => frame.fields().iter().find(|f| policy.excludes(&f.name)).map(|f| f.name.clone()),
+            _ => None,
+        })
+    };
     for step in steps {
-        let StepKind::Join { left, right, .. } = &step.kind else { continue };
-        for (name, input) in inputs {
-            if name != left && name != right {
-                continue;
+        let read: Vec<&str> = match &step.kind {
+            StepKind::Join { left, right, .. } => vec![left, right],
+            StepKind::SeriesToRows { frames } => frames.iter().map(String::as_str).collect(),
+            StepKind::ReduceSeries { frame, fields, .. } if fields.is_empty() => vec![frame],
+            _ => Vec::new(),
+        };
+        let queries: BTreeSet<&str> = read.iter().flat_map(|r| holds.get(r).cloned().unwrap_or_default()).collect();
+        if let Some(field) = excluded_in(&queries) {
+            return Some(field);
+        }
+        match &step.kind {
+            StepKind::Join { left, right, .. } => merge(&mut holds, left, &[right.as_str()]),
+            StepKind::Stack { frames } | StepKind::SeriesToRows { frames } => {
+                let names: Vec<&str> = frames.iter().map(String::as_str).collect();
+                if let Some((first, rest)) = names.split_first() {
+                    merge(&mut holds, first, rest);
+                }
             }
-            if let Input::Frame(frame) = input
-                && let Some(f) = frame.fields().iter().find(|f| policy.excludes(&f.name))
-            {
-                return Some(f.name.clone());
-            }
+            _ => {}
         }
     }
     None
@@ -1491,12 +1597,74 @@ mod tests {
             json!([{ "id": "1", "type": "aggregateAlong", "frame": "A", "op": "max", "property": "email", "name": "k" }]),
             json!([{ "id": "1", "type": "paths", "frame": "A", "mode": "weighted", "from": "a", "to": "b",
                      "weight": "email" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "rename": { "email": "kontakt" } }]),
+            json!([{ "id": "1", "type": "filterRows", "frame": "A", "mode": "keep", "match": "all",
+                     "conditions": [{ "field": "email", "op": "contains", "value": "@" }] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["first"],
+                     "fields": ["email"] }]),
         ] {
             let field = step_reads_excluded(&policy, &steps(raw.clone()));
             assert!(field.as_deref().is_some_and(|f| f.ends_with("email")), "{raw}: {field:?}");
         }
-        let fine = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]);
-        assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        for fine in [
+            json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "hide": ["email"], "rename": { "umsatz": "u" } }]),
+            json!([{ "id": "1", "type": "limit", "frame": "A", "count": 5 }]),
+        ] {
+            assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        }
+        // Steps that take every field of a frame along are checked on the frame's fields.
+        let inputs = vec![(
+            "A".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "email".into(),
+                    field_type: crate::shapes::FieldType::String,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        )];
+        for raw in [
+            json!([{ "id": "1", "type": "seriesToRows", "frames": ["A"] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["sum"] }]),
+        ] {
+            assert_eq!(joined_excluded(&policy, &steps(raw.clone()), &inputs).as_deref(), Some("email"), "{raw}");
+        }
+        let stacked = json!([{ "id": "1", "type": "limit", "frame": "A", "count": 1 }]);
+        assert_eq!(joined_excluded(&policy, &steps(stacked), &inputs), None);
+        // A stack carries A's fields into B: what reads B afterwards takes them in too.
+        let refs2: BTreeSet<&str> = ["A", "B"].into();
+        let steps2 = |raw: Value| crate::analysis::check_steps(raw.as_array().unwrap(), &refs2, "t").unwrap();
+        let mut both = inputs.clone();
+        both.push((
+            "B".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "umsatz".into(),
+                    field_type: crate::shapes::FieldType::Number,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        ));
+        let stack = json!({ "id": "s", "type": "stack", "frames": ["B", "A"] });
+        for then in [
+            json!({ "id": "2", "type": "seriesToRows", "frames": ["B"] }),
+            json!({ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }),
+            json!({ "id": "2", "type": "join", "left": "B", "right": "A", "on": { "by": "time" }, "mode": "inner" }),
+        ] {
+            let raw = json!([stack.clone(), then.clone()]);
+            assert_eq!(joined_excluded(&policy, &steps2(raw), &both).as_deref(), Some("email"), "{then}");
+        }
+        // Without the stack, B alone holds no excluded field.
+        let alone =
+            json!([{ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }]);
+        assert_eq!(joined_excluded(&policy, &steps2(alone), &both), None);
         // Steps that copy the nodes' `name` into a table or a group's members read it.
         let access =
             super::super::store::DatasourceAccess { readable: true, excluded_fields: vec!["kunden.name".into()] };

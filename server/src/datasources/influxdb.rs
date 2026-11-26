@@ -583,6 +583,7 @@ impl DataSourcePlugin for InfluxDb {
                 let prepared = sql::prepare_query(self, conn, &sql_query, Engine::DataFusion).await?;
                 let body = c.sql(&prepared.sql, &prepared.binds, max_bytes, Some(&mut charge)).await?;
                 let mut frame = jsonl_frame(&body, &req)?;
+                frame.fill_gaps(prepared.fill);
                 frame.executed_query(prepared.sql);
                 frame
             }
@@ -604,6 +605,7 @@ fn clone_req(req: &SourceQuery) -> SourceQuery {
         identifier_variables: req.identifier_variables.clone(),
         limits: req.limits.clone(),
         cursor: req.cursor.clone(),
+        filters: Vec::new(),
     }
 }
 
@@ -1524,6 +1526,7 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 
@@ -1632,6 +1635,8 @@ mod tests {
             variables: &vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         let p = sql::prepare(
             "SELECT date_bin($__interval, time) AS t, avg(usage) FROM cpu WHERE $__timeFilter(time) AND host = $host GROUP BY 1",
@@ -1738,6 +1743,7 @@ mod property_tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

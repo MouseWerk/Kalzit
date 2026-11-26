@@ -155,6 +155,36 @@ export function HistogramPreview() {
   );
 }
 
+export function XYPreview() {
+  const points: [number, number, string][] = [
+    [8, 30, "series-1"],
+    [14, 26, "series-1"],
+    [20, 28, "series-2"],
+    [26, 20, "series-1"],
+    [32, 22, "series-2"],
+    [38, 14, "series-3"],
+    [44, 18, "series-2"],
+    [50, 10, "series-3"],
+    [56, 8, "series-3"],
+  ];
+  return (
+    <Frame>
+      {points.map(([x, y, color]) => (
+        <circle key={`${x}-${y}`} className={`preview__fill ${color}`} cx={x} cy={y} r="2.5" />
+      ))}
+    </Frame>
+  );
+}
+
+export function TrendPreview() {
+  return (
+    <Frame>
+      <path className="preview__line series-1" d="M2 8L10 14L20 20L32 25L44 28L62 31" />
+      <path className="preview__line series-2" d="M2 16L10 22L20 27L32 31L44 33L62 35" />
+    </Frame>
+  );
+}
+
 export function StateTimelinePreview() {
   return (
     <Frame>

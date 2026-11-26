@@ -16,7 +16,9 @@ data sources and other Grafana content are not imported.
   dashboard as classic JSON in Grafana instead.
 - **Panels** with a Kalzit counterpart: time series (also the old graph panel), stat (also the
   old singlestat), gauge, bar gauge, table (also the old table), pie chart, bar chart, heatmap,
-  histogram, state timeline, status history, text and node graph (as a network panel). Other
+  histogram, XY chart (its first series mapping: X, Y, size and colour fields, points or lines),
+  trend (with its X field), state timeline, status history, text and node graph (as a network
+  panel). Other
   panel types and library panels are skipped, and skipped panels are left out, not kept as
   empty places. A panel none of whose queries could be converted is skipped too.
 - **Queries** for Prometheus (PromQL), Loki (LogQL), PostgreSQL, MySQL, SQL Server, SQLite and
@@ -26,16 +28,54 @@ data sources and other Grafana content are not imported.
   are skipped. `[[name]]` becomes `$name`; formats such as `${name:csv}` are dropped, since Kalzit
   binds variable values as parameters.
 - **Variables**: custom, query (with the query in the mapped source's language), constant,
-  textbox and interval. Data source and ad hoc variables and Grafana's helper functions
-  (`label_values(...)`) are skipped.
+  textbox and interval, with "All" (`includeAll`, its custom value and a saved selection of
+  "All"), typed values (`allowCustomValue`), and for query variables the regex, the sort order
+  (natural sorting becomes sorting by name) and when the values are read again. A regex Kalzit
+  cannot run (lookaround, backreferences) is left out and reported. On Prometheus sources
+  Grafana's helper functions `label_values(...)`, `label_names(...)`, `metrics(...)` and
+  `query_result(...)` become Kalzit's helper forms (one that cannot be read is skipped and
+  reported); on other sources they are skipped. **Data source** variables keep their type of
+  source and regex, with a mapped source of that type as the default (the current pick when it
+  is mapped). **Ad hoc** variables keep their source, if it can apply filters, and those of their
+  filters whose comparison the source applies: `=`, `!=`, `=~` and `!~` for Prometheus and Loki,
+  all of these plus `<` and `>` for Elasticsearch, `=`, `!=`, `<` and `>` for SQL sources. A
+  dashboard holds at most 20 filters over all its ad hoc variables. Filters left out are counted
+  in the report. A
+  custom variable of exactly two values such as `true, false`, `on, off`, `yes, no` or `1, 0`,
+  without several values, "All" or typed values, becomes a **switch**, and the report says so.
 - **Rows** with their title, collapsed state and repeat, **repeats** of panels, **annotation
   queries** (not Grafana's built-in ones), **links**, **tags** and the **time settings**: range,
   refresh, time zone, week start, fiscal year, now delay, refresh intervals and the shared
   crosshair or tooltip.
-- **Options**: units, decimals, min and max, display name, "no value" text and thresholds
-  (colours become the nearest tone); the main options of stat, gauge, bar gauge, pie chart and
-  time series legends and tooltips. Value mappings, field overrides and other display options are
-  reported as not carried.
+- **Options**: see the next section. Every option goes only where the Kalzit panel's editor
+  shows it, so an imported panel holds nothing its options do not show.
+- **Transformations** that have a Kalzit step: organize (arrange and rename fields), filter fields
+  by name, filter data by values (filter rows), limit, convert field type, reduce, merge (as stack
+  tables: rows with equal values are not combined) and series to rows. Steps that work on one
+  table work on the first query until a merge or series to rows put the queries together; the
+  report says so. Other transformations, calculations and conditions without a counterpart are
+  left out and reported. A name pattern without slashes matches the whole name, as in Grafana. A
+  regular expression Kalzit cannot read leaves out only its condition, or the name filter, with a
+  note that names it.
+
+## Options: what maps and what does not
+
+| Grafana | In Kalzit |
+| --- | --- |
+| Units (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `binBps`, `short`, `none`, `reqps`, ...) | The same catalog unit (Euro, Percent, Bytes, ...). The ISO and US date formats become Kalzit's date and time in local time, reported as the nearest unit. Units without one, also those that scale in other steps (`kbytes`, `Bps` as SI bytes per second, `bits` and `binbps` as binary bits, `pps`, `rpm` as reads per minute, other currencies, `prefix:`), become a **Custom suffix** with their symbol and are reported; an unknown id is dropped and reported. |
+| Decimals, min and max, display name, "no value" text | Taken over. |
+| Thresholds | Colours become the nearest tone (green, yellow and orange, red, blue, purple) or stay a free colour; `transparent` becomes neutral and is reported. |
+| Value mappings: value, range, regex | Taken over with text and tone on every panel with value mappings (stat, gauge, bar gauge, bar chart, pie chart, table, time series, state timeline, status history). Special matches (null, NaN, true, false, empty) are reported. |
+| Field overrides by name, by a list of names, by regular expression | Overrides **With the name** or **Matching a regular expression**, with colour, unit, min and max, decimals, display name, value mappings, thresholds, line width and the other graph style options, cell display, column width and the first data link. Other matchers (by type, by query, by value) and other properties are reported. |
+| Prometheus and Loki `legendFormat` | The time series' **Series names** template (`{{label}}` and text). Queries with different formats share the first one; other panel types report it. |
+| Time series: draw style, line interpolation, line width, fill opacity, stacking (normal, percent), points, line style, gaps, bar alignment, threshold display (`line`, `area`, `line+area`; dashed becomes plain) | The graph style options of the same name. Hiding series and series transforms are reported. |
+| Colour schemes | On time series: palette, fixed colour, thresholds, `shades` (single colour) and the continuous schemes (green-yellow-red, blues; others become the nearest one and are reported). On bar charts the green-to-red schemes become threshold colours; other schemes are reported. |
+| Legends (mode, placement, width, values) and tooltips (mode) | Taken over on time series, XY chart, trend, bar, pie chart, histogram, state timeline and status history. Legend values on time series and bar charts: last, first, total, percentiles and the other calculations Kalzit has (standard deviation and variance over a sample); the others are reported. The tooltip's sort, hidden zeros and size on time series; elsewhere its sort order is reported. |
+| Value axis (placement, label, width, grid lines, colour, axis line, linear, logarithmic or log-around-zero scale, zero in the middle, soft limits) | Taken over on time series, bar charts and histograms. The linear range of log around zero is reported: Kalzit's is fixed. |
+| Stat, gauge, bar gauge, pie chart | Calculation (last, mean, min, max, sum; others reported), colour, graph and text mode, threshold markers, LCD display, orientation, value and name display, pie type and legend values. |
+| Bar chart | Values shown or not. Horizontal bars and stacking are reported: Kalzit's bar chart stands upright with bars side by side. |
+| Heatmap | Counting into buckets or reading buckets, bucket counts, the square root colour scale and the axis unit. Bucket sizes, log buckets and colour schemes are reported. |
+| Table | Cell types gauge, coloured background and coloured text become the cell display, column filters and widths. The organize step becomes a step that hides, orders and renames the columns (see transformations above); overrides then match the new names, as in Grafana. The footer and the starting sort order are reported. |
 
 ## The report
 
@@ -48,7 +88,8 @@ through the same checks as every save, including the right to query each mapped 
 
 **Dashboards > Import from Grafana** leads through three steps. First the file: upload it or
 paste its JSON, name the dashboard and choose its folder. Then the data sources: each one the
-file names gets one of Kalzit's, proposed by name and kind, or is left out, which skips its
+file names gets one of Kalzit's, proposed by name and kind (Grafana's default source: the
+organization's [default data source](data-sources.md#default-data-source)), or is left out, which skips its
 panels. Last the report, before anything exists; **Import** creates the dashboard and opens it
 with a line that leads back to the report (the dashboard's address with `/import-report`).
 
@@ -60,7 +101,8 @@ kalzit provision import-grafana lager.json --server https://kalzit.example.com -
 ```
 
 `kalzit import grafana` is the same command. `--map` maps a Grafana data source to the id of a Kalzit data source: by its uid, its name, the
-`${DS_X}` input of an export, or `default` for panels without one. `--dry-run` converts and shows
+`${DS_X}` input of an export, or `default` for panels without one (left out, `default` is the
+organization's default data source, if it has one). `--dry-run` converts and shows
 the report without saving. The token comes from `KALZIT_API_TOKEN`, as for
 [provisioning](provisioning.md); the role needs `dashboards:write` where the dashboard goes and
 `datasources:query` on the mapped sources.
@@ -70,3 +112,8 @@ The API route is `POST /api/orgs/{orgId}/dashboards/import/grafana` with
 report, the converted model and the saved dashboard.
 
 To keep an imported dashboard as code, export it with `kalzit provision export` afterwards.
+
+Kalzit keeps the dashboard's Grafana `uid`, so an old Grafana address still works: `/d/<uid>` and
+`/d/<uid>/<slug>` open the imported dashboard (or the dashboards list when the uid is unknown).
+`/datasources` and `/connections/datasources` lead to the data sources, `/explore` is the same
+in both.

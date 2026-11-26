@@ -133,6 +133,7 @@ fn req(sqlpp: &str, variables: Value) -> SourceQuery {
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
         },
         cursor: None,
+        filters: Vec::new(),
     }
 }
 
