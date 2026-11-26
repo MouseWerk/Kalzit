@@ -1018,6 +1018,7 @@
   .variable-preview__value {
     color: var(--text-muted);
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
   }
 
   .variable-editor__actions {
