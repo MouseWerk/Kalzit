@@ -21,6 +21,8 @@ import {
   runSteps,
   type Step,
 } from "./steps";
+import "../features/dashboards/ui/shared.css";
+import "./analysis.css";
 
 /** Why the step cannot read `pattern` as a regular expression, or null when it can. */
 function patternError(t: Translate, pattern: string): string | null {
