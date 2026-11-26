@@ -31,8 +31,9 @@ async function longDashboard(sourceId: string): Promise<string> {
 }
 
 /**
- * Scrolls the page in small steps from the top to its end, as a wheel does, and records where
- * the top bar, the toolbar, the rail and the open pane are after each step has been painted.
+ * Scrolls the page's scroll container (the main area next to the sidebar) in small steps from
+ * the top to its end, as a wheel does, and records where the top bar, the toolbar, the rail and
+ * the open pane are after each step has been painted.
  */
 function scrollInSteps(page: Page): Promise<Sample[]> {
   return page.evaluate(async () => {
@@ -43,14 +44,19 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
     };
     const painted = () =>
       new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
-    const end = document.documentElement.scrollHeight - window.innerHeight;
+    const main = document.querySelector<HTMLElement>(".shell__main");
+    const scroller =
+      main !== null && getComputedStyle(main).overflowY === "auto"
+        ? main
+        : (document.scrollingElement ?? document.documentElement);
+    const end = scroller.scrollHeight - scroller.clientHeight;
     const steps = [...Array.from({ length: 41 }, (_, i) => i * 3), 200, 400, end];
     const samples: Sample[] = [];
     for (const y of steps) {
-      window.scrollTo(0, y);
+      scroller.scrollTo(0, y);
       await painted();
       samples.push({
-        scrollY: window.scrollY,
+        scrollY: scroller.scrollTop,
         bar: box(".top-bar").top,
         toolbar: box(".dash-toolbar").top,
         rail: box(".dash-rail__column").top,
