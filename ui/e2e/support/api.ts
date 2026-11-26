@@ -45,9 +45,25 @@ export function fixturesDir(): string {
   return dir;
 }
 
-/** A name no other test uses, so tests can share the one server and run in parallel. */
+/**
+ * A name no other test uses, so tests can share the one server and run in parallel. The visual
+ * run (visual.config.ts) seeds its server once and compares pictures of it, so there the name is
+ * the prefix alone (`KALZIT_E2E_STABLE_NAMES=1`): a suffix would differ in every run.
+ */
 export function unique(prefix: string): string {
+  if (process.env.KALZIT_E2E_STABLE_NAMES === "1") {
+    return prefix;
+  }
   return `${prefix} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * The moment the fixture data lies around: the fixed moment of a run that shows it on a fixed
+ * clock (screenshots, visual comparison), otherwise now.
+ */
+export function fixtureNow(): number {
+  const fixed = Number(process.env.KALZIT_E2E_FIXTURE_NOW ?? "");
+  return Number.isFinite(fixed) && fixed > 0 ? fixed : Date.now();
 }
 
 async function json<T>(response: APIResponse, what: string): Promise<T> {
