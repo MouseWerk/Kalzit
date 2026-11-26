@@ -969,16 +969,18 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
                 .await?;
         (again.variables, again.identifiers)
     };
+    // The panel's query options bound the run as every run of the panel (`query::PanelLimits`).
+    let (interval_ms, max_data_points) = run.limits.apply(range, None, None);
     let QueryResponse { mut results } = run_queries_cached(
         scope.state,
         scope.ctx,
         items,
         range,
-        None,
-        None,
+        interval_ms,
+        max_data_points,
         &variables,
         Some(&identifiers),
-        &ai_cache(&policies.values().collect::<Vec<_>>()),
+        &ai_cache(&policies.values().collect::<Vec<_>>()).at_most(run.limits.cache_ttl_ms),
     )
     .await;
     let records: Vec<ResultRecord> = if steps.is_empty() {

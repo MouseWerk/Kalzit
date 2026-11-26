@@ -3,9 +3,9 @@ import { t } from "./support/i18n";
 import { expectSelectValue, selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
-test("the owner creates accounts, adds them as members with roles and builds a team", async ({
-  page,
-}) => {
+test("the owner creates accounts, adds them as members with roles and builds a team", {
+  tag: "@smoke",
+}, async ({ page }) => {
   await signInOwner(page);
   const editor = { name: unique("Erik Editor"), password: "editor-password-e2e" };
   const viewer = { name: unique("Vera Viewer"), password: "viewer-password-e2e" };

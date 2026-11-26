@@ -2,6 +2,16 @@ import { isRecord } from "../../api/client";
 import { clipChars } from "../../lib/chars";
 import { type DataLink, parseDataLinks } from "../dataLinks";
 import { MAX_EXPAND_LIMIT } from "./adapter";
+import type { PinnedPlace } from "./canvas/edits";
+
+/** Properties per label on a node's info card (`MAX_INFO_CARD_PROPERTIES` on the server). */
+export const CARD_PROPERTIES = 4;
+/** Labels with their own choice of info card properties, as the panel options keep them. */
+export const MAX_CARD_LABELS = 50;
+/** Nodes pinned with the panel, their longest id and largest coordinate (the server's bounds). */
+export const MAX_PANEL_PINS = 200;
+const MAX_PIN_ID_CHARS = 512;
+const MAX_PIN_COORDINATE = 1e9;
 
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
 export const MAX_NODE_LIMIT = 20_000;
@@ -123,6 +133,13 @@ export interface GraphPanelOptions {
   elkEdgeRouting: ElkEdgeRouting;
   /** Links from a node property, offered in the node's details. */
   dataLinks: DataLink[];
+  /**
+   * Nodes pinned for everyone with the panel, each at the place it was dragged to in the panel
+   * editor (Graph 0.8.1 board, frame 14). Only ids and places, never properties.
+   */
+  pinned: PinnedPlace[];
+  /** Up to four properties per node label on the info card, instead of the first ones. */
+  infoCard: Record<string, string[]>;
 }
 
 /** Longest caption, property key or variable name the graph panels store. */
@@ -175,6 +192,42 @@ function perLabel<T extends string>(
     }
   }
   return Object.fromEntries(out);
+}
+
+/** Property names per label from stored options: at most `max` labels, `each` names per label. */
+function namesPerLabel(value: unknown, max: number, each: number): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+  const out: [string, string[]][] = [];
+  for (const [label, names] of Object.entries(value)) {
+    const name = text(label);
+    if (name === "" || !Array.isArray(names) || out.length >= max) continue;
+    if (out.some(([n]) => n === name)) continue;
+    const kept = [...new Set(names.map((n) => text(n)).filter((n) => n !== ""))].slice(0, each);
+    out.push([name, kept]);
+  }
+  return Object.fromEntries(out);
+}
+
+/**
+ * The panel's pinned nodes as the server keeps them: one per id, ids of 1 to 512 characters
+ * without control characters, finite coordinates within 1e9 (rounded to hundredths), at most 200.
+ */
+function pinnedPlaces(value: unknown): PinnedPlace[] {
+  if (!Array.isArray(value)) return [];
+  const out: PinnedPlace[] = [];
+  const seen = new Set<string>();
+  const within = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_PIN_COORDINATE;
+  for (const entry of value) {
+    if (out.length >= MAX_PANEL_PINS) break;
+    if (!isRecord(entry)) continue;
+    const { id, x, y } = entry;
+    if (typeof id !== "string" || id === "" || [...id].length > MAX_PIN_ID_CHARS) continue;
+    if (/\p{Cc}/u.test(id) || seen.has(id) || !within(x) || !within(y)) continue;
+    seen.add(id);
+    out.push({ id, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
+  }
+  return out;
 }
 
 /** A per-label option with `label` set to `value`, or taken out without one. */
@@ -243,6 +296,8 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
     ),
     elkEdgeRouting: choice(ELK_EDGE_ROUTINGS, value.elkEdgeRouting, "orthogonal"),
     dataLinks: parseDataLinks(value.dataLinks, MAX_OPTION_TEXT),
+    pinned: pinnedPlaces(value.pinned),
+    infoCard: namesPerLabel(value.infoCard, MAX_CARD_LABELS, CARD_PROPERTIES),
   };
 }
 

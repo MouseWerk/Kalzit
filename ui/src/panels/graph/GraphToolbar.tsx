@@ -1,6 +1,5 @@
 import { useId } from "react";
 import { Icon } from "../../components/Icon";
-import { IconButton } from "../../components/IconButton";
 import { Select } from "../../components/Select";
 import { useI18n } from "../../i18n/i18n";
 import type { LayoutMode } from "./layoutProtocol";
@@ -14,8 +13,6 @@ export const TOOLBAR_DIRECTIONS: readonly ElkDirection[] = ["down", "right"];
 
 export interface GraphToolbarProps {
   title: string;
-  /** Zoom and "Show all": only while the graph is drawn. */
-  drawn: boolean;
   /** The layout and the view choice: only where the browser can draw. */
   drawable: boolean;
   /** The layout choice, or null where the panel does not offer it. */
@@ -32,19 +29,16 @@ export interface GraphToolbarProps {
   explorer: { on: boolean; disabled: boolean; note: string | null; onToggle: () => void } | null;
   /** Closes the opened groups; null while none is open. */
   onCloseGroups: (() => void) | null;
-  onZoom: (factor: number) => void;
-  onFit: () => void;
 }
 
 /**
- * The tools of a graph panel, in the board's order (Graph board, frames 1 and 3): zoom in and out
- * as icons, "Show all", a rule, the layout (network) or the direction (hierarchy), Graph and
- * Table as one segmented choice, and the explorer's switch. Pressed states are a quiet neutral
- * tint, never an accent.
+ * The head of a graph panel (Graph board, frames 1 and 3; Graph 0.8.1 board, decision 1): the
+ * layout (network) or the direction (hierarchy), Graph and Table as one segmented choice, and the
+ * explorer's switch. Zoom and "Show all" lie on the canvas with the other canvas tools
+ * (canvas/ToolStrip.tsx). Pressed states are a quiet neutral tint, never an accent.
  */
 export function GraphToolbar({
   title,
-  drawn,
   drawable,
   layout,
   direction,
@@ -52,8 +46,6 @@ export function GraphToolbar({
   onDisplay,
   explorer,
   onCloseGroups,
-  onZoom,
-  onFit,
 }: GraphToolbarProps) {
   const { t } = useI18n();
   const layoutId = useId();
@@ -63,26 +55,6 @@ export function GraphToolbar({
     // control is its own Tab stop, as in the rest of the panel.
     // biome-ignore lint/a11y/useSemanticElements: a group of controls, not a field set
     <div className="graph__toolbar" role="group" aria-label={t("graph.toolbar", { title })}>
-      {drawn ? (
-        <>
-          <IconButton
-            icon="zoomIn"
-            label={t("graph.zoomIn")}
-            tipAlign="start"
-            onClick={() => onZoom(1.5)}
-          />
-          <IconButton icon="zoomOut" label={t("graph.zoomOut")} onClick={() => onZoom(1 / 1.5)} />
-          <button
-            type="button"
-            className="button button--ghost button--small graph__tool"
-            onClick={onFit}
-          >
-            <Icon name="expand" />
-            {t("graph.fit")}
-          </button>
-          <span className="graph__toolbar-rule" aria-hidden="true" />
-        </>
-      ) : null}
       {drawable && layout !== null ? (
         <span className="graph__layout">
           <label className="graph__layout-label" htmlFor={layoutId}>

@@ -54,6 +54,7 @@ export const BUILTIN_AREAS: readonly AreaDef[] = [
   { id: "providers", title: "shortcuts.area.providers", page: '[data-shortcuts~="providers"]' },
   { id: "ask", title: "shortcuts.area.ask", page: ".ask__main" },
   { id: "fields", title: "shortcuts.area.fields" },
+  { id: "handbook", title: "shortcuts.area.handbook", page: ".hb" },
 ];
 
 const ARROWS_UD = ["ArrowUp", "ArrowDown"];
@@ -362,7 +363,9 @@ export const BUILTIN_SHORTCUTS = [
   },
   { id: "chart.annotateKey", area: "charts", keys: [combo("A")], partOf: "chart.annotate" },
 
-  // Graph, with the focus on the canvas
+  // Graph, with the focus on the canvas (Graph 0.8.1 board, frame 20). The M3 keys keep their
+  // meaning; the canvas's new actions take free keys only and never a global shortcut ("/", "?",
+  // "E" for the panel editor, Ctrl+F for the browser's search, Shift+L for "Rearrange").
   { id: "graph.next", area: "graph", keys: [keySet([], ...ARROWS)], label: "shortcuts.graph.next" },
   { id: "graph.open", area: "graph", keys: [combo("Enter")], label: "shortcuts.graph.open" },
   { id: "graph.select", area: "graph", keys: [combo("Space")], label: "shortcuts.graph.select" },
@@ -373,8 +376,83 @@ export const BUILTIN_SHORTCUTS = [
     keys: [combo("Shift", "Click")],
     partOf: "graph.select",
   },
+  { id: "graph.edges", area: "graph", keys: [combo("K")], label: "shortcuts.graph.edges" },
+  {
+    id: "graph.neighbours",
+    area: "graph",
+    keys: [combo("N")],
+    label: "shortcuts.graph.neighbours",
+  },
+  {
+    id: "graph.selectAll",
+    area: "graph",
+    keys: [combo("Mod", "A")],
+    label: "shortcuts.graph.selectAll",
+  },
+  { id: "graph.invert", area: "graph", keys: [combo("Mod", "I")], label: "shortcuts.graph.invert" },
   { id: "graph.only", area: "graph", keys: [combo("S")], label: "shortcuts.graph.only" },
+  {
+    id: "graph.clear",
+    area: "graph",
+    keys: [combo("Esc")],
+    label: "shortcuts.graph.clear",
+    overrides: "layer.close",
+  },
+  {
+    id: "graph.nudge",
+    area: "graph",
+    keys: [keySet(["Alt"], ...ARROWS)],
+    label: "shortcuts.graph.nudge",
+  },
+  // With Shift held too, in larger steps.
+  {
+    id: "graph.nudgeBig",
+    area: "graph",
+    keys: [keySet(["Alt", "Shift"], ...ARROWS)],
+    partOf: "graph.nudge",
+  },
   { id: "graph.pin", area: "graph", keys: [combo("P")], label: "shortcuts.graph.pin" },
+  { id: "graph.hide", area: "graph", keys: [combo("H")], label: "shortcuts.graph.hide" },
+  {
+    id: "graph.showAll",
+    area: "graph",
+    keys: [combo("Shift", "H")],
+    label: "shortcuts.graph.showAll",
+  },
+  { id: "graph.undo", area: "graph", keys: [combo("Mod", "Z")], label: "shortcuts.graph.undo" },
+  {
+    id: "graph.redo",
+    area: "graph",
+    // Both everywhere; the platform's own first, as in the editors.
+    keys: (platform) =>
+      platform === "mac"
+        ? [combo("Mod", "Shift", "Z"), combo("Mod", "Y")]
+        : [combo("Mod", "Y"), combo("Mod", "Shift", "Z")],
+    label: "shortcuts.graph.redo",
+  },
+  {
+    id: "graph.tools",
+    area: "graph",
+    keys: [keySet([], "V", "R", "L")],
+    label: "shortcuts.graph.tools",
+  },
+  { id: "graph.toolPointer", area: "graph", keys: [combo("V")], partOf: "graph.tools" },
+  { id: "graph.toolRect", area: "graph", keys: [combo("R")], partOf: "graph.tools" },
+  { id: "graph.toolLasso", area: "graph", keys: [combo("L")], partOf: "graph.tools" },
+  { id: "graph.search", area: "graph", keys: [combo("F")], label: "shortcuts.graph.search" },
+  // In the canvas's search field: to the next and the previous match.
+  { id: "graph.searchNext", area: "graph", keys: [combo("Enter")], partOf: "graph.search" },
+  {
+    id: "graph.searchPrevious",
+    area: "graph",
+    keys: [combo("Shift", "Enter")],
+    partOf: "graph.search",
+  },
+  { id: "graph.menu", area: "graph", keys: [combo("Shift", "F10")], label: "shortcuts.graph.menu" },
+  // The keyboard's menu key does the same.
+  { id: "graph.menuKey", area: "graph", keys: [combo("Menu")], partOf: "graph.menu" },
+  { id: "graph.card", area: "graph", keys: [combo("I")], label: "shortcuts.graph.card" },
+  { id: "graph.minimap", area: "graph", keys: [combo("M")], label: "shortcuts.graph.minimap" },
   {
     id: "graph.zoom",
     area: "graph",
@@ -385,14 +463,7 @@ export const BUILTIN_SHORTCUTS = [
   { id: "graph.zoomIn", area: "graph", keys: [combo("+"), combo("=")], partOf: "graph.zoom" },
   { id: "graph.zoomOut", area: "graph", keys: [combo("-")], partOf: "graph.zoom" },
   { id: "graph.zoomReset", area: "graph", keys: [combo("0")], partOf: "graph.zoom" },
-  { id: "graph.undo", area: "graph", keys: [combo("Mod", "Z")], label: "shortcuts.graph.undo" },
-  {
-    id: "graph.clear",
-    area: "graph",
-    keys: [combo("Esc")],
-    label: "shortcuts.graph.clear",
-    overrides: "layer.close",
-  },
+  { id: "graph.view", area: "graph", keys: [combo("A")], label: "shortcuts.graph.view" },
 
   // Traces, with the focus on the waterfall
   {
@@ -524,6 +595,33 @@ export const BUILTIN_SHORTCUTS = [
     keys: [combo("Esc")],
     label: "shortcuts.field.cancel",
     overrides: "layer.close",
+  },
+
+  // Handbook: brackets need AltGr on German keyboards, so K and J turn the pages too.
+  {
+    id: "handbook.search",
+    area: "handbook",
+    keys: [combo("/")],
+    label: "shortcuts.handbook.search",
+    overrides: "palette.open",
+  },
+  {
+    id: "handbook.pages",
+    area: "handbook",
+    keys: [keySet([], "[", "]", "K", "J")],
+    label: "shortcuts.handbook.pages",
+  },
+  {
+    id: "handbook.turnBack",
+    area: "handbook",
+    keys: [combo("["), combo("K")],
+    partOf: "handbook.pages",
+  },
+  {
+    id: "handbook.turnForward",
+    area: "handbook",
+    keys: [combo("]"), combo("J")],
+    partOf: "handbook.pages",
   },
 ] as const satisfies readonly ShortcutDef[];
 

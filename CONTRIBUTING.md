@@ -23,12 +23,38 @@ By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Security 
    interface polish, `docs/<topic>` for documentation.
 2. Make the change, with tests (a fix comes with a test that fails without it).
 3. Run the checks below locally.
-4. Open a pull request into `main` and fill in the template.
-5. CI must be green on Windows and Linux, and review findings must be resolved. Pull requests
-   are squash-merged, so the pull request title becomes the commit subject; write it as a plain
-   English sentence. The branch is deleted after the merge.
+4. Add a release note fragment if users notice the change (see "Release notes" below).
+5. Open a pull request into `main` and fill in the template.
+6. Every pull request gets a review; its findings are resolved before the merge.
+7. CI must be green on Windows and Linux. CI runs on the maintainer's machine
+   ([`tools/local-ci`](tools/local-ci/README.md)), not on GitHub's runners: a maintainer tests
+   the pull request merged onto the current `main` on Windows and on Linux (WSL), and the results
+   appear on the pull request as the statuses `local/windows` and `local/linux`, which `main`
+   requires. Expect a short wait between opening a pull request and its first status.
+8. A maintainer merges. Pull requests are squash-merged, so the pull request title becomes the
+   commit subject; write it as a plain English sentence that says what changes for the user
+   ("Alerting: the rules list fits at 1024 px"). The branch is deleted after the merge.
 
-`main` is protected: no direct pushes and no force pushes.
+`main` is protected: no direct pushes and no force pushes. Please do not force-push a branch
+once its pull request has a review; add commits instead, they are squashed at the merge. The whole
+process, from decision to release, is described in [docs/process.md](docs/process.md).
+
+## Building
+
+You need the current stable Rust toolchain, Node.js 26 or newer and Git; no C compiler, OpenSSL
+or database server. The UI is built first, because the server embeds `ui/dist`:
+
+```sh
+cd ui
+npm ci
+npm run build
+cd ..
+cargo build --locked
+```
+
+For development, run the server with `cargo run` and the UI dev server with `npm run dev` in
+`ui/`, which proxies the API to the server on port 3000. More in the README under
+[Build](README.md#build) and in [ui/README.md](ui/README.md).
 
 ## Checks
 
@@ -61,8 +87,8 @@ skip or weaken a test to make a change pass.
 - Match the style and comment density of the surrounding code. No emojis anywhere.
 - **Authorization** is checked on the server for every request and resource; the UI only hides
   what the server would refuse.
-- **Native shapes:** query results stay `frame`, `documents` or `graph`; conversions are explicit
-  analysis steps, never implicit in the backend.
+- **Native shapes:** query results stay `frame`, `documents`, `graph` or `trace`; conversions are
+  explicit analysis steps, never implicit in the backend.
 - **Read-only sources:** nothing may write to a data source; write queries are refused on the
   server.
 - **Windows and Linux** are both first-class: paths, line endings and file permissions must work
@@ -83,9 +109,19 @@ workflow; see `docs/screenshots/README.md`. Screenshots are desktop only, no pho
 
 ## Release notes
 
-User-facing changes add a line to `docs/releases/v<version>.md` under "## Improved" or
-"## Fixed", written for users, not developers. Changes that need a manual check on Windows add it
-under "## Checklist for Windows (manual)".
+A pull request with user-facing changes adds a fragment
+`docs/releases/unreleased/<pr>-<topic>.md` (the number of the pull request and a short topic) with
+the sections "## Improved", "## Fixed" and "## Checklist for Windows (manual)" as needed, written
+for users, not developers; [docs/releases/unreleased/README.md](docs/releases/unreleased/README.md)
+has the details. The release pull request assembles the fragments into
+`docs/releases/v<version>.md`. Changes without a visible effect (refactoring, tests, internal
+docs) need no fragment.
+
+## Commits
+
+Write commit messages and pull request titles in English, in plain sentences, without emojis.
+Commits carry no tool or assistant trailers. Since pull requests are squash-merged, the history of
+`main` shows one commit per pull request, under its title.
 
 ## License
 

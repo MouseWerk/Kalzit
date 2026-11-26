@@ -57,7 +57,7 @@
   "serverAdmin.reason.password_sign_in_off": "Password sign-in is off.",
   "serverAdmin.reason.role_too_high": "At most editor.",
   "serverAdmin.signup.ok": "OK",
-  "serverAdmin.backup.guide": "How to restore",
+  "serverAdmin.backup.guide": "In the handbook: Restoring",
   "serverAdmin.backup.running": "Backing up…",
   "serverAdmin.backup.done": "Backup stored.",
   "serverAdmin.backup.last": "Last backup",

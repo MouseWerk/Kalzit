@@ -45,7 +45,9 @@ async function createReport(name: string, dashboardId: string, userId: string): 
   return ((await answer.json()) as { id: string }).id;
 }
 
-test("an owner starts a report from a dashboard, previews it and saves it", async ({ page }) => {
+test("an owner starts a report from a dashboard, previews it and saves it", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const title = unique("Verkauf Überblick");
   const dashboardId = await salesDashboard(title);
   const recipient = await owner.createMember(unique("Rita Recipient"), "viewer");

@@ -23,9 +23,9 @@ import {
   type VariableModel,
   type VariableValues,
 } from "./model";
+import { queryLimits } from "./queryLimits";
 import { panelQueries } from "./queryQueue";
 import { outcomesOf, type TargetOutcome } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 
 export const PANEL_DATA_KEY = "panel-data";
 
@@ -80,7 +80,8 @@ export function usePanelResults(input: PanelQueryInput) {
   const manual = input.manual;
   const lastManual = useRef(manual);
   const kindOf = useSourceKinds(orgId);
-  const { variables, targets, refIds, queryKey, graphSteps } = panelRequest(input, kindOf);
+  const { variables, targets, refIds, queryKey, graphSteps, maxDataPoints, intervalMs } =
+    panelRequest(input, kindOf);
   const waiting = holdOf(panelUses(panel), input.held) !== null;
   return useQuery<TargetOutcome[]>({
     queryKey,
@@ -108,8 +109,8 @@ export function usePanelResults(input: PanelQueryInput) {
         const common = {
           timeRange: range,
           variables,
-          maxDataPoints: MAX_DATA_POINTS,
-          intervalMs: intervalFor(range),
+          maxDataPoints,
+          intervalMs,
           ...(refresh ? { refresh: true } : {}),
         };
         const response =
@@ -180,6 +181,8 @@ export function panelRequest(
   const refIds = targets.map((t) => t.refId);
   // A draft sends its graph steps with the queries: another step is another request.
   const graphSteps = graphStepsByQuery(asSteps(panel.transformations));
+  // The panel's query options decide the points and the interval; another value is another run.
+  const { maxDataPoints, intervalMs } = queryLimits(panel, range);
   const queryKey = [
     PANEL_DATA_KEY,
     orgId,
@@ -193,8 +196,11 @@ export function panelRequest(
     source === "draft" ? targets : refIds,
     source === "draft" ? [...graphSteps] : null,
     run,
+    maxDataPoints,
+    intervalMs,
+    panel.cacheTimeout ?? null,
   ] as const;
-  return { variables, targets, refIds, queryKey, graphSteps };
+  return { variables, targets, refIds, queryKey, graphSteps, maxDataPoints, intervalMs };
 }
 
 /** The field distribution of a panel target `refId` over its whole result. */
@@ -246,7 +252,12 @@ export function panelDistribution(
   return { identity, manual: input.manual, run: runPanelDistribution };
 
   function runPanelDistribution(refId: string, ask: DistributionAsk, signal: AbortSignal) {
-    const common = { timeRange: range, intervalMs: intervalFor(range), variables, ...ask };
+    const common = {
+      timeRange: range,
+      intervalMs: queryLimits(panel, range).intervalMs,
+      variables,
+      ...ask,
+    };
     if (source === "stored" && route.kind === "analysis") {
       // An analysis has no variables; sending any is refused.
       const body = { refId, ...common, variables: {} };
