@@ -17,7 +17,7 @@ import { chartData } from "./align";
 import type { AxisPlan } from "./axes";
 import { ChartShell, chartAxes, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, PX_PER_VALUE_TICK, TIME_LABEL_OVERHANG } from "./layout";
-import { linePath, type Scale, timeTicks } from "./series";
+import { linePath, niceTicks, type Scale, timeTicks } from "./series";
 import { FREE_CLASS, type SeriesStyle } from "./styles";
 import { shownThresholds, thresholdBands, thresholdLines } from "./thresholdBands";
 import "../panels.css";
