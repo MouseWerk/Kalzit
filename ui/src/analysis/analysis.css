@@ -252,23 +252,18 @@
     gap: var(--space-4);
   }
   /*
-   * The step catalog (Graph board, frame 5B): a popover with a search, then each kind of step
-   * with what it does and its shapes. The entry under the pointer or focus is a neutral tint.
+   * The step catalog (Parity board, frame 14): a dialog with the search, the shapes, the groups
+   * of steps in two columns and the preview of the step under the pointer on the right. The
+   * active step is a neutral tint, never an accent border.
    */
-  .step-catalog__popover.menu {
-    position: fixed;
-    inset: var(--menu-top, 0) auto auto var(--menu-left, 0);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    width: min(var(--size-dialog-sm), 100vw - 2 * var(--space-4));
-    margin-block-start: var(--space-1);
-    overflow-y: auto;
+  .step-catalog__dialog {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
   }
 
   .step-catalog__search {
     display: flex;
-    flex: none;
     align-items: center;
     gap: var(--space-2);
     min-height: var(--control-height);
@@ -296,32 +291,202 @@
     outline-offset: var(--space-16);
   }
 
-  .step-catalog__list {
-    display: grid;
+  .step-catalog__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
 
-  .step-catalog__item.menu__item {
-    align-items: flex-start;
-    text-align: start;
+  .step-catalog__shapes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
   }
 
-  .step-catalog__text {
+  .step-catalog__shapes [aria-checked="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .step-catalog__before {
+    margin-inline-start: auto;
+  }
+
+  .step-catalog__columns {
     display: grid;
-    flex: 1;
-    gap: var(--space-half);
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--size-preview));
+    gap: var(--space-4);
+    align-items: start;
+  }
+
+  .step-catalog__left {
+    display: grid;
+    gap: var(--space-3);
     min-width: 0;
+    max-height: calc(100dvh - 4 * var(--space-16));
+    overflow-y: auto;
+  }
+
+  .step-catalog__list,
+  .step-catalog__group {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .step-catalog__list {
+    gap: var(--space-3);
+  }
+
+  .step-catalog__heading {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+    text-transform: uppercase;
+  }
+
+  .step-catalog__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--size-dialog-sm) / 2), 1fr));
+    gap: var(--space-1);
+  }
+
+  .step-catalog__option {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-half) var(--space-2);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+
+  .step-catalog__option[aria-selected="true"] {
+    background: var(--bg-hover);
   }
 
   .step-catalog__name {
     font-weight: var(--font-weight-medium);
   }
 
-  .step-catalog__item[aria-disabled="true"] .step-catalog__name {
+  .step-catalog__option[data-dim="true"] .step-catalog__name,
+  .step-catalog__option[aria-disabled="true"] .step-catalog__name {
     color: var(--text-muted);
   }
 
-  .step-catalog__about {
+  .step-catalog__option[aria-disabled="true"] {
+    cursor: default;
+  }
+
+  .step-catalog__new {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+
+  .step-catalog__about,
+  .step-catalog__reason {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .step-catalog__reason {
+    font-style: italic;
+  }
+
+  .step-catalog__recent {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .step-catalog__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .step-catalog__chip {
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+  }
+
+  .step-catalog__empty {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-2);
+  }
+
+  .step-catalog__preview {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .step-catalog__preview-title {
+    font-size: var(--font-size-md);
+  }
+
+  .step-catalog__help {
+    color: var(--text-muted);
+  }
+
+  .step-catalog__flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .step-catalog__table {
+    font-size: var(--font-size-xs);
+  }
+
+  .step-catalog__table caption {
+    padding-block-end: var(--space-1);
+  }
+
+  .step-catalog__keys {
+    margin-inline-end: auto;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Narrow: the preview goes under the list. */
+  @media (max-width: 48rem) {
+    .step-catalog__columns {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .step-catalog__before {
+      margin-inline-start: 0;
+    }
+  }
+
+  /* Arrange and rename fields: one row per field, show, new name, move. */
+  .step__organize-list {
+    display: grid;
+    gap: var(--space-1);
+    padding: 0;
+    list-style: none;
+  }
+
+  .step__organize-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .step__organize-missing {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .step__organize-moves {
+    display: flex;
   }
 }

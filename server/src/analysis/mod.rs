@@ -12,6 +12,7 @@
 //! aggregation); a later version will turn a leading group, reduce or pivot step into the query
 //! for sources that can do it, and run here only what the source cannot.
 
+pub mod calculations;
 pub mod export;
 pub mod expr;
 pub mod graph;
@@ -19,9 +20,10 @@ pub mod projection;
 pub mod pushdown;
 pub mod stats;
 pub mod steps;
+pub mod table;
 pub mod trace;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -31,8 +33,20 @@ pub const MAX_STEPS: usize = 50;
 /// Field lists of one step (statistics over fields, group-by fields, aggregations).
 pub const MAX_STEP_FIELDS: usize = 50;
 pub const MAX_GROUP_BY: usize = 10;
+/// Fields one sort step orders by.
+pub const MAX_SORT_KEYS: usize = 5;
 pub const MAX_PERCENTILES: usize = 10;
 pub const MAX_WINDOW: u32 = 10_000;
+/// Field names one step lists to order, hide, rename or keep (as many as a pivot may make).
+pub const MAX_FIELD_LIST: usize = 500;
+/// Conditions of one row filter, conversions and calculations of one step.
+pub const MAX_CONDITIONS: usize = 50;
+/// Queries one step stacks or turns into rows.
+pub const MAX_STEP_FRAMES: usize = 20;
+/// Characters of a regular expression or a time format.
+pub const MAX_PATTERN_CHARS: usize = 500;
+/// Rows a limit keeps at most.
+pub const MAX_LIMIT: u32 = 1_000_000;
 const MAX_NAME_CHARS: usize = 200;
 const MAX_REF_CHARS: usize = 64;
 
@@ -112,6 +126,74 @@ pub enum StepKind {
         column: String,
         value: String,
         op: Agg,
+    },
+    /// The fields of `frame` in the order `order` names them (the others after them, in their
+    /// own order), without those in `hide`, renamed by `rename` (old name to new name). Names
+    /// that no field has are passed over, so a field the query drops later does not stop the run.
+    Organize {
+        frame: String,
+        #[serde(default)]
+        order: Vec<String>,
+        #[serde(default)]
+        hide: Vec<String>,
+        #[serde(default)]
+        rename: BTreeMap<String, String>,
+    },
+    /// Keeps (or drops) the fields whose name is among `names` or matches the regular expression
+    /// `pattern` (anywhere in the name).
+    FilterFields {
+        frame: String,
+        mode: KeepDrop,
+        #[serde(default)]
+        names: Vec<String>,
+        #[serde(default)]
+        pattern: Option<String>,
+    },
+    /// Keeps (or drops) the rows that pass all (or any) of `conditions`.
+    FilterRows {
+        frame: String,
+        mode: KeepDrop,
+        #[serde(rename = "match")]
+        match_: MatchMode,
+        conditions: Vec<RowCondition>,
+    },
+    /// The first (or last) `count` rows.
+    Limit {
+        frame: String,
+        count: u32,
+        #[serde(default)]
+        from: LimitFrom,
+    },
+    /// Fields turned into another type in their place, under their name.
+    Convert {
+        frame: String,
+        conversions: Vec<Conversion>,
+    },
+    /// Every series (number field) of `frame`, or the `fields` named, reduced to one value per
+    /// calculation: one row per series (`rows`: `field` and one field per calculation) or one
+    /// row with a field per series and calculation (`columns`).
+    ReduceSeries {
+        frame: String,
+        mode: ReduceMode,
+        calculations: Vec<Agg>,
+        #[serde(default)]
+        fields: Vec<String>,
+    },
+    /// The rows of all `frames` in one table, one under the other, at the place of the first;
+    /// the others are used up. Fields of the same name become one field.
+    Stack {
+        frames: Vec<String>,
+    },
+    /// Every number field of `frames` next to the first time field of its frame, as one long
+    /// table at the place of the first: `time`, `metric`, `value`, one row per time and series.
+    SeriesToRows {
+        frames: Vec<String>,
+    },
+    /// The rows ordered by one or more fields, the first key first; a stable sort, so rows
+    /// with equal keys keep their order. Empty cells come last in either direction.
+    Sort {
+        frame: String,
+        by: Vec<SortKey>,
     },
     /// The projection (docs/PLAN.md, section 1): the `documents` result of query `frame` as a
     /// frame, one column per field path. The steps after it work on that frame; a result that
@@ -236,6 +318,86 @@ pub enum StepKind {
     CriticalPath {
         frame: String,
     },
+}
+
+/// Whether a filter keeps what matches or drops it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeepDrop {
+    Keep,
+    Drop,
+}
+
+/// Whether a row has to pass all conditions or one of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MatchMode {
+    All,
+    Any,
+}
+
+/// A condition on the cells of one field (`filterRows`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RowCondition {
+    pub field: String,
+    pub op: RowOp,
+    #[serde(default)]
+    pub value: Option<Value>,
+    /// The upper end of `between`.
+    #[serde(default)]
+    pub to: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RowOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Between,
+    Contains,
+    Matches,
+    Empty,
+    NotEmpty,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LimitFrom {
+    #[default]
+    First,
+    Last,
+}
+
+/// One field to convert: to a number, text, a time (text read as ISO 8601, or by `format`) or
+/// true and false.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Conversion {
+    pub field: String,
+    pub to: ConvertTo,
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConvertTo {
+    Number,
+    String,
+    Time,
+    Bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReduceMode {
+    Rows,
+    Columns,
 }
 
 /// A condition on a node property: `exists`, equal or not to `value`, a number compared with
@@ -364,8 +526,11 @@ pub enum CompareOutput {
     Percent,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// A calculation that reduces many cells to one (`calculations`): `first` and `last` are the
+/// first and last value that is not empty, `firstRow` and `lastRow` the cell of the first and the
+/// last row; `stddev` and `variance` are the sample measures (n - 1); `pN` is the Nth percentile
+/// (0 to 100, as Excel's PERCENTILE.INC). `stdDev` is read as `stddev`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agg {
     Count,
     Sum,
@@ -374,23 +539,65 @@ pub enum Agg {
     Min,
     Max,
     Stddev,
+    Variance,
     First,
     Last,
+    FirstRow,
+    LastRow,
+    Percentile(u8),
 }
 
 impl Agg {
-    pub fn as_str(self) -> &'static str {
+    /// The calculation a stored key names.
+    pub fn parse(key: &str) -> Option<Agg> {
+        Some(match key {
+            "count" => Agg::Count,
+            "sum" => Agg::Sum,
+            "mean" => Agg::Mean,
+            "median" => Agg::Median,
+            "min" => Agg::Min,
+            "max" => Agg::Max,
+            "stddev" | "stdDev" => Agg::Stddev,
+            "variance" => Agg::Variance,
+            "first" => Agg::First,
+            "last" => Agg::Last,
+            "firstRow" => Agg::FirstRow,
+            "lastRow" => Agg::LastRow,
+            _ => {
+                let n = key.strip_prefix('p')?;
+                let plain = !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit());
+                if !plain || (n.len() > 1 && n.starts_with('0')) {
+                    return None;
+                }
+                Agg::Percentile(n.parse::<u8>().ok().filter(|p| *p <= 100)?)
+            }
+        })
+    }
+
+    /// The calculation's key, as stored and in the names of the fields it makes.
+    pub fn name(self) -> String {
         match self {
-            Agg::Count => "count",
-            Agg::Sum => "sum",
-            Agg::Mean => "mean",
-            Agg::Median => "median",
-            Agg::Min => "min",
-            Agg::Max => "max",
-            Agg::Stddev => "stddev",
-            Agg::First => "first",
-            Agg::Last => "last",
+            Agg::Count => "count".into(),
+            Agg::Sum => "sum".into(),
+            Agg::Mean => "mean".into(),
+            Agg::Median => "median".into(),
+            Agg::Min => "min".into(),
+            Agg::Max => "max".into(),
+            Agg::Stddev => "stddev".into(),
+            Agg::Variance => "variance".into(),
+            Agg::First => "first".into(),
+            Agg::Last => "last".into(),
+            Agg::FirstRow => "firstRow".into(),
+            Agg::LastRow => "lastRow".into(),
+            Agg::Percentile(p) => format!("p{p}"),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Agg {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(d)?;
+        Agg::parse(&key).ok_or_else(|| serde::de::Error::custom(format!("unknown variant `{key}`")))
     }
 }
 
@@ -404,9 +611,18 @@ pub struct Aggregation {
     pub name: Option<String>,
 }
 
+/// One key of a sort step: a field, ascending unless `desc`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SortKey {
+    pub field: String,
+    #[serde(default)]
+    pub desc: bool,
+}
+
 impl Aggregation {
     pub fn output_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| format!("{}({})", self.op.as_str(), self.field))
+        self.name.clone().unwrap_or_else(|| format!("{}({})", self.op.name(), self.field))
     }
 }
 
@@ -422,7 +638,17 @@ impl StepKind {
             | StepKind::Correlate { frame, .. }
             | StepKind::Compare { frame, .. }
             | StepKind::Group { frame, .. }
-            | StepKind::Pivot { frame, .. } => vec![frame],
+            | StepKind::Pivot { frame, .. }
+            | StepKind::Sort { frame, .. }
+            | StepKind::Organize { frame, .. }
+            | StepKind::FilterFields { frame, .. }
+            | StepKind::FilterRows { frame, .. }
+            | StepKind::Limit { frame, .. }
+            | StepKind::Convert { frame, .. }
+            | StepKind::ReduceSeries { frame, .. } => vec![frame],
+            StepKind::Stack { frames } | StepKind::SeriesToRows { frames } => {
+                frames.iter().map(String::as_str).collect()
+            }
             StepKind::ToFrame { frame, .. }
             | StepKind::CountLabels { frame }
             | StepKind::CountEdgeTypes { frame }
@@ -516,6 +742,41 @@ fn check_property_filter(f: &PropertyFilter, at: &str) -> Result<(), String> {
     }
     if let Some(Value::String(t)) = &f.value {
         check_text(&format!("{at}.value"), t, MAX_NAME_CHARS)?;
+    }
+    Ok(())
+}
+
+/// The field and the values of a row condition: `empty` and `notEmpty` take none; `between` a
+/// value and `to`; `contains` and `matches` text (`matches` a regular expression); the others
+/// text, a number or true or false.
+fn check_row_condition(c: &RowCondition, at: &str) -> Result<(), String> {
+    check_text(&format!("{at}.field"), &c.field, MAX_NAME_CHARS)?;
+    let scalar = |v: &Option<Value>| matches!(v, Some(Value::String(_) | Value::Number(_) | Value::Bool(_)));
+    let text = |v: &Option<Value>| matches!(v, Some(Value::String(_)));
+    let ok = match c.op {
+        RowOp::Empty | RowOp::NotEmpty => c.value.is_none() && c.to.is_none(),
+        RowOp::Between => {
+            matches!(c.value, Some(Value::String(_) | Value::Number(_)))
+                && matches!(c.to, Some(Value::String(_) | Value::Number(_)))
+        }
+        RowOp::Contains | RowOp::Matches => text(&c.value) && c.to.is_none(),
+        RowOp::Eq | RowOp::Ne | RowOp::Gt | RowOp::Gte | RowOp::Lt | RowOp::Lte => scalar(&c.value) && c.to.is_none(),
+    };
+    if !ok {
+        return Err(format!(
+            "{at}: empty and notEmpty take no value, between a value and to, contains and matches text, \
+             the others text, a number or true or false"
+        ));
+    }
+    for (key, v) in [("value", &c.value), ("to", &c.to)] {
+        if let Some(Value::String(t)) = v
+            && t.chars().count() > MAX_PATTERN_CHARS
+        {
+            return Err(format!("{at}.{key} takes at most {MAX_PATTERN_CHARS} characters"));
+        }
+    }
+    if let (RowOp::Matches, Some(Value::String(p))) = (c.op, &c.value) {
+        table::field_pattern(p).map_err(|e| format!("{at}.value: {}", e.message))?;
     }
     Ok(())
 }
@@ -656,6 +917,86 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             field("row", row)?;
             field("column", column)?;
             field("value", value)?;
+        }
+        StepKind::Organize { order, hide, rename, .. } => {
+            check_list(&format!("{at}.order"), order, 0, MAX_FIELD_LIST)?;
+            check_list(&format!("{at}.hide"), hide, 0, MAX_FIELD_LIST)?;
+            if rename.len() > MAX_FIELD_LIST {
+                return Err(format!("{at}.rename takes at most {MAX_FIELD_LIST} entries"));
+            }
+            for (from, to) in rename {
+                check_text(&format!("{at}.rename"), from, MAX_NAME_CHARS)?;
+                check_text(&format!("{at}.rename.{from}"), to, MAX_NAME_CHARS)?;
+            }
+        }
+        StepKind::FilterFields { names, pattern, .. } => {
+            check_list(&format!("{at}.names"), names, 0, MAX_FIELD_LIST)?;
+            match pattern {
+                Some(p) => {
+                    check_text(&format!("{at}.pattern"), p, MAX_PATTERN_CHARS)?;
+                    table::field_pattern(p).map_err(|e| format!("{at}.pattern: {}", e.message))?;
+                }
+                None if names.is_empty() => return Err(format!("{at}: give names, a pattern or both")),
+                None => {}
+            }
+        }
+        StepKind::FilterRows { conditions, .. } => {
+            if conditions.is_empty() || conditions.len() > MAX_CONDITIONS {
+                return Err(format!("{at}.conditions takes 1 to {MAX_CONDITIONS} entries"));
+            }
+            for (i, c) in conditions.iter().enumerate() {
+                check_row_condition(c, &format!("{at}.conditions[{i}]"))?;
+            }
+        }
+        StepKind::Limit { count, .. } => {
+            if !(1..=MAX_LIMIT).contains(count) {
+                return Err(format!("{at}.count must be 1 to {MAX_LIMIT}"));
+            }
+        }
+        StepKind::Convert { conversions, .. } => {
+            if conversions.is_empty() || conversions.len() > MAX_CONDITIONS {
+                return Err(format!("{at}.conversions takes 1 to {MAX_CONDITIONS} entries"));
+            }
+            let mut seen = BTreeSet::new();
+            for (i, c) in conversions.iter().enumerate() {
+                field(&format!("conversions[{i}].field"), &c.field)?;
+                if !seen.insert(&c.field) {
+                    return Err(format!("{at}.conversions[{i}]: the field {} is converted twice", c.field));
+                }
+                match (&c.format, c.to) {
+                    (Some(f), ConvertTo::Time) => {
+                        check_text(&format!("{at}.conversions[{i}].format"), f, MAX_PATTERN_CHARS)?;
+                    }
+                    (Some(_), _) => return Err(format!("{at}.conversions[{i}].format belongs only to a time")),
+                    (None, _) => {}
+                }
+            }
+        }
+        StepKind::ReduceSeries { calculations, fields, .. } => {
+            if calculations.is_empty()
+                || calculations.len() > MAX_CONDITIONS
+                || calculations.iter().map(|a| a.name()).collect::<BTreeSet<_>>().len() != calculations.len()
+            {
+                return Err(format!("{at}.calculations needs at least one calculation, each once"));
+            }
+            check_list(&format!("{at}.fields"), fields, 0, MAX_FIELD_LIST)?;
+        }
+        StepKind::Stack { frames } | StepKind::SeriesToRows { frames } => {
+            let min = if matches!(kind, StepKind::Stack { .. }) { 2 } else { 1 };
+            if frames.len() < min || frames.len() > MAX_STEP_FRAMES {
+                return Err(format!("{at}.frames takes {min} to {MAX_STEP_FRAMES} queries"));
+            }
+            if frames.iter().collect::<BTreeSet<_>>().len() != frames.len() {
+                return Err(format!("{at}.frames names a query twice"));
+            }
+        }
+        StepKind::Sort { by, .. } => {
+            if by.is_empty() || by.len() > MAX_SORT_KEYS {
+                return Err(format!("{at}.by needs 1 to {MAX_SORT_KEYS} fields"));
+            }
+            for (i, key) in by.iter().enumerate() {
+                field(&format!("by[{i}].field"), &key.field)?;
+            }
         }
         StepKind::CountLabels { .. } | StepKind::CountEdgeTypes { .. } | StepKind::DegreeDistribution { .. } => {}
         StepKind::TopDegree { n, label, .. } => {

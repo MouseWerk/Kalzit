@@ -203,14 +203,14 @@ Abfrage in Explore öffnen** als Cypher-Abfrage; sie öffnet sich, ohne zu laufe
 ## Schritte
 
 Die Seitenleiste **Schritte und Aktionen** enthält Rechenschritte, die nacheinander auf die
-Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trend, gleitender Durchschnitt,
-Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot und die Projektion von
+Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trendlinie, gleitender Durchschnitt,
+Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot, Sortieren und die Projektion von
 Dokumenten. Die Abfragen bleiben, wie sie sind. Siehe
 [Berechnete Felder und Statistik](calculated-fields.md).
 
 In Explore ist jeder Schritt eine kompakte Karte: seine Nummer und sein Name und darunter, was er
 tut (die Felder, die er nutzt). Ein Klick öffnet ihn zum Bearbeiten. **Schritt hinzufügen** öffnet
-die Arten von Schritten als Menü; ein hinzugefügter Schritt öffnet sich sofort.
+den Schritt-Katalog mit Suche und Vorschau; ein hinzugefügter Schritt öffnet sich sofort.
 
 ### Graph-Schritte
 
