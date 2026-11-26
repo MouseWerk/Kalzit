@@ -224,6 +224,34 @@
     overscroll-behavior: contain;
   }
 
+  /*
+   * The list has five columns: beside the side column it only fits where the page has the room
+   * for both, whatever takes the rest of the window (the sidebar open or folded). With less room
+   * (a laptop or a narrow window) the side column goes above the list and scrolls away with the
+   * page, instead of names breaking letter by letter and the table reaching past the window.
+   */
+  .dashboards-layout {
+    container: dashboards-layout / inline-size;
+  }
+
+  @container dashboards-layout (max-width: 60rem) {
+    .browser.dashboards-browser {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dashboards-side {
+      position: static;
+      max-height: none;
+      overflow-y: visible;
+    }
+  }
+
+  /* Content wider than the list column (a long unbroken value) scrolls inside the list. */
+  .dashboard-table-frame {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
   .dashboards-side__group {
     display: grid;
     gap: var(--space-px);
@@ -1068,6 +1096,89 @@
     gap: var(--space-1);
     padding-inline-start: var(--space-5);
     font-size: var(--font-size-sm);
+  }
+
+  /* The save dialog's changes (ParityEditors board, frame 13): in words, or as JSON. */
+  .save-changes {
+    display: grid;
+    gap: var(--space-2);
+    margin-block-end: var(--space-3);
+  }
+
+  .save-changes__panel {
+    max-height: var(--size-list-max);
+    overflow: auto;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .save-changes__list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .save-changes__row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .save-changes__row:last-child {
+    border-bottom: 0;
+  }
+
+  .save-changes__text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .save-changes__status {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .json-diff {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .json-diff__path {
+    margin: 0 0 var(--space-1);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .json-diff__lines {
+    display: grid;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-sm);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .json-diff__line--added {
+    background: var(--tone-ok-bg);
+    color: var(--tone-ok-text);
+  }
+
+  .json-diff__line--removed {
+    background: var(--tone-critical-bg);
+    color: var(--tone-critical-text);
+  }
+
+  .json-diff__line--gap {
+    color: var(--text-muted);
   }
 
   .versions {

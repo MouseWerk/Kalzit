@@ -22,14 +22,7 @@ import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
 import { usePreferenceChange } from "../preferences/preferences";
 import { Keys } from "../shortcuts/Keys";
 import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
-import {
-  DARK_VARIANTS,
-  LIGHT_VARIANTS,
-  THEMES,
-  useDarkVariant,
-  useLightVariant,
-  useTheme,
-} from "../theme/theme";
+import { THEMES, useTheme } from "../theme/theme";
 import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
@@ -129,8 +122,6 @@ export function CommandPalette({
   const permissions = useOrgPermissions();
   const navigate = useNavigate();
   const theme = useTheme();
-  const lightVariant = useLightVariant();
-  const darkVariant = useDarkVariant();
   const narrow = useNarrow();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -280,28 +271,6 @@ export function CommandPalette({
       current: option === theme,
       score: 0,
       run: () => change.mutate({ theme: option }),
-    });
-  }
-  for (const option of LIGHT_VARIANTS) {
-    actions.push({
-      key: `action:theme-light:${option}`,
-      label: t("shell.palette.action.lightVariant", { variant: t(`theme.variant.${option}`) }),
-      icon: "sun",
-      group: "appearance",
-      current: option === lightVariant,
-      score: 0,
-      run: () => change.mutate({ themeLight: option }),
-    });
-  }
-  for (const option of DARK_VARIANTS) {
-    actions.push({
-      key: `action:theme-dark:${option}`,
-      label: t("shell.palette.action.darkVariant", { variant: t(`theme.variant.${option}`) }),
-      icon: "moon",
-      group: "appearance",
-      current: option === darkVariant,
-      score: 0,
-      run: () => change.mutate({ themeDark: option }),
     });
   }
   for (const option of LANGUAGES) {

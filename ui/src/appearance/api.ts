@@ -24,6 +24,8 @@ export interface Branding {
   accent: unknown;
   density: unknown;
   fontSize: unknown;
+  /** Whether the app shows the built-in handbook (`appearance.handbook`); on for older servers. */
+  handbook: boolean;
 }
 
 export interface SignInTexts {
@@ -88,6 +90,7 @@ export async function fetchBranding(): Promise<Branding> {
     accent: value.accent,
     density: value.density,
     fontSize: value.fontSize,
+    handbook: value.handbook !== false,
   };
 }
 

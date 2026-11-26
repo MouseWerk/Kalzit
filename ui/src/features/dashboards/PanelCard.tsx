@@ -72,6 +72,7 @@ import {
 } from "./model";
 import { PanelMenu, type PanelMenuItem } from "./PanelMenu";
 import { TIME_PANELS, timeNote } from "./panelTime";
+import { queryLimits } from "./queryLimits";
 import {
   documentsOf,
   errorsOf,
@@ -82,7 +83,6 @@ import {
   type TargetOutcome,
   tracesOf,
 } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -259,7 +259,8 @@ export function PanelCard({
   const kindOf = useSourceKinds(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
-  const note = timeNote(panel);
+  // Hidden by the query options; the inspector still names an own range or shift.
+  const note = panel.hideTimeNote === true ? {} : timeNote(panel);
   const noteText = [
     note.last === undefined ? null : t("dashboardTools.time.last", { range: note.last }),
     note.shift === undefined ? null : t("dashboardTools.time.shifted", { shift: note.shift }),
@@ -461,9 +462,16 @@ export function PanelCard({
       } else {
         next = start.grid;
       }
+      swallowClick();
       setDragging(null);
+      // A dragged panel is the selected one. Selected here, with the drop, not by the click the
+      // browser sends after the release: that click came while the drop's transition was still
+      // pending, so React drew the whole dashboard for it at once (one long task per drop,
+      // 52 to 68 ms at 4x CPU throttling).
+      const select = edit.selected ? undefined : edit.onSelect;
       if (key(next) === key(start.grid)) {
         card?.style.removeProperty("translate");
+        select?.();
         return;
       }
       // The card stands in its new cell in this frame (the drop's offset goes with it); the
@@ -471,7 +479,10 @@ export function PanelCard({
       // makes no long task and the panels it pushes move right after.
       placeAt(card, next);
       card?.style.removeProperty("translate");
-      startTransition(() => edit.onGrid(next, false));
+      startTransition(() => {
+        edit.onGrid(next, false);
+        select?.();
+      });
     };
     const cancel = () => finish(false);
     endPress.current = cancel;
@@ -814,7 +825,7 @@ export function PanelCard({
             title={title}
             range={range}
             variables={storedQueryVariables(query.variables, query.saved ?? [])}
-            intervalMs={intervalFor(range)}
+            intervalMs={queryLimits(panel, range).intervalMs}
             onClose={() => setSummarizing(false)}
           />
         ) : null}
@@ -846,6 +857,20 @@ async function saveImage(card: RefObject<HTMLElement | null>, title: string, fai
   } catch {
     showErrorToast(failed);
   }
+}
+
+/**
+ * Takes the click the browser sends right after a drag's release (on the card or the handle,
+ * where the press began): a drag is not a click. The click comes in the same task as the
+ * release, so the listener goes again at the next one if no click came.
+ */
+function swallowClick() {
+  const swallow = (click: MouseEvent) => {
+    click.stopPropagation();
+    click.preventDefault();
+  };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
 /** Puts the drag placeholder into a grid cell. */
@@ -893,8 +918,8 @@ function exportPanelData(
 ) {
   const common = {
     timeRange: query.range,
-    maxDataPoints: MAX_DATA_POINTS,
-    intervalMs: intervalFor(query.range),
+    maxDataPoints: queryLimits(panel, query.range).maxDataPoints,
+    intervalMs: queryLimits(panel, query.range).intervalMs,
     format: choice.format,
     language: choice.language,
     ...(choice.frame === undefined ? {} : { frame: choice.frame }),

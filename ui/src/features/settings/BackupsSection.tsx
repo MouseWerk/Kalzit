@@ -5,7 +5,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { STACK_ROLES } from "../../components/stackTable";
-import { GUIDE_URL } from "../../help/docs";
+import { HandbookLink } from "../../help/handbook";
 import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { formatBytes } from "../../lib/bytes";
 import { adminKeys } from "../admin/api";
@@ -119,14 +119,12 @@ function Backups({ view }: { view: BackupsView }) {
   return (
     <div className="s75-wrap">
       <SectionActions>
-        <a
+        <HandbookLink
           className="button button--secondary"
-          href={`${GUIDE_URL}backup.md`}
-          target="_blank"
-          rel="noreferrer"
+          target={{ page: "backup", section: "restore-from-a-kalzit-backup" }}
         >
           {t("serverAdmin.backup.guide")}
-        </a>
+        </HandbookLink>
         {target === null || editing ? null : (
           <button
             type="button"

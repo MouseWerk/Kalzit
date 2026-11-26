@@ -31,6 +31,10 @@ interface Panel {                                // in addition to version 1
   repeat?: { variable: string; direction: "horizontal" | "vertical"; maxPerRow?: number };  // 1 to 24
   timeFrom?: string;                             // relative range of its own: "now-24h", "now-7d/d"
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
+  maxDataPoints?: number;                        // query options: 1 to 10000 points per series
+  minInterval?: string;                          // 1 to 5 digits and s, m, h or d, at most a day: "30s"
+  cacheTimeout?: string;                         // as minInterval, at most a day: "5m"
+  hideTimeNote?: boolean;                        // the header leaves out the own range and shift; true or absent
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
   analysisId?: string;                           // shows that saved analysis (docs/api/analyses.md, "Linked panels"); targets must be empty
@@ -130,6 +134,24 @@ A `switch` sends one of its two values, both checked like a custom variable's op
 `datasource`, `adhoc` and `switch`, `datasourceKind`, `onValue` and `offValue` came after
 version 0.7.5 under `schemaVersion` 2 (optional, left out while unset); a server from before them
 refuses a model that sets one.
+
+**Query options** (`maxDataPoints`, `minInterval`, `cacheTimeout`, `hideTimeNote`) came after
+version 0.7.5; a server from before them refuses a dashboard that uses them, as above. The server
+applies the first three to the panel's stored queries wherever they run (the panel query route,
+live updates, exports, field distributions, reports, public links and snapshots), whatever the
+request asks:
+
+- `maxDataPoints` is the most points per series: a request asking for more gets this many, and
+  `$__interval` is never finer than the range spread over them. A request may ask for fewer
+  points or a coarser interval.
+- `minInterval` raises a finer `$__interval` to it.
+- `cacheTimeout` shortens the query cache's time for the panel's answers to it; it never
+  lengthens what the data source sets, and sources without the cache ignore it. An answer kept
+  longer (by another panel with the same query) is not served to this panel past its time.
+- `hideTimeNote` only hides the note on an own range or shift in the panel's header.
+
+`timeFrom` and `timeShift` are resolved where "now" is known: the browser sends the panel's
+range with each request (`panelRange`), reports work it out on the server.
 
 Rules:
 
@@ -269,24 +291,43 @@ Naming a dashboard the caller cannot read is `422 validation` field `items`. Aud
 ## Panel view state
 
 What a viewer keeps of their own exploration of a dashboard panel (a graph panel's pins and
-selection), for them alone. Only node ids are stored, never a node's properties or any other part
-of a result; it changes neither the panel nor its query. Reading and writing need read access to
-the dashboard and a panel of that id in its current version; anything else, a trashed dashboard
-included, is `404 not_found`. The row goes with the user, organization and dashboard, with a
-member who leaves the organization, and with a panel that a saved version no longer has.
+selection, where they dragged nodes to, and what they hid), for them alone. Only node and edge
+ids and positions are stored, never a node's properties or any other part of a result; it
+changes neither the panel nor its query. Reading and writing need read access to the dashboard
+and a panel of that id in its current version; anything else, a trashed dashboard included, is
+`404 not_found`. The row goes with the user, organization and dashboard, with a member who leaves
+the organization, and with a panel that a saved version no longer has. An entry for a node that
+is no longer in the result rests until it is again.
 
 ```ts
 interface PanelViewState {
-  pinned: string[];   // node ids, at most 200, each 1 to 512 characters, each once
-  selected: string[]; // the same bounds
+  pinned: string[];        // node ids, at most 200, each 1 to 512 characters, each once
+  selected: string[];      // the same bounds
+  positions?: Position[];  // where pinned nodes were dragged to; at most 200, one per node
+  hidden?: string[];       // node ids hidden from the view; the bounds of `pinned`
+  hiddenEdges?: string[];  // edge ids hidden from the view; the same bounds
+  released?: string[];     // nodes the panel pins (options.pinned) that this viewer released
+}
+interface Position {
+  id: string;              // a node id, as in `pinned`
+  x: number;               // in the drawing's own units, finite, within 1e9 of zero
+  y: number;
 }
 ```
+
+The four lists added in 0.8.1 are optional; an answer leaves out the ones that are empty, so a
+state kept before them reads as it did.
 
 | Route | |
 |---|---|
 | `GET /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | the caller's `PanelViewState`; empty lists when none is kept |
-| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; empty lists remove it; unknown fields and ids beyond the bounds are `422 validation` (field `pinned` or `selected`) |
+| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; all lists empty remove it; unknown fields, positions that are no numbers and lists beyond the bounds are `422 validation` (the field names the list: `pinned`, `selected`, `positions`, `hidden`, `hiddenEdges` or `released`) |
 | `DELETE /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | `204`, also when none was kept or the dashboard is no longer readable |
+
+A graph panel's own pinned nodes, saved with the dashboard for everyone from the panel editor,
+live in its options: `options.pinned` is a list of `Position` with the same bounds (at most 200,
+each node once), and `options.infoCard` names up to four properties per node label for the info
+card (at most 50 labels). The server refuses other shapes with `422 validation`.
 
 ## Library panels
 

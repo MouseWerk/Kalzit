@@ -265,8 +265,10 @@ describe("user menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]'));
-    // Four modes, three light and three dark variants, two languages, the account, two sign-outs.
-    expect(items).toHaveLength(15);
+    // Four modes, two languages, the account, two sign-outs; the variants are only in the settings.
+    expect(items).toHaveLength(9);
+    expect(within(menu).queryByRole("group", { name: "Light variant" })).toBeNull();
+    expect(within(menu).queryByRole("group", { name: "Dark variant" })).toBeNull();
     expect(document.activeElement).toBe(items[0]);
 
     await user.keyboard("{ArrowDown}");
@@ -341,14 +343,14 @@ describe("user menu", () => {
     );
   });
 
-  it("applies and remembers a dark variant apart from the mode", async () => {
+  it("applies and remembers a dark variant apart from the mode, in the account settings", async () => {
     const { user, menuButton, server } = await openShell();
     await user.click(menuButton);
-    const variants = within(screen.getByRole("group", { name: "Dark variant" }));
-    expect(variants.getByRole("menuitemradio", { name: "Dark" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
-    await user.click(variants.getByRole("menuitemradio", { name: "Night" }));
+    await user.click(screen.getByRole("menuitem", { name: "Your account" }));
+    const section = await screen.findByRole("region", { name: "Preferences" });
+    const variants = within(await within(section).findByRole("group", { name: /^Dark variant/ }));
+    expect(variants.getByRole("radio", { name: /^Dark/ })).toHaveProperty("checked", true);
+    await user.click(variants.getByRole("radio", { name: /^Night/ }));
 
     expect(document.documentElement.dataset.dark).toBe("night");
     expect(document.documentElement.dataset.theme).toBe("system");

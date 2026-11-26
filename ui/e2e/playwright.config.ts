@@ -1,8 +1,19 @@
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-const OUTPUT = join(import.meta.dirname, ".output");
 const CI = process.env.CI !== undefined && process.env.CI !== "";
+/**
+ * Report, traces and the server log. `KALZIT_E2E_OUTPUT` moves them, so the parallel shards of
+ * one run (tools/local-ci) do not write into each other's folders.
+ */
+const OUTPUT = process.env.KALZIT_E2E_OUTPUT || join(import.meta.dirname, ".output");
+/** Workers per run; `KALZIT_E2E_WORKERS` tunes them to the machine (tools/local-ci). */
+const WORKERS = Number(process.env.KALZIT_E2E_WORKERS ?? "") || (CI ? 2 : 4);
+/**
+ * A shard of a sharded run also writes a blob report (to PLAYWRIGHT_BLOB_OUTPUT_FILE), which
+ * `playwright merge-reports` joins into one report afterwards.
+ */
+const BLOB = process.env.KALZIT_E2E_BLOB === "1";
 
 /**
  * Browsers to run. Chromium runs every scenario; Firefox and WebKit run the checks that differ
@@ -47,7 +58,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: CI,
   retries: 0,
-  workers: CI ? 2 : 4,
+  workers: WORKERS,
   timeout: 60_000,
   expect: { timeout: 10_000 },
   // The exit guard comes last: it ends a runner that stays alive after the run
@@ -55,6 +66,7 @@ export default defineConfig({
   reporter: [
     ["list"],
     ["html", { outputFolder: join(OUTPUT, "report"), open: "never" }],
+    ...(BLOB ? [["blob"] as [string]] : []),
     ...(CI ? [["./support/exit-guard.ts"] as [string]] : []),
   ],
   use: {

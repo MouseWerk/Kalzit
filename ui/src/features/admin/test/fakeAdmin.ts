@@ -752,6 +752,22 @@ function handleOrg(
 ): Response {
   const [area, id, sub, subId] = rest;
 
+  if (area === "admin" && id === "summary" && method === "GET") {
+    // As the server: a number only where the caller may open its section.
+    const may = (permission: string) => state.callerPermissions.has(permission);
+    return json(200, {
+      ...(may("users:read") ? { members: state.members.length } : {}),
+      ...(may("teams:read") ? { teams: state.teams.length } : {}),
+      ...(may("roles:read") ? { roles: state.roles.length } : {}),
+      ...(may("serviceaccounts:write")
+        ? // The fake models no service accounts (they have their own fake).
+          { serviceAccounts: 0 }
+        : {}),
+      ...(server.state.user.isServerAdmin
+        ? { users: state.users.length, orgs: state.orgs.length }
+        : {}),
+    });
+  }
   if (area === "members") {
     return members(state, id, method, input, search);
   }

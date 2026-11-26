@@ -18,6 +18,18 @@ function prefersReducedMotion(): boolean {
     : false;
 }
 
+/**
+ * Whether a transition's promise rejected because the browser skipped the animation: another
+ * transition started (AbortError) or the page is hidden (InvalidStateError). The update still
+ * applies, so a skip is expected and nothing to report.
+ */
+function isSkip(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "InvalidStateError")
+  );
+}
+
 /** Runs `update` (which must apply the change synchronously) with the sidebar's slide. */
 export function withSidebarMotion(update: () => void): void {
   const root = document.documentElement;
@@ -28,15 +40,23 @@ export function withSidebarMotion(update: () => void): void {
   root.setAttribute(SIDEBAR_MOTION_ATTRIBUTE, "");
   const transition = document.startViewTransition(update);
   latest = transition;
-  // A skipped transition (the tab hidden, another one started) still applies the update. A
-  // quick second toggle skips the first slide; only the latest one clears the attribute, so the
-  // second keeps its names instead of falling back to a full-page cross-fade.
+  // `ready` rejects when the slide is skipped (a quick second toggle, the tab hidden), or with
+  // the update's own error, which `finished` carries as well and which is reported there.
+  transition.ready.catch(() => {});
+  // A skipped transition still applies the update and `finished` still fulfills. A quick second
+  // toggle skips the first slide; only the latest one clears the attribute, so the second keeps
+  // its names instead of falling back to a full-page cross-fade. An error of the update itself
+  // stays an unhandled rejection, so it is not hidden.
   transition.finished
-    .catch(() => {})
     .finally(() => {
       if (latest === transition) {
         latest = null;
         root.removeAttribute(SIDEBAR_MOTION_ATTRIBUTE);
+      }
+    })
+    .catch((error: unknown) => {
+      if (!isSkip(error)) {
+        throw error;
       }
     });
 }
