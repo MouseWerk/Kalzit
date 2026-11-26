@@ -3,6 +3,7 @@ import { isRecord } from "../../api/client";
 import { Select } from "../../components/Select";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import "./dashboards.css";
 
 /**
  * The helpers for Prometheus query variables (board ParityEditors, frame 9): four short forms in
