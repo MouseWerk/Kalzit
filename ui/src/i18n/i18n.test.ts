@@ -114,6 +114,8 @@ describe("catalogs", () => {
       "Format",
       "Text",
       "Neutral",
+      // A style rule target, used as is in German (docs/PLAN.md section 15, Graph081 board).
+      "Icon",
       "System",
       "Deutsch",
       "English",
@@ -243,6 +245,10 @@ describe("catalogs", () => {
       "Excel",
       "NDJSON",
       "GraphML",
+      "PNG",
+      "SVG",
+      "PDF",
+      "GraphML, JSON, CSV",
       // Alerting keeps its name in German (board Alerting.dc.html), as do its technical terms.
       "Alerting",
       "Label",
@@ -274,6 +280,8 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // Graph layouts (Graph081 board, frame 12): Radial is the German word, too.
+      "Radial",
       // The variable editor of the parity wave: "Regex" is the German word too (board ParityEditors).
       "Regex (optional)",
       // The legend's calculations and the axis' automatic choices keep their short names in

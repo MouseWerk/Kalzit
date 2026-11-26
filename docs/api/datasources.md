@@ -2242,7 +2242,7 @@ entries. Hits are not audited.
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
 file, in the result's own shape: a frame as CSV, Excel or JSON, documents as NDJSON or JSON, a
-graph as GraphML or JSON, a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
+graph as GraphML, JSON or two CSV lists (nodes, edges), a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
 checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
 browser-side export would need the data in the browser first and could not be refused.
 
@@ -2338,6 +2338,26 @@ Graphs (results no graph step turned into a frame):
   U+FFFD. GraphML has no paths: their nodes and edges are in the file, the JSON file keeps them.
 - `json`: the result envelope, `{"shape": "graph", "graph": {...}}`, with nodes, edges, paths,
   schema and notices.
+- `csvNodes` and `csvEdges` (`text/csv`): the graph's two lists as the table CSV file is written
+  (byte order mark, CRLF, `language` decides separator and decimal mark, formula defusing).
+  Nodes: the columns `id` and `labels` (`:Person:Customer`), then one column per property; edges:
+  `id`, `type`, `source`, `target`, then one column per property. Property columns are in name
+  order and are the same for every row; a row without the property leaves the cell empty. A
+  property called like one of the file's own columns gets the header `property:<name>`. Typed
+  values are flattened: numbers, booleans and times as in the table CSV, lists and objects as
+  compact JSON text. The header is always the first line; a result cut at a limit is reported by
+  the panel and by the JSON file's `truncated`, not inside the CSV.
+- `graph` (`GraphExportScope`, graph results only; ignored for other shapes): `nodes` limits the
+  file to the nodes with these ids, the edges between them and the paths that stay whole (absent:
+  the whole result), `positions` (`{id: [x, y]}`) is where the nodes are drawn, written into
+  GraphML as `kalzit:x` and `kalzit:y`, as drawn (nodes inside a cluster have none). At most 50,000
+  ids (`422 validation`, reason `export.scope_too_large`, param `max`, `field: graph`); more
+  positions than that are left out and the file is made without them. The audit
+  entry says only that a part was exported, never which nodes. Both routes take `graph`.
+
+All graph formats except pictures need `data:export`; the server refuses the request without it
+(`403 forbidden`) whatever the client shows. Pictures of a graph (PNG, SVG, PDF) are made in the
+browser from what the panel shows and have no route.
 
 A format never converts one shape into another: `csv` or `xlsx` for documents or a graph, or
 `ndjson`/`graphml` for a frame, answers `422 validation` with reason `export.format_unsupported`
@@ -2808,6 +2828,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.no_queries` | | the panel has no query |
 | `export.frame_missing` | `frame` | no result with this reference id after the steps (`field: frame`) |
 | `export.format_unsupported` | `shape`, `format` | the format does not write results of this shape (`field: format`); a step makes a table |
+| `export.scope_too_large` | `max` | a graph's `graph` scope names more than `max` nodes (`field: graph`) |
 | `export.too_many_rows` | `max` | Excel takes at most `max` rows |
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.too_many_events` | `max` | an audit log export would hold more than `max` events (docs/api/settings-dashboards.md) |

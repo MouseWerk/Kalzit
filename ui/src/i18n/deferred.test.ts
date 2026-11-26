@@ -167,6 +167,24 @@ describe("keys of a deferred area", () => {
       "features/plugins/apps/PluginAppCard.tsx",
       "features/plugins/apps/parts.tsx",
     ],
+    // The graph panels and the rule code of tables load behind the gate (network, hierarchy and
+    // table panels).
+    graphStyle: [
+      "panels/graph/GraphPanels.tsx",
+      "panels/graph/GraphPanel.tsx",
+      // The path panel's options take the variable options of the graph editor.
+      "panels/path/PathPanel.tsx",
+      "panels/graph/GraphEditor.tsx",
+      "panels/graph/GraphToolbar.tsx",
+      "panels/graph/style/describe.ts",
+      "panels/graph/style/IconPicker.tsx",
+      "panels/graph/style/StyleEditor.tsx",
+      "panels/graph/style/StyleLegend.tsx",
+      "panels/graph/style/StyleSection.tsx",
+      "panels/graph/style/StyleSheet.tsx",
+      "panels/graph/style/tableStyle.tsx",
+      "panels/graph/style/usePanelStyle.tsx",
+    ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
     map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
   };
@@ -182,6 +200,8 @@ describe("keys of a deferred area", () => {
     traces: 4,
     serverAdmin: 5,
     apps: 5,
+    // The graph panels, their editor and toolbar, and the table panel's rule code.
+    graphStyle: 8,
     // The handbook is one page behind one gate.
     handbook: 1,
     // The map's panel and its editor.

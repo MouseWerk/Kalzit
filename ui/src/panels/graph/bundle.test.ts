@@ -16,6 +16,8 @@ const rel = (path: string) => relative(SRC, path).replaceAll("\\", "/");
 const ALLOWED = new Set([
   "panels/graph/options.ts",
   "panels/graph/adapter.ts",
+  // The stored form of the style rules, which the options of graph and table panels parse.
+  "panels/graph/style/schema.ts",
   "panels/network/index.tsx",
   "panels/hierarchy/index.tsx",
   "panels/path/index.tsx",

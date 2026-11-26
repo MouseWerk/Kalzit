@@ -336,6 +336,39 @@ The options are grouped as in the panel editor:
 - **Data links**: links from a node or edge property, see
   [Data links](#data-links-from-fields-nodes-and-edges).
 
+### Style rules
+
+**Style** (in the panel editor, and as a button in the panel head) is a list of rules on top of
+the basis above (color by label, size by degree, shape per label), which still holds wherever no
+rule sets a target. Each rule reads as a sentence: when, for which label or edge type, then what.
+
+- **When**: **Always**; a **Condition** on a property (numbers: equals, less, greater, in a range,
+  exists; text: equals, contains, starts with, exists, without case unless **Match case** is on;
+  dates: on, before, after, between, in the last N days; booleans: is true, is false); or **Per
+  unique value** of a property, with an honest count ("12 of 48 values"): the eight palette colors,
+  then the same colors with another shape up to twelve values, the rest as "Other" in a neutral
+  color. A value keeps its color when the result changes.
+- **Then** for nodes: color, size, shape (circle, square, diamond, triangle, hexagon), icon, frame
+  (solid or dashed, always neutral), label (text with `{property}`) and badge (at most six
+  characters). For edges: color, width, line style (solid, dashed, dotted), label and arrow.
+- **Colors** come from the data palette (eight), two neutral tones and good, warning, critical;
+  never the accent color. With a status color the editor asks for a second cue (badge, shape or
+  icon).
+- **Order**: rules apply from top to bottom; when two set the same target, the lower one wins.
+  Alt+Up and Alt+Down move a rule. A rule can be switched off, rests (and says why) while its
+  property is not in the result, and names the rules below that override it.
+- At most 50 rules per panel. **Take over rules from another panel** copies the rules of another
+  panel of the dashboard; nothing is linked.
+
+The legend under the drawing names each rule in words with its matches; a click selects them. The
+**Style** button in the panel head opens the same list at the side: while viewing a dashboard a
+change there applies to your view only, it is saved in edit mode. Tables made from a graph (node
+or edge tables) take the same rules: the color as a dot before the value that decides it, icon and
+badge at the label, a label rule replaces the text; there a rule wins over the column's color
+scheme, thresholds and value mappings, and the panel says so. Icons come from a subset of about 360
+[Lucide](https://lucide.dev) icons (ISC), listed in the third-party notices. With forced colors,
+rule colors drop out; shape, frame, icon, badge and label stay.
+
 Selecting a node opens its details beside the drawing (over it in narrow panels): labels, typed
 properties, edges and component, and its neighbours grouped by edge type and direction, with **Load
 neighbours** and **Set $variable**. The selection is shown quietly: the node's name in bold on a
@@ -344,7 +377,7 @@ selection; **Show only the selection** (S) hides the rest, and a multi-value var
 values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps a node when you take
 back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
 server; they change neither the panel nor its query. The legend under the drawing hides and shows
-labels, and **Layout** switches between forces and layers for this view. The network spreads its
+labels, and the **Layout** button opens a menu to arrange this view (see below). The network spreads its
 nodes over the panel, as far as the panel has room, so that nodes do not lie on each other and the
 names that fit show beside their node; a name that would cover a node, another name or the panel's
 edge shows once zooming in gives it room, and a short panel draws its nodes smaller. Labels shown
@@ -378,23 +411,39 @@ with a node's next neighbours. **Open as a query in Explore** turns what is show
 Cypher query in Explore's editor. Loading neighbours needs query access to the data source; the
 explorer is not available for TigerGraph sources.
 
+The **Layout** menu of a network offers forces, hierarchy and five more layouts, each with a short
+sentence on what it does or why it cannot apply to this result: **Radial** (rings around the
+selected nodes, or around the best connected node when nothing is selected), **Circular**, **Grid**,
+**Coordinates** (two number properties or a `point` property) and **Timeline** (nodes by a time
+property, one lane per label or one for all). Circular and grid order the nodes by label, name or
+number of edges. All layouts run in a web worker, show progress with **Cancel**, and are
+deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently:
+forces start from another position, and radial arranges around the nodes selected now; the other
+layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and
+nodes a layout has no place for (no value, no time) stand in a strip with their number and the
+reason. The guide lines are a view aid: they are not part of an exported image. Times are read as
+Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time
+but no zone as time in your browser's zone. A result too large for the hierarchy offers
+**Close groups**. Pinned nodes stay in place, and changing the layout releases them. In the panel
+editor the choice is stored with the panel.
+
 ![Explorer mode: a customer's orders loaded as a step in the Steps line](../screenshots/graph-explorer-dark.png)
 
-A **Hierarchy** lays out at most 2,000 nodes; a larger result offers **Show as a network**. Edges
-that close a cycle are noted. By default it uses Kalzit's own layered layout. Under **Layout** you
-can pick **ELK layered** (the Eclipse Layout Kernel) instead, with its **Direction** (top to
-bottom, left to right, bottom to top, right to left), **Node spacing** and **Layer spacing** in px
-and the **Edge routing** (orthogonal or polyline; edges are still drawn straight, the routing sets
-how much room ELK keeps for them). ELK loads only when a panel uses it, so the first drawing takes
-a moment longer and says "Loading ELK and arranging the graph"; the same result always gets the
-same layout. If ELK cannot run, the panel shows Kalzit's layout and says so. ELK runs in a web
-worker; a browser without workers arranges at most 300 nodes with ELK and shows Kalzit's layout
-for larger graphs. **Paths** shows the first path open and the others folded with their
-chain of nodes; each edge shows its type, direction and properties, each node its labels and first
-two properties; at most 50 paths, with a note when there are more, and **Show as table**.
-Browsers without WebGL 2 show every graph as a table; **Show as table** is also available on
-demand. Keyboard: Tab into the drawing, arrow keys move to the nearest node, Enter loads
-neighbours or opens a group, Escape clears the selection.
+A **Hierarchy** lays out at most 10,000 drawn nodes (closed groups count as one node); a larger
+result offers **Show as a network**. Edges that close a cycle are noted. By default it uses
+Kalzit's own layered layout. Under **Layout** you can pick **ELK layered** (the Eclipse Layout
+Kernel) instead, with its **Direction** (top to bottom, left to right, bottom to top, right to
+left), **Node spacing** and **Layer spacing** in px and the **Edge routing** (orthogonal or
+polyline; edges are still drawn straight, the routing sets how much room ELK keeps for them). ELK
+loads only when a panel uses it, so the first drawing takes a moment longer and says "Loading ELK
+and arranging the graph"; the same result always gets the same layout. If ELK cannot run, the panel
+shows Kalzit's layout and says so. ELK runs in a web worker; a browser without workers arranges at
+most 300 nodes with ELK and shows Kalzit's layout for larger graphs. **Paths** shows the first path
+open and the others folded with their chain of nodes; each edge shows its type, direction and
+properties, each node its labels and first two properties; at most 50 paths, with a note when there
+are more, and **Show as table**. Browsers without WebGL 2 show every graph as a table; **Show as
+table** is also available on demand. Keyboard: Tab into the drawing, arrow keys move to the nearest
+node, Enter loads neighbours or opens a group, Escape clears the selection.
 
 | | |
 |---|---|

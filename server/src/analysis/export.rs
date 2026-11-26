@@ -1,7 +1,9 @@
 //! Export files from a result after its steps, in the result's own shape (docs/api/datasources.md,
-//! "Export"): a frame as CSV, JSON or Excel, documents as JSON or NDJSON, a graph as GraphML or
-//! JSON. A format never turns one shape into another; that is a step (a projection, a graph step
-//! that makes a table) the export runs before it, as the browser does.
+//! "Export"): a frame as CSV, JSON or Excel, documents as JSON or NDJSON, a graph as GraphML,
+//! JSON or its two lists as CSV (nodes, edges). A format never turns one shape into another; that
+//! is a step (a projection, a graph step that makes a table) the export runs before it, as the
+//! browser does. The two graph CSV files are the graph's own lists, written as they are: one row
+//! per node or edge, one column per property.
 //!
 //! Excel files are written with `rust_xlsxwriter`: maintained by the author of the Python
 //! XlsxWriter and libxlsxwriter, pure Rust, no default features, and it writes real cells (numbers,
@@ -49,30 +51,32 @@ impl File {
 pub struct Kind {
     pub content_type: &'static str,
     pub extension: &'static str,
+    /// What the file name says after its base: which of a graph's two CSV files this is.
+    pub suffix: &'static str,
 }
 
 pub fn kind(format: ExportFormat) -> Kind {
-    match format {
-        ExportFormat::Csv => Kind { content_type: "text/csv; charset=utf-8", extension: "csv" },
-        ExportFormat::Json => Kind { content_type: "application/json", extension: "json" },
-        ExportFormat::Xlsx => Kind {
-            content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            extension: "xlsx",
-        },
-        ExportFormat::Ndjson => Kind { content_type: "application/x-ndjson", extension: "ndjson" },
-        ExportFormat::Graphml => Kind { content_type: "application/graphml+xml; charset=utf-8", extension: "graphml" },
-    }
+    let (content_type, extension, suffix) = match format {
+        ExportFormat::Csv => ("text/csv; charset=utf-8", "csv", ""),
+        ExportFormat::CsvNodes => ("text/csv; charset=utf-8", "csv", "-nodes"),
+        ExportFormat::CsvEdges => ("text/csv; charset=utf-8", "csv", "-edges"),
+        ExportFormat::Json => ("application/json", "json", ""),
+        ExportFormat::Xlsx => ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx", ""),
+        ExportFormat::Ndjson => ("application/x-ndjson", "ndjson", ""),
+        ExportFormat::Graphml => ("application/graphml+xml; charset=utf-8", "graphml", ""),
+    };
+    Kind { content_type, extension, suffix }
 }
 
 /// Whether `format` writes results of `shape`: frames as CSV, JSON or Excel, documents as JSON or
-/// NDJSON, graphs as GraphML or JSON, traces as OTLP JSON.
+/// NDJSON, graphs as GraphML, JSON or their node and edge lists as CSV, traces as OTLP JSON.
 pub fn fits(shape: Shape, format: ExportFormat) -> bool {
-    use ExportFormat::{Csv, Graphml, Json, Ndjson, Xlsx};
+    use ExportFormat::{Csv, CsvEdges, CsvNodes, Graphml, Json, Ndjson, Xlsx};
     matches!(
         (shape, format),
         (Shape::Frame, Csv | Json | Xlsx)
             | (Shape::Documents, Json | Ndjson)
-            | (Shape::Graph, Json | Graphml)
+            | (Shape::Graph, Json | Graphml | CsvNodes | CsvEdges)
             | (Shape::Trace, Json)
     )
 }
@@ -93,6 +97,8 @@ fn format_name(format: ExportFormat) -> &'static str {
         ExportFormat::Xlsx => "xlsx",
         ExportFormat::Ndjson => "ndjson",
         ExportFormat::Graphml => "graphml",
+        ExportFormat::CsvNodes => "csvNodes",
+        ExportFormat::CsvEdges => "csvEdges",
     }
 }
 
@@ -289,7 +295,7 @@ pub fn encode_within(
     };
     let spool_path = spool.as_ref().map_or(Path::new(""), |d| d.path());
     encode_to(frame, name, format, language, control, caps, spool_path, true, &mut out)?;
-    let Kind { content_type, extension } = kind(format);
+    let Kind { content_type, extension, .. } = kind(format);
     Ok(File { chunks, content_type, extension })
 }
 
@@ -332,10 +338,73 @@ pub fn encode_content_to(
         (Content::Frame(frame), ExportFormat::Xlsx) => xlsx_to(frame, name, control, caps, spool, deadline, out),
         (Content::Documents(set), ExportFormat::Json) => documents_json_to(set, control, max, deadline, out),
         (Content::Documents(set), ExportFormat::Ndjson) => ndjson_to(set, control, max, deadline, out),
-        (Content::Graph(graph), ExportFormat::Json) => graph_json_to(graph, control, max, deadline, out),
-        (Content::Graph(graph), ExportFormat::Graphml) => graphml_to(graph, control, max, deadline, out),
+        (Content::Graph(graph), _) if fits(Shape::Graph, format) => {
+            encode_graph_to(graph, None, format, language, control, caps, deadline, out)
+        }
         (Content::Trace(trace), ExportFormat::Json) => trace_otlp_to(trace, control, max, deadline, out),
         (content, format) => Err(format_unsupported(content.shape(), format)),
+    }
+}
+
+/// Where nodes are drawn, by node id, as `[x, y]` (`GraphExportScope::positions`).
+pub type Positions = BTreeMap<String, [f64; 2]>;
+
+/// At most this many node ids and positions come with a request (`GraphExportScope`).
+pub const SCOPE_MAX_NODES: usize = 50_000;
+
+/// A graph's file: JSON, GraphML (with `positions` as `x` and `y` where given) or one of its two
+/// CSV lists. Any other format is refused (`export.format_unsupported`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_graph_to(
+    graph: &GraphSet,
+    positions: Option<&Positions>,
+    format: ExportFormat,
+    language: ExportLanguage,
+    control: &Control,
+    caps: Caps,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let max = caps.file_bytes;
+    match format {
+        ExportFormat::Json => graph_json_to(graph, control, max, deadline, out),
+        ExportFormat::Graphml => graphml_to(graph, positions, control, max, deadline, out),
+        ExportFormat::CsvNodes => graph_csv_to(graph, GraphList::Nodes, language, control, max, deadline, out),
+        ExportFormat::CsvEdges => graph_csv_to(graph, GraphList::Edges, language, control, max, deadline, out),
+        other => Err(format_unsupported(Shape::Graph, other)),
+    }
+}
+
+/// The part of a graph a scope names: the nodes with these ids in the result's order, the edges
+/// whose two ends are both among them, and the paths that keep all their nodes and edges. Ids the
+/// result does not have name nothing. Schema, notices and the note that the result was cut stay.
+pub fn graph_part(graph: &GraphSet, ids: &[String]) -> GraphSet {
+    let keep: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let nodes: Vec<_> = graph.nodes.iter().filter(|n| keep.contains(n.id.as_str())).cloned().collect();
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|e| keep.contains(e.from.as_str()) && keep.contains(e.to.as_str()))
+        .cloned()
+        .collect();
+    let kept_edges: std::collections::HashSet<&str> = edges.iter().map(|e| e.id.as_str()).collect();
+    let paths = graph.paths.as_ref().map(|paths| {
+        paths
+            .iter()
+            .filter(|p| {
+                p.nodes.iter().all(|n| keep.contains(n.as_str()))
+                    && p.edges.iter().all(|e| kept_edges.contains(e.as_str()))
+            })
+            .cloned()
+            .collect()
+    });
+    GraphSet {
+        nodes,
+        edges,
+        paths,
+        schema: graph.schema.clone(),
+        truncated: graph.truncated.clone(),
+        notices: graph.notices.clone(),
     }
 }
 
@@ -355,7 +424,7 @@ pub fn encode_content(
         Ok(())
     };
     encode_content_to(content, "", format, ExportLanguage::En, control, caps, Path::new(""), true, &mut out)?;
-    let Kind { content_type, extension } = kind(format);
+    let Kind { content_type, extension, .. } = kind(format);
     Ok(File { chunks, content_type, extension })
 }
 
@@ -549,6 +618,125 @@ const GRAPHML_HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <key id="type" for="edge" attr.name="kalzit:type" attr.type="string"/>
 "#;
 
+const GRAPHML_PLACES: &str = r#"  <key id="x" for="node" attr.name="kalzit:x" attr.type="double"/>
+  <key id="y" for="node" attr.name="kalzit:y" attr.type="double"/>
+"#;
+
+/// What a file says when its result was cut at a limit, or `None` for a whole result.
+fn truncated_note(graph: &GraphSet) -> Option<String> {
+    let cut = graph.truncated.as_ref()?;
+    let reason = cut.reason.as_deref().map(|r| format!(" ({r})")).unwrap_or_default();
+    Some(format!(
+        "Truncated: the result was cut at its limit of {}{reason}. In this file: nodes {}, edges {}.",
+        cut.limit,
+        graph.nodes.len(),
+        graph.edges.len()
+    ))
+}
+
+/// Which of a graph's two lists a CSV file holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphList {
+    Nodes,
+    Edges,
+}
+
+/// A property's value as a CSV cell: nothing for `null`, `true` or `false`, whole numbers digit
+/// by digit, other numbers with the language's decimal mark, text as it is (defused, so a
+/// spreadsheet never runs it as a formula), lists and objects as compact JSON text.
+fn graph_cell(value: &Value, language: ExportLanguage) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
+        Value::Number(n) => {
+            let text = n.as_f64().map(number_text).unwrap_or_default();
+            if language == ExportLanguage::De { text.replace('.', ",") } else { text }
+        }
+        Value::String(s) => defuse(s),
+        // JSON text starts with `[` or `{`, never with a formula's sign.
+        other => other.to_string(),
+    }
+}
+
+/// The header of a property's column: its name, or `property:<name>` when the name is one of the
+/// file's own columns (`id`, `labels`, `type`, `source`, `target`), so no two columns share a name.
+fn property_column(name: &str, own: &[&str]) -> String {
+    if own.contains(&name) { format!("property:{name}") } else { name.to_string() }
+}
+
+/// A graph's nodes or edges as CSV, in the result's order: `id`, `labels` (as `:Person:Customer`)
+/// and one column per node property, or `id`, `type`, `source`, `target` and one column per edge
+/// property. Property columns are in name order and the same for every row; a row without the
+/// property leaves the cell empty. Separator, decimal mark, byte order mark and line ends are
+/// those of the table CSV (`csv_to`). The header is always the first line: a result cut at a limit
+/// is said so by the panel and by the JSON file's `truncated`, never by a line a spreadsheet would
+/// read as data.
+fn graph_csv_to(
+    graph: &GraphSet,
+    list: GraphList,
+    language: ExportLanguage,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let separator = if language == ExportLanguage::De { ';' } else { ',' };
+    let sep = separator.to_string();
+    let own: &[&str] = match list {
+        GraphList::Nodes => &["id", "labels"],
+        GraphList::Edges => &["id", "type", "source", "target"],
+    };
+    let keys = match list {
+        GraphList::Nodes => graph_keys(graph.nodes.iter().map(|n| &n.properties)),
+        GraphList::Edges => graph_keys(graph.edges.iter().map(|e| &e.properties)),
+    };
+    let mut sink = Sink::new(max, control, deadline, out);
+    let written = (|| -> std::io::Result<()> {
+        sink.write_all("\u{FEFF}".as_bytes())?;
+        let header: Vec<String> = own
+            .iter()
+            .map(|name| (*name).to_string())
+            .chain(keys.iter().map(|(k, _)| quote(&defuse(&property_column(k, own)), separator)))
+            .collect();
+        sink.write_all(header.join(&sep).as_bytes())?;
+        sink.write_all(b"\r\n")?;
+        let row = |fixed: &[&str], properties: &BTreeMap<String, Value>| -> String {
+            let mut line = String::new();
+            for (i, cell) in fixed.iter().enumerate() {
+                if i > 0 {
+                    line.push_str(&sep);
+                }
+                line.push_str(&quote(&defuse(cell), separator));
+            }
+            for (key, _) in &keys {
+                line.push_str(&sep);
+                if let Some(value) = properties.get(key) {
+                    line.push_str(&quote(&graph_cell(value, language), separator));
+                }
+            }
+            line.push_str("\r\n");
+            line
+        };
+        match list {
+            GraphList::Nodes => {
+                for node in &graph.nodes {
+                    let labels: String = node.labels.iter().map(|l| format!(":{l}")).collect();
+                    sink.write_all(row(&[node.id.as_str(), labels.as_str()], &node.properties).as_bytes())?;
+                }
+            }
+            GraphList::Edges => {
+                for edge in &graph.edges {
+                    let fixed = [edge.id.as_str(), edge.edge_type.as_str(), edge.from.as_str(), edge.to.as_str()];
+                    sink.write_all(row(&fixed, &edge.properties).as_bytes())?;
+                }
+            }
+        }
+        Ok(())
+    })();
+    sink.done(written)
+}
+
 /// GraphML (graphml.graphdrawing.org), as Gephi, yEd, Cytoscape and NetworkX read it: a directed
 /// graph whose nodes carry their labels (`:Person:Actor`, as Neo4j writes them) and properties,
 /// and whose edges carry their type and properties. The labels and the type are named
@@ -556,9 +744,12 @@ const GRAPHML_HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 /// or `type`. Each property key is declared once for nodes
 /// and once for edges, with the narrowest type that holds all its values (`boolean`, `long`,
 /// `double`, else `string`; lists and objects are JSON text). GraphML has no paths: their nodes
-/// and edges are in the file, the JSON file keeps the paths themselves.
+/// and edges are in the file, the JSON file keeps the paths themselves. With `positions`, nodes
+/// carry where they are drawn as `kalzit:x` and `kalzit:y` (double). A result that was cut at a
+/// limit says so in a comment before the graph.
 fn graphml_to(
     graph: &GraphSet,
+    positions: Option<&Positions>,
     control: &Control,
     max: usize,
     deadline: bool,
@@ -570,6 +761,13 @@ fn graphml_to(
     let mut sink = Sink::new(max, control, deadline, out);
     let written = (|| -> std::io::Result<()> {
         sink.write_all(GRAPHML_HEAD.as_bytes())?;
+        if positions.is_some_and(|p| graph.nodes.iter().any(|n| p.contains_key(&n.id))) {
+            sink.write_all(GRAPHML_PLACES.as_bytes())?;
+        }
+        if let Some(note) = truncated_note(graph) {
+            // A comment may not hold "--".
+            sink.write_all(format!("  <!-- {} -->\n", xml_text(&note, false).replace("--", "- -")).as_bytes())?;
+        }
         for (prefix, domain, keys) in [("n", "node", &node_keys), ("e", "edge", &edge_keys)] {
             for (i, (name, t)) in keys.iter().enumerate() {
                 let line = format!(
@@ -588,6 +786,13 @@ fn graphml_to(
             if !node.labels.is_empty() {
                 let labels: String = node.labels.iter().map(|l| format!(":{l}")).collect();
                 line.push_str(&format!("<data key=\"labels\">{}</data>", xml_text(&labels, false)));
+            }
+            if let Some([x, y]) = positions.and_then(|p| p.get(&node.id)).filter(|p| p.iter().all(|v| v.is_finite())) {
+                line.push_str(&format!(
+                    "<data key=\"x\">{}</data><data key=\"y\">{}</data>",
+                    number_text(*x),
+                    number_text(*y)
+                ));
             }
             for (key, value) in &node.properties {
                 if let (Some(i), false) = (index(&node_keys, key), value.is_null()) {
@@ -918,6 +1123,12 @@ fn fill_sheet(
     Ok(())
 }
 
+/// The name of a file of `kind`: `file_name` with the kind's suffix (`Customers-nodes.csv`).
+pub fn file_name_of(base: &str, kind: Kind) -> String {
+    let name = file_name(base, "");
+    format!("{}{}.{}", name.trim_end_matches('.'), kind.suffix, kind.extension)
+}
+
 /// A file name of letters, digits, `-` and `_` only, for `Content-Disposition`.
 pub fn file_name(base: &str, extension: &str) -> String {
     let mut clean = String::new();
@@ -1224,6 +1435,208 @@ mod tests {
         }
         assert_eq!(Content::Trace(&trace).counts(), [("spans", trace.spans.len())]);
         assert!(Content::Trace(&trace).estimate() > 0);
+    }
+
+    fn props(pairs: Vec<(&str, Value)>) -> BTreeMap<String, Value> {
+        pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    /// Two nodes and two edges with every kind of value a property can hold.
+    fn typed_graph() -> GraphSet {
+        use crate::shapes::{Edge, GraphPath, Node};
+        GraphSet {
+            nodes: vec![
+                Node {
+                    id: "1".into(),
+                    labels: vec!["Person".into(), "Kunde".into()],
+                    properties: props(vec![
+                        ("name", json!("Jörg, \"der\" Erste")),
+                        ("alter", json!(41)),
+                        ("aktiv", json!(true)),
+                        ("saldo", json!(-12.5)),
+                        ("id", json!("intern")),
+                    ]),
+                },
+                Node {
+                    id: "2".into(),
+                    labels: vec![],
+                    properties: props(vec![
+                        ("name", json!("=SUM(A1)")),
+                        ("tags", json!(["a", 1])),
+                        ("adresse", json!({ "ort": "Köln" })),
+                        ("saldo", json!(3)),
+                        ("notiz", json!("Zeile 1\nZeile 2")),
+                        ("leer", Value::Null),
+                    ]),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    id: "e1".into(),
+                    edge_type: "KENNT".into(),
+                    from: "1".into(),
+                    to: "2".into(),
+                    properties: props(vec![("seit", json!(2020)), ("type", json!("privat")), ("gewicht", json!(0.5))]),
+                },
+                Edge {
+                    id: "-7".into(),
+                    edge_type: String::new(),
+                    from: "2".into(),
+                    to: "1".into(),
+                    properties: props(vec![]),
+                },
+            ],
+            paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+            ..GraphSet::default()
+        }
+    }
+
+    fn graph_file(
+        graph: &GraphSet,
+        positions: Option<&Positions>,
+        format: ExportFormat,
+        language: ExportLanguage,
+    ) -> String {
+        let mut bytes = Vec::new();
+        let mut out = |c: Vec<u8>| {
+            bytes.extend_from_slice(&c);
+            Ok(())
+        };
+        encode_graph_to(graph, positions, format, language, &Control::unbounded(), Caps::default(), true, &mut out)
+            .unwrap();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn graph_nodes_as_csv_have_one_column_per_property_in_name_order() {
+        let graph = typed_graph();
+        let text = graph_file(&graph, None, ExportFormat::CsvNodes, ExportLanguage::En);
+        assert!(text.starts_with('\u{FEFF}'), "BOM");
+        let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+        // A property named like one of the file's own columns is told apart from it.
+        assert_eq!(lines[0], "id,labels,adresse,aktiv,alter,property:id,leer,name,notiz,saldo,tags");
+        // Text with the separator or quotes is quoted; a missing property leaves its cell empty.
+        assert_eq!(lines[1], "1,:Person:Kunde,,true,41,intern,,\"Jörg, \"\"der\"\" Erste\",,-12.5,");
+        // Objects and lists are JSON text, a formula stays text, a line break stays in its cell.
+        let second =
+            concat!("2,,\"{\"\"ort\"\":\"\"Köln\"\"}\",,,,,'=SUM(A1),", "\"Zeile 1\nZeile 2\",3,\"[\"\"a\"\",1]\"");
+        assert_eq!(lines[2], second);
+        assert_eq!((lines[3], lines.len()), ("", 4));
+
+        // German: semicolons and decimal commas, as in the table CSV.
+        let text = graph_file(&graph, None, ExportFormat::CsvNodes, ExportLanguage::De);
+        let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+        assert_eq!(lines[0], "id;labels;adresse;aktiv;alter;property:id;leer;name;notiz;saldo;tags");
+        assert_eq!(lines[1], "1;:Person:Kunde;;true;41;intern;;\"Jörg, \"\"der\"\" Erste\";;-12,5;");
+    }
+
+    #[test]
+    fn graph_edges_as_csv_name_their_ends_and_type() {
+        let graph = typed_graph();
+        let text = graph_file(&graph, None, ExportFormat::CsvEdges, ExportLanguage::En);
+        let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+        assert_eq!(lines[0], "id,type,source,target,gewicht,seit,property:type");
+        assert_eq!(lines[1], "e1,KENNT,1,2,0.5,2020,privat");
+        // An id a spreadsheet would read as a formula is defused, like any text.
+        assert_eq!(lines[2], "'-7,,2,1,,,");
+        assert_eq!((lines[3], lines.len()), ("", 4));
+
+        // A graph without nodes or edges still has its header.
+        let empty = GraphSet::default();
+        assert_eq!(graph_file(&empty, None, ExportFormat::CsvNodes, ExportLanguage::En), "\u{FEFF}id,labels\r\n");
+        assert_eq!(
+            graph_file(&empty, None, ExportFormat::CsvEdges, ExportLanguage::De),
+            "\u{FEFF}id;type;source;target\r\n"
+        );
+    }
+
+    #[test]
+    fn graph_csv_fits_graphs_only_and_keeps_to_the_limits() {
+        for format in [ExportFormat::CsvNodes, ExportFormat::CsvEdges] {
+            assert!(fits(Shape::Graph, format));
+            assert!(!fits(Shape::Frame, format) && !fits(Shape::Documents, format) && !fits(Shape::Trace, format));
+        }
+        let control = Control::unbounded();
+        let err = encode(&sample(), "A", ExportFormat::CsvNodes, ExportLanguage::En, &control).unwrap_err();
+        assert_eq!(err.reason, "export.format_unsupported");
+        assert_eq!(err.params.get("format").map(String::as_str), Some("csvNodes"));
+
+        let graph = typed_graph();
+        let content = Content::Graph(&graph);
+        let small = encode_content(content, ExportFormat::CsvNodes, &Control::unbounded(), Caps { file_bytes: 40 });
+        assert_eq!(small.unwrap_err().reason, "export.too_large");
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let stopped = encode_content(content, ExportFormat::CsvEdges, &Control::new(flag, 30), Caps::default());
+        assert_eq!(stopped.unwrap_err().reason, "steps.cancelled");
+    }
+
+    #[test]
+    fn a_cut_graph_says_so_in_graphml_and_keeps_its_csv_header_first() {
+        let mut graph = typed_graph();
+        graph.truncated = Some(Truncated { limit: 2, reason: Some("graph.node_limit".into()) });
+        let note = concat!(
+            "Truncated: the result was cut at its limit of 2 (graph.node_limit). ",
+            "In this file: nodes 2, edges 2."
+        );
+        let text = graph_file(&graph, None, ExportFormat::CsvNodes, ExportLanguage::En);
+        assert!(text.starts_with("\u{FEFF}id,labels,"), "{text}");
+        assert!(!text.contains('#'), "{text}");
+        let text = graph_file(&graph, None, ExportFormat::CsvEdges, ExportLanguage::En);
+        assert!(text.starts_with("\u{FEFF}id,type,"), "{text}");
+        let xml = graph_file(&graph, None, ExportFormat::Graphml, ExportLanguage::En);
+        assert!(xml.contains(&format!("  <!-- {note} -->\n")), "{xml}");
+        // A whole result has no such line.
+        let whole = graph_file(&typed_graph(), None, ExportFormat::Graphml, ExportLanguage::En);
+        assert!(!whole.contains("<!--"), "{whole}");
+    }
+
+    fn places(pairs: &[(&str, [f64; 2])]) -> Positions {
+        pairs.iter().map(|(id, at)| (id.to_string(), *at)).collect()
+    }
+
+    #[test]
+    fn graphml_holds_the_drawn_positions() {
+        let graph = typed_graph();
+        let positions = places(&[("1", [10.5, -20.0]), ("9", [1.0, 1.0])]);
+        let xml = graph_file(&graph, Some(&positions), ExportFormat::Graphml, ExportLanguage::En);
+        assert!(xml.contains(r#"<key id="x" for="node" attr.name="kalzit:x" attr.type="double"/>"#), "{xml}");
+        assert!(xml.contains(r#"<key id="y" for="node" attr.name="kalzit:y" attr.type="double"/>"#), "{xml}");
+        let node = concat!(
+            r#"<node id="1"><data key="labels">:Person:Kunde</data>"#,
+            r#"<data key="x">10.5</data><data key="y">-20</data>"#
+        );
+        assert!(xml.contains(node), "{xml}");
+        // A node without a position has none, and without positions the keys are not declared.
+        assert!(xml.contains(r#"<node id="2"><data key="n0">"#), "{xml}");
+        let plain = graph_file(&graph, None, ExportFormat::Graphml, ExportLanguage::En);
+        assert!(!plain.contains("kalzit:x") && !plain.contains(r#"key="x""#), "{plain}");
+        let elsewhere = places(&[("9", [1.0, 1.0])]);
+        let none = graph_file(&graph, Some(&elsewhere), ExportFormat::Graphml, ExportLanguage::En);
+        assert!(!none.contains("kalzit:x"), "{none}");
+    }
+
+    #[test]
+    fn a_part_of_a_graph_keeps_the_edges_between_its_nodes() {
+        let graph = typed_graph();
+        let both = graph_part(&graph, &["2".to_string(), "1".to_string(), "9".to_string()]);
+        // In the result's order, whatever the order of the ids; an unknown id names nothing.
+        assert_eq!(both.nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["1", "2"]);
+        assert_eq!(both.edges.len(), 2);
+        assert_eq!(both.paths.as_ref().map(Vec::len), Some(1));
+        let one = graph_part(&graph, &["2".to_string()]);
+        assert_eq!(one.nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["2"]);
+        // An edge with an end outside the part is left out, and so is a path that crossed it.
+        assert!(one.edges.is_empty());
+        assert_eq!(one.paths, Some(vec![]));
+        assert!(graph_part(&graph, &[]).nodes.is_empty());
+    }
+
+    #[test]
+    fn graph_csv_files_are_named_after_their_list() {
+        assert_eq!(file_name_of("Kunden & Partner", kind(ExportFormat::CsvNodes)), "Kunden-Partner-nodes.csv");
+        assert_eq!(file_name_of("", kind(ExportFormat::CsvEdges)), "kalzit-export-edges.csv");
+        assert_eq!(file_name_of("Netz", kind(ExportFormat::Graphml)), "Netz.graphml");
+        assert_eq!(file_name_of("Umsätze 2026", kind(ExportFormat::Csv)), file_name("Umsätze 2026", "csv"));
     }
 
     #[test]

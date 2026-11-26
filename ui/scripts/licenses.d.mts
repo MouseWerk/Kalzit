@@ -10,6 +10,7 @@ export interface LicenseEntry {
 export const SEE_FILE: string;
 export function fromCargoMetadata(metadata: unknown): LicenseEntry[];
 export function fromPackageLock(lock: unknown, root?: string): LicenseEntry[];
+export function vendored(root?: string): LicenseEntry[];
 export function merge(...lists: LicenseEntry[][]): LicenseEntry[];
 export function licenseFiles(dir: string | undefined): { name: string; text: string }[];
 export function buildNotices(entries: readonly LicenseEntry[]): string;
