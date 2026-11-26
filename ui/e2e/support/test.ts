@@ -258,9 +258,12 @@ class Guard {
   async watch(context: BrowserContext): Promise<void> {
     await context.exposeBinding(STYLE_REPORT, ({ page }, log: StyleLog) => {
       if (log.stored) {
-        // Logs only grow; a popup starts with a copy of its opener's session storage, maybe older.
+        // Only a final copy counts: every copy goes to session storage, so a stored one is final
+        // only when the document's pagehide write succeeded, and a popup starts with a copy of its
+        // opener's session storage, whose live document has made no final copy yet. Between two
+        // final copies the bigger one wins (logs only grow).
         const known = this.stored.get(log.doc);
-        if (known === undefined || logSize(log) >= logSize(known)) {
+        if (log.final && (known === undefined || logSize(log) >= logSize(known))) {
           this.stored.set(log.doc, log);
         }
       } else {
@@ -329,8 +332,12 @@ class Guard {
 
   /** A document's final copy: the one the next document forwarded, else the one it sent. */
   private finalCopy(doc: string): StyleLog | null {
+    const stored = this.stored.get(doc);
+    if (stored?.final === true) {
+      return stored;
+    }
     const sent = this.reported.get(doc);
-    return this.stored.get(doc) ?? (sent?.final === true ? sent : null);
+    return sent?.final === true ? sent : null;
   }
 
   /** The final copy once it arrived; null when none came within `LAST_COPY_TIMEOUT_MS`. */
