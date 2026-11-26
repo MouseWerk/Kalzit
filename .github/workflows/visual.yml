@@ -25,10 +25,6 @@ on:
         description: List text that differs by run outside the known places (KALZIT_VISUAL_DISCOVER)
         type: boolean
         default: false
-  # TEMPORARY for the proofs of this branch (a dispatch needs the file on main); removed before
-  # review.
-  push:
-    branches: [ci/visual-regression]
 
 concurrency:
   group: visual-${{ github.ref }}-${{ github.run_id }}
@@ -49,7 +45,7 @@ jobs:
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
-      VISUAL_UPDATE: ${{ inputs.update == true || contains(github.event.head_commit.message, '[visual-update]') }}
+      VISUAL_UPDATE: ${{ inputs.update == true }}
       KALZIT_VISUAL_DISCOVER: ${{ inputs.discover == true && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
