@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Api, fixturesDir, unique } from "./support/api";
 import { REGIONS } from "./support/fixture-db";
 import { t } from "./support/i18n";
-import { expect, test } from "./support/test";
+import { expect, signInOwner, test } from "./support/test";
 
 let owner: Api;
 
@@ -54,6 +54,7 @@ test("“All” of a query variable sends every value, and a pick narrows the pa
     ],
   });
 
+  await signInOwner(page);
   await page.goto(`/dashboards/${dashboardId}`);
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   const bar = page.getByRole("region", { name: t("dashboards.variables.label") });
