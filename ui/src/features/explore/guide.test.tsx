@@ -5,6 +5,7 @@ import { resetActiveTip } from "../../help/tips";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { optionLabels, optionValues, pickOption } from "../../test/select";
+import { addStep } from "../../test/stepCatalog";
 import {
   addMongoSource,
   addNeo4jSource,
@@ -276,8 +277,7 @@ describe("the query behind a group step", () => {
     await screen.findByText("Grace");
     const aside = screen.getByRole("complementary", { name: /Steps/ });
     // One "Add step" button opens the kinds of steps.
-    await user.click(within(aside).getByRole("button", { name: "Add step" }));
-    await user.click(screen.getByRole("menuitem", { name: "Group" }));
+    await addStep(user, "Group", { scope: aside });
     const show = await within(aside).findByText("Show the query of this step");
     await user.click(show);
     expect(within(aside).getByText(/FROM \( SELECT \*/)).toBeTruthy();

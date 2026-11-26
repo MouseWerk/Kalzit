@@ -39,6 +39,15 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   Verzögerung von „jetzt“, Aktualisierungs-Intervalle und das gemeinsame Fadenkreuz oder Tooltip.
 - **Optionen**: siehe den nächsten Abschnitt. Jede Option landet nur dort, wo der Editor des
   Kalzit-Panels sie zeigt; ein importiertes Panel enthält nichts, was seine Optionen nicht zeigen.
+- **Transformationen** mit einem Kalzit-Schritt: organize (Felder ordnen und umbenennen), filter
+  fields by name, filter data by values (Zeilen filtern), limit, convert field type, reduce, merge
+  (als „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zusammengefasst) und series
+  to rows. Schritte für eine Tabelle wirken auf die erste Abfrage, bis ein merge oder series to
+  rows die Abfragen zusammenführt; der Bericht sagt das. Andere Transformationen sowie
+  Berechnungen und Bedingungen ohne Gegenstück werden weggelassen und gemeldet. Ein Namensmuster
+  ohne Schrägstriche muss wie in Grafana auf den ganzen Namen passen. Ein regulärer Ausdruck, den
+  Kalzit nicht lesen kann, kostet nur seine Bedingung oder den Namensfilter, mit einem Hinweis, der
+  ihn nennt.
 
 ## Optionen: was übernommen wird und was nicht
 
@@ -57,7 +66,7 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
 | Stat, Gauge, Balken-Gauge, Tortendiagramm | Berechnung (letzter, Mittelwert, Minimum, Maximum, Summe; andere werden gemeldet), Farb-, Graph- und Textmodus, Schwellenmarken, LCD-Anzeige, Ausrichtung, Anzeige von Wert und Name, Tortenart und Legendenwerte. |
 | Balkendiagramm | Werte gezeigt oder nicht. Waagrechte Balken und Stapeln werden gemeldet: Das Balkendiagramm von Kalzit steht aufrecht, mit Balken nebeneinander. |
 | Heatmap | Zählen in Buckets oder fertige Buckets lesen, Anzahl der Buckets, die Quadratwurzel-Farbskala und die Einheit der Achse. Bucket-Größen, logarithmische Buckets und Farbschemata werden gemeldet. |
-| Tabelle | Die neuen Namen des Organize-Schritts werden zum Anzeigenamen jeder Spalte (Überschreibungen auf dem eigenen Namen der Spalte), die Zellarten Gauge, farbiger Hintergrund und farbiger Text werden zur Zellanzeige, dazu Spaltenfilter und -breiten. Ausgeblendete Spalten, die Spaltenreihenfolge, die Fußzeile und die Start-Sortierung werden gemeldet, ebenso jede andere Transformation. |
+| Tabelle | Die Zellarten Gauge, farbiger Hintergrund und farbiger Text werden zur Zellanzeige, dazu Spaltenfilter und -breiten. Der Organize-Schritt wird zu einem Schritt, der Spalten ausblendet, ordnet und umbenennt (siehe Transformationen oben); Überschreibungen treffen dann wie in Grafana die neuen Namen. Die Fußzeile und die Start-Sortierung werden gemeldet. |
 
 ## Der Bericht
 
@@ -71,8 +80,8 @@ abzufragen.
 
 **Dashboards > Aus Grafana importieren** führt durch drei Schritte. Zuerst die Datei: hochladen
 oder ihr JSON einfügen, das Dashboard benennen und seinen Ordner wählen. Dann die Datenquellen:
-Jede Quelle der Datei bekommt eine von Kalzit, vorgeschlagen nach Name und Art, oder wird
-weggelassen; ihre Panels entfallen dann. Zuletzt der Bericht, bevor etwas angelegt ist;
+Jede Quelle der Datei bekommt eine von Kalzit, vorgeschlagen nach Name und Art (Grafanas
+Standardquelle: die Standard-Datenquelle der Organisation), oder wird weggelassen; ihre Panels entfallen dann. Zuletzt der Bericht, bevor etwas angelegt ist;
 **Importieren** legt das Dashboard an und öffnet es mit einer Zeile, die zurück zum Bericht
 führt (die Adresse des Dashboards mit `/import-report`).
 
@@ -84,7 +93,8 @@ kalzit provision import-grafana lager.json --server https://kalzit.example.com -
 ```
 
 `kalzit import grafana` ist derselbe Befehl. `--map` ordnet eine Grafana-Datenquelle der ID einer Kalzit-Datenquelle zu: über ihre uid, ihren
-Namen, die Eingabe `${DS_X}` eines Exports oder `default` für Panels ohne Quelle. `--dry-run`
+Namen, die Eingabe `${DS_X}` eines Exports oder `default` für Panels ohne Quelle (fehlt
+`default`, gilt die Standard-Datenquelle der Organisation, wenn sie eine hat). `--dry-run`
 wandelt um und zeigt den Bericht, ohne zu speichern. Das Token kommt aus `KALZIT_API_TOKEN`, wie
 beim [Provisioning](provisioning.md); die Rolle braucht `dashboards:write` dort, wo das Dashboard
 hinkommt, und `datasources:query` auf den zugeordneten Quellen.

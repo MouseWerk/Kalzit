@@ -208,6 +208,7 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 ```
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
+`isDefault` is true for the organization's [default data source](#default-data-source).
 
 Live items the caller may read (`read`) also carry the list's columns. Nothing here opens a
 connection; the page's reads take a fixed number of queries whatever its size.
@@ -284,12 +285,14 @@ refers to it. No connection test runs here.
 ```
 
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
+`isDefault` says whether it is the organization's [default data source](#default-data-source).
 `lastTest` (omitted until a test ran) is the last Test connection of the stored source, for
 everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?: ..., "message":
 ... }], "testedAt": 1800000000000, "latencyMs": 12, "failingSince"?: 1799990000000 }`.
 `latencyMs` is how long the test took (absent for tests kept before 0.6.0); `failingSince`, only
 on a failed test, is when the first of the failed tests since the last passing one ran. Each test
-replaces it; a change of settings or secrets drops it (a rename keeps it). It holds no secrets:
+replaces it; a change of settings or secrets drops it (a rename keeps it), and a test that ran on
+the settings before a change saved meanwhile is not kept. It holds no secrets:
 warnings are scrubbed like every answer.
 
 ### Access
@@ -374,6 +377,20 @@ target change. When the patch changes a `target` field,
 every secret that is stored must be in the same patch, either with its value again or with `null`.
 Otherwise the answer is `422 validation` with `field` naming the secret, so a stored password is
 never sent to a new host without being entered again.
+
+### Default data source
+
+`PUT /orgs/{orgId}/datasources/{datasourceId}/default` with `{ "default": true }` makes the
+source the organization's default data source and answers it; the source that was the default
+stops being it. `{ "default": false }` takes it away, so the organization has none. It needs
+`write` on the source (see [Access](#access)); a source in the trash answers `404`. Explore and
+new panels start with the default when no source is chosen, and a Grafana import maps
+Grafana's default source (`default`) to it unless the request maps it. An organization has at
+most one default; moving it to the trash takes it away, and restoring does not bring it back.
+The change is audited as `datasource.updated` with `changed: ["default"]` and, when it replaced
+another source, `replaced` (that source's id). It is an organization setting outside provisioning
+files, so it may also be set on a source a set manages. The Grafana import maps `default` only
+when the importer may query the default source.
 
 ### Delete and restore
 
@@ -2595,6 +2612,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
 | `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
 | `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
+| `steps.pattern` | `pattern` | a step's name or row pattern is no regular expression of the shared subset (settings-dashboards.md) |
+| `steps.filter_value` | `field`, `value` | a filter rows condition's value cannot be compared with the field's type |
+| `steps.stack_types` | `field`, `first`, `other` | stack tables: one field name has two types in the tables |
+| `steps.result_rows` | `max` | the step would make more than `max` rows |
 | `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
 | `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |

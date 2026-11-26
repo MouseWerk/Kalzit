@@ -36,6 +36,14 @@ data sources and other Grafana content are not imported.
   crosshair or tooltip.
 - **Options**: see the next section. Every option goes only where the Kalzit panel's editor
   shows it, so an imported panel holds nothing its options do not show.
+- **Transformations** that have a Kalzit step: organize (arrange and rename fields), filter fields
+  by name, filter data by values (filter rows), limit, convert field type, reduce, merge (as stack
+  tables: rows with equal values are not combined) and series to rows. Steps that work on one
+  table work on the first query until a merge or series to rows put the queries together; the
+  report says so. Other transformations, calculations and conditions without a counterpart are
+  left out and reported. A name pattern without slashes matches the whole name, as in Grafana. A
+  regular expression Kalzit cannot read leaves out only its condition, or the name filter, with a
+  note that names it.
 
 ## Options: what maps and what does not
 
@@ -54,7 +62,7 @@ data sources and other Grafana content are not imported.
 | Stat, gauge, bar gauge, pie chart | Calculation (last, mean, min, max, sum; others reported), colour, graph and text mode, threshold markers, LCD display, orientation, value and name display, pie type and legend values. |
 | Bar chart | Values shown or not. Horizontal bars and stacking are reported: Kalzit's bar chart stands upright with bars side by side. |
 | Heatmap | Counting into buckets or reading buckets, bucket counts, the square root colour scale and the axis unit. Bucket sizes, log buckets and colour schemes are reported. |
-| Table | The organize step's new names become each column's display name (overrides on the column's own name), cell types gauge, coloured background and coloured text become the cell display, column filters and widths. Hidden columns, the column order, the footer and the starting sort order are reported, as is every other transformation. |
+| Table | Cell types gauge, coloured background and coloured text become the cell display, column filters and widths. The organize step becomes a step that hides, orders and renames the columns (see transformations above); overrides then match the new names, as in Grafana. The footer and the starting sort order are reported. |
 
 ## The report
 
@@ -67,7 +75,8 @@ through the same checks as every save, including the right to query each mapped 
 
 **Dashboards > Import from Grafana** leads through three steps. First the file: upload it or
 paste its JSON, name the dashboard and choose its folder. Then the data sources: each one the
-file names gets one of Kalzit's, proposed by name and kind, or is left out, which skips its
+file names gets one of Kalzit's, proposed by name and kind (Grafana's default source: the
+organization's [default data source](data-sources.md#default-data-source)), or is left out, which skips its
 panels. Last the report, before anything exists; **Import** creates the dashboard and opens it
 with a line that leads back to the report (the dashboard's address with `/import-report`).
 
@@ -79,7 +88,8 @@ kalzit provision import-grafana lager.json --server https://kalzit.example.com -
 ```
 
 `kalzit import grafana` is the same command. `--map` maps a Grafana data source to the id of a Kalzit data source: by its uid, its name, the
-`${DS_X}` input of an export, or `default` for panels without one. `--dry-run` converts and shows
+`${DS_X}` input of an export, or `default` for panels without one (left out, `default` is the
+organization's default data source, if it has one). `--dry-run` converts and shows
 the report without saving. The token comes from `KALZIT_API_TOKEN`, as for
 [provisioning](provisioning.md); the role needs `dashboards:write` where the dashboard goes and
 `datasources:query` on the mapped sources.
@@ -89,3 +99,8 @@ The API route is `POST /api/orgs/{orgId}/dashboards/import/grafana` with
 report, the converted model and the saved dashboard.
 
 To keep an imported dashboard as code, export it with `kalzit provision export` afterwards.
+
+Kalzit keeps the dashboard's Grafana `uid`, so an old Grafana address still works: `/d/<uid>` and
+`/d/<uid>/<slug>` open the imported dashboard (or the dashboards list when the uid is unknown).
+`/datasources` and `/connections/datasources` lead to the data sources, `/explore` is the same
+in both.
