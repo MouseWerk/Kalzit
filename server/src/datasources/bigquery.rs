@@ -776,6 +776,7 @@ impl DataSourcePlugin for BigQuery {
             }
         }
         guard.disarm();
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql);
         frame.notice(
             NoticeSeverity::Info,

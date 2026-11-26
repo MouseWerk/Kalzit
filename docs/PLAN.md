@@ -612,8 +612,8 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      fehlschlägt.
    - Nachzügler aus M6: Erweiterungen aus den Reviews in M6, die keine Fehlerbehebungen sind: Liste
      „Letzte Anmeldungen“ (2FA-Board Frame 4A), erneute Anmeldung beim Anbieter (`max_age`) vor dem
-     Einrichten des ersten zweiten Faktors, arm64-Binaries für die Beispiel-Plugins (`csv-http`),
-     „Mehr laden“ auch in gespeicherten Analysen und in der Vorschau des Panel-Editors,
+     Einrichten des ersten zweiten Faktors, „Mehr laden“ auch in gespeicherten Analysen und in der
+     Vorschau des Panel-Editors,
      Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
      einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
      Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
@@ -658,7 +658,7 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 11. **M10 Icon-Satz**: Kalzits eigener, animierter Icon-Satz in der Sprache „Facette“ (Board in
     PR #361, vom Inhaber am 21.11.2026 freigegeben). Vorgezogen: die
     statischen Zeichnungen und danach die Bewegung je Bereich laufen schon neben M8.
-12. **M11 Mehrmodell und eigene Daten** (Entscheidung des Inhabers vom 21.11.2026; kein eigenes
+12. **M11 Mehrmodell, eigene Daten und Zabbix** (Entscheidung des Inhabers vom 21.11.2026; kein eigenes
     Datenbanksystem; Abfragen bleiben gegenüber jeder Quelle nur lesend):
     - Mehrmodell-Quellen nativ: eine Abfrage liefert je nach Inhalt genau eine Form, `frame`,
       `documents` oder `graph` (Abschnitt 1), ohne Umweg über Tabellen. ArangoDB (seit 0.7.4
@@ -678,7 +678,19 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
       Betrachter führen nur gespeicherte Abfragen aus, und ein Upload erreicht nie Dateien außerhalb
       des Speichers (Kalzits übrige Daten bleiben gesperrt). Intern ein einfacher Speicher, kein
       Datenbankprodukt.
-    - Board vor dem Bau; die Reihenfolge der beiden Teile entscheidet der Inhaber zu Beginn von M11.
+    - Vollständige Zabbix-Unterstützung (Entscheidung des Inhabers vom 25.11.2026): eine Quelle für
+      Zabbix über dessen API (JSON-RPC mit API-Token; nur lesende Methoden, `*.get` und
+      `apiinfo.version`, alles andere wird serverseitig abgelehnt; Kalzits Rechte gelten zusätzlich
+      zu denen des Tokens). Jede Antwort behält ihre Form: Verlauf und Trends numerischer Items als
+      `frame`, Text- und Log-Verläufe, Probleme, Ereignisse und Host-Inventar als `documents`,
+      Netzwerkkarten und Trigger-Abhängigkeiten als `graph`. Auswahl über Hostgruppe, Host, Item und
+      Tag (mit Mustern und Variablen), Annotationen aus Ereignissen, Alert-Regeln auf Items und
+      Probleme. Der Grafana-Import übernimmt Panels des Zabbix-Plugins für Grafana mit Notizen;
+      Anwendungsfilter älterer Panels werden als Tag-Filter übernommen oder mit Hinweis
+      ausgelassen. Unterstützt werden die aktuellen LTS-Versionen von Zabbix; getestet gegen
+      aufgezeichnete Antworten und einen Zabbix-Container in der CI. Die Quelle kommt beim Bau in
+      die Tabelle in Abschnitt 3.
+    - Board vor dem Bau; die Reihenfolge der drei Teile entscheidet der Inhaber zu Beginn von M11.
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.

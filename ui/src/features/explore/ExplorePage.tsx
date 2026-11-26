@@ -53,6 +53,9 @@ import { useSettled } from "../../lib/useSettled";
 import { type LiveSpec, liveClient } from "../../live/client";
 import { liveNote } from "../../live/text";
 import { useLiveSubscription } from "../../live/useLive";
+import { LogsView } from "../../logs/LogsView";
+import { logSourceOf, logsOfferFor, resolveFields } from "../../logs/model";
+import { readFieldChoice } from "../../logs/prefs";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { PANELS, panelsForShapes, suggestPanel } from "../../panels/registry";
@@ -112,6 +115,7 @@ import {
   familyOf,
   hasQuery,
   normalizeQuery,
+  parseLokiQuery,
   queryText,
 } from "../datasources/queryKinds";
 import { parseTraceSearch, traceMode, traceSearchQuery } from "../datasources/traceQuery";
@@ -129,6 +133,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { clearExploreHandoff, peekExploreHandoff } from "./handoff";
 import { HISTORY_KEY, type HistoryEntry } from "./history";
 import { LAST_DATASOURCE_KEY } from "./lastSource";
+import { useLogsVolume } from "./logsVolume";
 import { decodeShare, encodeShare, MAX_SHARE_CHARS, type SharedExplore, shareUrl } from "./share";
 import "./explore.css";
 import { Select } from "../../components/Select";
@@ -297,6 +302,9 @@ function Explore({
   const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
+  // Logs or another view, as picked for the data source shown; without a pick, log sources open
+  // on "Logs" and other document sources on "Documents" (board Logs.dc.html, frame 7).
+  const [logsChoice, setLogsChoice] = useState<{ source: string; logs: boolean } | null>(null);
   // How long the last run took, from asking to the answer, for the bar above the result.
   const [timing, setTiming] = useState<{ run: Submitted; ms: number } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -417,6 +425,10 @@ function Explore({
       return outcomesOf(response, [REF_ID]);
     },
   });
+  // The count query of the logs view runs beside the line query (Loki only, see logsVolume.ts).
+  const submittedKind =
+    submitted === null ? undefined : list.find((d) => d.id === submitted.datasourceId)?.kind;
+  const logsVolume = useLogsVolume(orgId, submitted, submittedKind);
   // Graph steps run with the query, in the database where the source can: the result above stays
   // the query's own (drawn as the graph); this run answers what the steps make of it.
   // Settled for a moment first: a number being typed or a choice being tried asks the database
@@ -988,17 +1000,40 @@ function Explore({
   const docsResult = outcomes.some(
     (outcome) => "result" in outcome && outcome.result.shape === "documents",
   );
+  // Logs are a view on the same documents (board Logs.dc.html): offered where the view finds a
+  // time to read, chosen first for log sources. Nothing about the result changes with it.
+  const logDocuments = documentsOf(outcomes)[0]?.documents;
+  const logSource = submittedKind === undefined ? undefined : logSourceOf(submittedKind);
+  const logsOffer =
+    logDocuments === undefined || logSource === undefined || submitted === null
+      ? "none"
+      : logsOfferFor(
+          logSource,
+          resolveFields(
+            logSource,
+            logDocuments.documents,
+            readFieldChoice(submitted.datasourceId),
+            timeFieldOf(submitted.query),
+          ),
+        );
+  const logsOffered = logsOffer !== "none";
+  const logsPicked =
+    logsChoice !== null && submitted !== null && logsChoice.source === submitted.datasourceId
+      ? logsChoice.logs
+      : logsOffer === "preselect";
   const tabNames: ResultTab[] = docsResult
-    ? ["documents", "schema", "result", "inspect"]
+    ? [...(logsOffered ? (["logs"] as const) : []), "documents", "schema", "result", "inspect"]
     : ["result", "inspect"];
   const view: ResultTab =
     tab === "inspect"
       ? "inspect"
-      : docsResult && type === "documents"
-        ? "documents"
-        : docsResult && type === "schema"
-          ? "schema"
-          : "result";
+      : logsOffered && logsPicked
+        ? "logs"
+        : docsResult && type === "documents"
+          ? "documents"
+          : docsResult && type === "schema"
+            ? "schema"
+            : "result";
   // The documents and their schema as the query answered them, before any projection.
   const viewPanel: PanelModel =
     (view === "documents" || view === "schema") && projected
@@ -1540,6 +1575,10 @@ function Explore({
                       return;
                     }
                     setTab("result");
+                    setLogsChoice({ source: submitted.datasourceId, logs: name === "logs" });
+                    if (name === "logs") {
+                      return;
+                    }
                     if (name === "documents" || name === "schema") {
                       setPanelType(name);
                     } else if (type === "documents" || type === "schema") {
@@ -1593,7 +1632,61 @@ function Explore({
                     aria-labelledby={`${tabsId}-${name}-tab`}
                     hidden={view !== name}
                   >
-                    {view !== name ? null : tableWaits ? (
+                    {view !== name ? null : name === "logs" && logDocuments !== undefined ? (
+                      <LogsView
+                        key={submitted.datasourceId}
+                        kind={submittedKind ?? ""}
+                        datasourceId={submitted.datasourceId}
+                        documents={logDocuments}
+                        range={{ from: submitted.from, to: submitted.to }}
+                        volume={logsVolume.answer}
+                        query={submitted.datasourceId === datasource.id ? query : submitted.query}
+                        timeField={timeFieldOf(submitted.query)}
+                        draftPending={pendingText[submitted.datasourceId] === true}
+                        onQuery={
+                          submitted.datasourceId === datasource.id
+                            ? (next) => {
+                                // The filter joins the query in the editor, visibly, and runs.
+                                setFilterError(null);
+                                setQueries((all) => ({ ...all, [datasource.id]: next }));
+                                run(range, next);
+                              }
+                            : undefined
+                        }
+                        onOrder={
+                          submittedKind === "loki" && submitted.datasourceId === datasource.id
+                            ? (order) => {
+                                // More lines than loaded: Loki answers the oldest going forward.
+                                // Built from the query that was run, never from an unrun draft.
+                                const { direction: _old, ...rest } = parseLokiQuery(
+                                  submitted.query,
+                                );
+                                const next =
+                                  order === "oldest"
+                                    ? { ...rest, direction: "forward" as const }
+                                    : rest;
+                                setQueries((all) => ({ ...all, [datasource.id]: next }));
+                                setRange(submitted.range);
+                                run(submitted.range, next);
+                              }
+                            : undefined
+                        }
+                        sourceOrder={
+                          submittedKind === "loki" &&
+                          parseLokiQuery(submitted.query).direction === "forward"
+                            ? "oldest"
+                            : "newest"
+                        }
+                        onRange={(from, to) => {
+                          const next = {
+                            from: new Date(from).toISOString(),
+                            to: new Date(to).toISOString(),
+                          };
+                          setRange(next);
+                          run(next);
+                        }}
+                      />
+                    ) : tableWaits ? (
                       <div className="explore__project">
                         <p>{t("explore.table.lead")}</p>
                         <button
@@ -1696,7 +1789,15 @@ function Explore({
                 aria-labelledby={`${tabsId}-inspect-tab`}
                 hidden={view !== "inspect"}
               >
-                {view === "inspect" ? <Inspect outcomes={outcomes} /> : null}
+                {view === "inspect" ? (
+                  <Inspect
+                    outcomes={
+                      logsVolume.outcome === undefined
+                        ? outcomes
+                        : [...outcomes, logsVolume.outcome]
+                    }
+                  />
+                ) : null}
               </div>
               {nextCursor === undefined ? null : (
                 <div className="explore__more">
@@ -1986,7 +2087,16 @@ function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
   return leave.dialog;
 }
 
-type ResultTab = "documents" | "schema" | "result" | "inspect";
+type ResultTab = "logs" | "documents" | "schema" | "result" | "inspect";
+
+/** The time field an Elasticsearch or OpenSearch query names, for the logs view. */
+function timeFieldOf(query: unknown): string | undefined {
+  return typeof query === "object" &&
+    query !== null &&
+    typeof (query as { timeField?: unknown }).timeField === "string"
+    ? (query as { timeField: string }).timeField
+    : undefined;
+}
 
 /** How big the query's answer is, in words: documents, rows, or nodes and edges. */
 /** `more`: further pages exist, so the documents counted are those loaded so far. */

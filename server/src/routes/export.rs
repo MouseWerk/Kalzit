@@ -375,13 +375,16 @@ async fn make_panel(
     check_items(&items)?;
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
+    // The panel's query options bound the export as they bound its runs.
+    let (interval_ms, max_data_points) =
+        super::query::PanelLimits::of(panel).apply(req.time_range, req.interval_ms, req.max_data_points);
     let response = run_queries_with(
         state,
         ctx,
         items,
         req.time_range,
-        req.interval_ms,
-        req.max_data_points,
+        interval_ms,
+        max_data_points,
         &variables,
         Some(&identifiers),
     )

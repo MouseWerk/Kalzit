@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import babel from "@rolldown/plugin-babel";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { handbook } from "./src/handbook/build/plugin.ts";
 
 // The server's version, so links to the docs point at this release's tag (src/help/docs.ts).
 const serverManifest = readFileSync(new URL("../server/Cargo.toml", import.meta.url), "utf8");
@@ -24,16 +26,24 @@ export default defineConfig({
   // Relative, so the bundle works under any sub-path (`server.base_path`): the server writes the
   // prefix into index.html (`web::index_html`), and chunks find each other from their own URL.
   base: "./",
-  plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+  plugins: [
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
+    // The built-in handbook: the guide's pages, pictures and search index (src/handbook).
+    handbook(fileURLToPath(new URL(".", import.meta.url))),
+  ],
   define: { __KALZIT_VERSION__: JSON.stringify(version) },
-  // The help pages before sign-in are the guide files in docs/guide (src/help/HelpPage.tsx).
-  server: { proxy, fs: { allow: [".", "../docs/guide"] } },
+  // The help pages before sign-in and the handbook are files of docs/ (src/help, src/handbook).
+  server: { proxy, fs: { allow: [".", "../docs"] } },
   preview: { proxy },
   build: {
     outDir: "dist",
     emptyOutDir: true,
     // The bundle is embedded in the server binary; source maps would only add weight to it.
     sourcemap: false,
+    // The handbook's pages, pictures and search index stay files of their own, fetched when shown:
+    // inlined, a small page would become part of the script that lists them.
+    assetsInlineLimit: (file) => (/[\\/]docs[\\/]|kalzit-handbook/.test(file) ? false : undefined),
     modulePreload: {
       // index.html keeps its modulepreload links: the first page load needs those chunks at once.
       // A lazy chunk (a route, a dialog, the chart, the editor) fetches its scripts through the

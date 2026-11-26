@@ -51,6 +51,72 @@
     }
   }
 
+  /*
+   * The boot state (index.html, #boot): the canvas color and the Kalzit mark from the first
+   * paint, with a quiet bar that runs while the app loads; src/app/boot.ts removes it once the
+   * first page has rendered. The mark shows a moment later, so a fast load shows only the
+   * canvas. Reduced motion keeps the bar still.
+   */
+  .boot {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-boot);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    background: var(--bg);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .boot__mark,
+  .boot__bar {
+    animation: boot-in var(--duration-normal) var(--easing) var(--duration-boot-delay) both;
+  }
+
+  .boot__bar {
+    position: relative;
+    overflow: hidden;
+    inline-size: var(--size-boot-bar);
+    block-size: var(--border-width-strong);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+  }
+
+  .boot__bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    inline-size: 40%;
+    border-radius: var(--radius-pill);
+    background: var(--text-muted);
+    animation: boot-run var(--duration-pulse) var(--easing) infinite;
+  }
+
+  @keyframes boot-in {
+    from {
+      visibility: hidden;
+    }
+  }
+
+  @keyframes boot-run {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 250% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .boot__bar::after {
+      animation: none;
+      translate: 75% 0;
+    }
+  }
+
   /* Native check boxes and radios take the text color, not the browser's blue or the accent. */
   input[type="checkbox"],
   input[type="radio"] {

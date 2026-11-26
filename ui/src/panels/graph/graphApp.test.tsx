@@ -362,3 +362,70 @@ describe("Explore with TigerGraph", () => {
     expect(screen.getByText("The query has no parameters.")).toBeTruthy();
   });
 });
+
+describe("graph canvas state in the table view", () => {
+  it("selects with check boxes, hides from a row's menu, keeps it for the viewer and undoes it", async () => {
+    const server = setup("viewer", {});
+    const { user } = renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    await within(panel).findByRole("table", { name: /^Nodes of / });
+    // Check boxes: one row, then a range with Shift; "Select all" in the head.
+    await user.click(within(nodes(panel)).getByRole("checkbox", { name: "Select Ada" }));
+    await user.keyboard("{Shift>}");
+    await user.click(within(nodes(panel)).getByRole("checkbox", { name: "Select Lamp" }));
+    await user.keyboard("{/Shift}");
+    const checked = within(nodes(panel))
+      .getAllByRole("checkbox")
+      .filter((box) => (box as HTMLInputElement).checked).length;
+    expect(checked).toBeGreaterThanOrEqual(2);
+    await user.click(within(nodes(panel)).getByRole("checkbox", { name: "Select all" }));
+    await user.click(within(nodes(panel)).getByRole("checkbox", { name: "Select all" }));
+    expect(
+      within(nodes(panel))
+        .getAllByRole("checkbox")
+        .some((box) => (box as HTMLInputElement).checked),
+    ).toBe(false);
+
+    // Shift+F10 on Grace's row opens her menu; "Hide" takes her out of the view.
+    within(nodes(panel)).getByRole("button", { name: "Grace" }).focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu", { name: /^Grace/ });
+    await user.click(within(menu).getByRole("menuitem", { name: /^Hide/ }));
+    expect(within(nodes(panel)).queryByRole("button", { name: "Grace" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Show Grace" })).toBeTruthy();
+    expect(within(panel).getByRole("status").textContent).toBe(
+      "Grace hidden, 3 of 4 nodes visible",
+    );
+    await waitFor(
+      () =>
+        expect(server.areas.dashboardFeatures.viewStates["d-shop/p-graph"]?.hidden).toEqual([
+          ID.grace,
+        ]),
+      { timeout: 2_000 },
+    );
+
+    // Ctrl+Z in the table takes the step back; Ctrl+Shift+Z does it again.
+    within(nodes(panel)).getByRole("button", { name: "Ada" }).focus();
+    await user.keyboard("{Control>}z{/Control}");
+    expect(await within(nodes(panel)).findByRole("button", { name: "Grace" })).toBeTruthy();
+    expect(within(panel).getByRole("status").textContent).toBe("Undone: Hidden: Grace");
+    await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    expect(within(nodes(panel)).queryByRole("button", { name: "Grace" })).toBeNull();
+  });
+
+  it("never reads or writes the viewer's state from the panel editor's preview", async () => {
+    const server = setup("editor", {});
+    server.areas.dashboardFeatures.viewStates["d-shop/p-graph"] = {
+      pinned: [ID.lamp],
+      selected: [],
+      hidden: [ID.grace],
+    };
+    const { user } = renderApp("/dashboards/d-shop/panels/p-graph/edit");
+    const preview = await screen.findByRole("table", { name: /^Nodes of / }, { timeout: 4_000 });
+    // The viewer's hidden node is not hidden here.
+    expect(within(preview).getByRole("button", { name: "Grace" })).toBeTruthy();
+    await user.click(within(preview).getByRole("button", { name: "Pin Ada" }));
+    await new Promise((done) => setTimeout(done, 800));
+    expect(server.calls.filter((call) => call.path.includes("/view-state"))).toEqual([]);
+  });
+});

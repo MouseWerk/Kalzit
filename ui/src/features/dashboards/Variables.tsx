@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
@@ -28,14 +28,19 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { Select } from "../../components/Select";
 
-/** The value each variable starts with: its stored current value, else the first fixed value. */
+/**
+ * The value each variable starts with: its stored current value, else the first fixed value (or
+ * every one, for a variable that starts with all picked).
+ */
 export function initialVariables(variables: readonly VariableModel[]): VariableValues {
   return Object.fromEntries(
     variables.map((v) => {
-      const first = optionChoices(v)[0]?.value;
+      const choices = optionChoices(v).map((c) => c.value);
+      const first = choices[0];
       if (v.multi === true) {
         const stored = currentValues(v);
-        return [v.name, stored.length > 0 ? stored : first === undefined ? [] : [first]];
+        const start = v.allByDefault === true ? choices : first === undefined ? [] : [first];
+        return [v.name, stored.length > 0 ? stored : start];
       }
       return [v.name, currentValue(v) ?? first ?? ""];
     }),
@@ -340,17 +345,23 @@ function VariableControl({
       : errorMessage(t, options.error)
     : null;
   const label = variable.label ?? variable.name;
-  // A query variable without a stored value opens with its first option once they load, as a
-  // custom one opens with its first fixed value.
-  const first = options.data?.options[0]?.value;
-  const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
+  // A query variable without a stored value opens with its first option once they load (or with
+  // every one, when it starts with all picked), as a custom one opens with its fixed values.
   const multi = variable.multi === true;
+  const all = multi && variable.allByDefault === true;
+  const loaded = options.data?.options;
+  // The same list until the options load again, so the effect runs once per load.
+  const start = useMemo(() => {
+    const values = (loaded ?? []).map((o) => o.value);
+    return values.length === 0 ? null : all ? values : values.slice(0, 1);
+  }, [loaded, all]);
+  const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
   const empty = valueList(value).length === 0;
   useEffect(() => {
-    if (opensEmpty && empty && first !== undefined) {
-      onChange(multi ? [first] : first, true);
+    if (opensEmpty && empty && start !== null) {
+      onChange(multi ? start : (start[0] as string), true);
     }
-  }, [opensEmpty, empty, first, onChange, multi]);
+  }, [opensEmpty, empty, start, onChange, multi]);
 
   let control: ReactNode;
   if (variable.type === "textbox") {

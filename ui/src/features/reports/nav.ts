@@ -5,10 +5,18 @@ import { reportsQuery, statusQuery } from "./api";
 
 /** Shown with `reports:read` while reports are on for the organization; otherwise no entry. */
 export function useReportsShown(): boolean {
+  return useReportsGranted() === true;
+}
+
+/** `useReportsShown`, undefined while the permissions or the status are on their way. */
+function useReportsGranted(): boolean | undefined {
   const org = useCurrentOrg();
   const permissions = useOrgPermissions();
   const allowed = org !== undefined && permissions.has("reports:read");
   const status = useQuery({ ...statusQuery(org?.id ?? ""), enabled: allowed });
+  if (!permissions.loaded || (allowed && status.data === undefined && !status.isError)) {
+    return undefined;
+  }
   return allowed && status.data?.enabled === true;
 }
 
@@ -18,7 +26,9 @@ export const reportsNav: NavItem = {
   label: "shell.nav.reports",
   icon: "file",
   visible: () => false,
-  useGranted: useReportsShown,
+  useGranted: useReportsGranted,
+  prime: (ensure, orgId, permissions) =>
+    permissions.has("reports:read") ? ensure(statusQuery(orgId)) : Promise.resolve(),
 };
 
 /**

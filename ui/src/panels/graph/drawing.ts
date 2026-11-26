@@ -40,8 +40,18 @@ export interface DrawState {
   selected: ReadonlySet<number>;
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
+  /** The selected edges (view indexes); absent or empty when none is. */
+  selectedEdges?: ReadonlySet<number> | undefined;
   drawStyle: DrawStyle;
 }
+
+/** Whether something is singled out, so the rest is dimmed: a selected node or edge. */
+export function singlesOut(p: Pick<DrawState, "selected" | "selectedEdges">): boolean {
+  return p.selected.size > 0 || (p.selectedEdges?.size ?? 0) > 0;
+}
+
+/** A selected edge is drawn this much wider. */
+export const SELECTED_EDGE_SCALE = 1.75;
 
 /** Space around a label's text on its background, in px (what the label check counts with). */
 const LABEL_BACKGROUND_PADDING = LABEL_PAD;
@@ -73,14 +83,17 @@ export const SELECTED_SCALE = 1.4;
  */
 export function labelWish(
   index: number,
-  p: Pick<DrawState, "view" | "visibility" | "ranks" | "selected" | "neighbours" | "drawStyle">,
+  p: Pick<
+    DrawState,
+    "view" | "visibility" | "ranks" | "selected" | "neighbours" | "selectedEdges" | "drawStyle"
+  >,
   ratio: number,
   budget: number = LABEL_BUDGET,
 ): "visible" | "auto" | "hidden" {
   const node = p.view.nodes[index];
   if (node === undefined || p.visibility.nodes[index] === 0) return "hidden";
   if (p.selected.has(index)) return "visible";
-  if (p.selected.size > 0 && !p.neighbours.has(index)) return "hidden";
+  if (singlesOut(p) && !p.neighbours.has(index)) return "hidden";
   const mode = p.drawStyle.labels;
   if (mode === "always") return "visible";
   const rank = p.ranks[index] ?? 0;
@@ -111,7 +124,7 @@ export function nodeDisplay(
     return { ...data, visibility: "hidden" };
   }
   const isSelected = p.selected.has(index);
-  const selecting = p.selected.size > 0;
+  const selecting = singlesOut(p);
   const lit = !selecting || isSelected || p.neighbours.has(index);
   const color = nodeColor(node.group, lit, p);
   const labelVisibility = labelWish(index, p, ratio, budget);
@@ -150,12 +163,17 @@ function touches(edge: { source: number; target: number }, selected: ReadonlySet
   return selected.has(edge.source) || selected.has(edge.target);
 }
 
-/** An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). */
+/**
+ * An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). A selected
+ * edge takes the text color: strong and neutral, never an accent.
+ */
 export function edgeColor(
   edge: { source: number; target: number },
-  p: Pick<DrawState, "view" | "palette" | "selected">,
+  p: Pick<DrawState, "view" | "palette" | "selected" | "selectedEdges">,
+  index = -1,
 ): string {
-  const lit = p.selected.size === 0 || touches(edge, p.selected) || !dimsEdges(p.view);
+  if (p.selectedEdges?.has(index) === true) return p.palette.text;
+  const lit = !singlesOut(p) || touches(edge, p.selected) || !dimsEdges(p.view);
   return lit ? p.palette.edge : p.palette.edgeDimmed;
 }
 
@@ -169,13 +187,20 @@ export function edgeDisplay(
   if (edge === undefined || p.visibility.edges[index] === 0) {
     return { ...data, visibility: "hidden" };
   }
-  const near = touches(edge, p.selected);
+  const isSelected = p.selectedEdges?.has(index) === true;
+  const near = isSelected || touches(edge, p.selected);
   const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
   return {
     ...data,
-    color: edgeColor(edge, p),
+    color: edgeColor(edge, p, index),
+    ...(isSelected ? { size: data.size * SELECTED_EDGE_SCALE, zIndex: 1 } : {}),
     ...(shows(p.drawStyle.arrows) ? { head: "arrow" } : {}),
-    label: shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null,
+    // A selected edge always names its type, where the panel draws edge labels at all.
+    label:
+      (isSelected ? p.drawStyle.edgeLabels !== "never" : shows(p.drawStyle.edgeLabels)) &&
+      edge.type !== ""
+        ? edge.type
+        : null,
     labelColor: p.palette.text,
     labelBackgroundColor: p.palette.background,
   };

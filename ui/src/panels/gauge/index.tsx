@@ -37,6 +37,12 @@ const CX = 100;
 const CY = 100;
 const RADIUS = 76;
 const MARKER_RADIUS = 92;
+/**
+ * The drawing's bounds: the marker ring with its stroke at the top and sides, the arc's round
+ * ends at the bottom (the arc stops 60 degrees short of six o'clock, at CY + radius / 2). No
+ * empty margin, so the dial fills the panel the way its height or width allows.
+ */
+const VIEW_BOX = "4 4 192 148";
 
 function point(radius: number, degrees: number): [number, number] {
   const radians = (degrees * Math.PI) / 180;
@@ -89,7 +95,7 @@ function Gauge({
       : options.color);
   const end = START + SWEEP * share;
   return (
-    <svg className="gauge__svg" viewBox="0 0 200 170" aria-hidden="true">
+    <svg className="gauge__svg" viewBox={VIEW_BOX} aria-hidden="true">
       {!markers || options.thresholds === undefined
         ? null
         : thresholdBands(options.thresholds, range).map((band) => (

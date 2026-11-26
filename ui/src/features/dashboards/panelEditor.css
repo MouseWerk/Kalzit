@@ -20,6 +20,12 @@
     gap: var(--space-2) var(--space-3);
   }
 
+  /* The dashboard's variables above the preview, as on the dashboard; they wrap when narrow. */
+  .panel-editor__variables {
+    flex: none;
+    min-width: 0;
+  }
+
   .panel-editor__back-icon {
     transform: scaleX(-1);
   }
@@ -211,6 +217,31 @@
 
   .panel-editor__note {
     margin: 0 0 var(--space-3);
+  }
+
+  /* The query options above the queries (ParityEditors board, frame 5): one quiet row that
+     names its values while closed. */
+  .query-options {
+    margin-block-end: var(--space-3);
+  }
+
+  .query-options__pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-label), 1fr));
+    align-items: start;
+    gap: var(--space-2);
+  }
+
+  .query-options__result {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .query-options__macro {
+    margin-inline-start: var(--space-1);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-sm);
   }
 
   .panel-editor__queries {

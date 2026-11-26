@@ -534,13 +534,26 @@ function NavSection({
 
 /**
  * An entry the permissions hide, shown when its area's hook finds a grant; otherwise its
- * fallback, when the permissions show that.
+ * fallback, when the permissions show that. While the hook still waits for its data, a quiet
+ * placeholder holds the row (after a full page load the shell's data is usually there already,
+ * src/shell/primeShell.ts).
  */
 function GrantedNavEntry({
   useGranted = notGranted,
   ...entry
-}: ComponentProps<typeof NavEntry> & { useGranted: (() => boolean) | undefined }) {
+}: ComponentProps<typeof NavEntry> & { useGranted: (() => boolean | undefined) | undefined }) {
   const granted = useGranted();
+  if (granted === undefined) {
+    return (
+      <li
+        className="shell__nav-placeholder"
+        aria-hidden="true"
+        data-nav-placeholder={entry.item.to}
+      >
+        <span className="skeleton" />
+      </li>
+    );
+  }
   if (granted) {
     return <NavEntry {...entry} />;
   }

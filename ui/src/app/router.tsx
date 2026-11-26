@@ -9,6 +9,7 @@ import { exploreRoutes } from "../features/explore/routes";
 import { appsRoutes } from "../features/plugins/apps/routes";
 import { reportsRoutes } from "../features/reports/routes";
 import { settingsRoutes } from "../features/settings/routes";
+import { handbookRoutes } from "../handbook/routes";
 import { basePath } from "../lib/basePath";
 import { forgetClippingAncestors } from "../lib/tooltipPlace";
 import { HomePage } from "../pages/HomePage";
@@ -67,6 +68,7 @@ const routeTree = rootRoute.addChildren([
     ...adminRoutes,
     ...settingsRoutes,
     ...appsRoutes,
+    ...handbookRoutes,
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
