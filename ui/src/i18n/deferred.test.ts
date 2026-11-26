@@ -229,6 +229,7 @@ describe("keys of a deferred area", () => {
     serverAdmin: 5,
     apps: 5,
     handbook: 1,
+    graphStyle: 8,
   };
 
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
