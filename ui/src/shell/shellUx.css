@@ -1230,6 +1230,17 @@
     background: var(--bg);
   }
 
+  /*
+   * Next to the sidebar the main area scrolls and has no top padding (components.css): a sticky
+   * box holds at its scroll container's padding edge, so the bar keeps the room in its own
+   * padding and needs no margin to reach the window's top.
+   */
+  @media screen and (width > 48rem) {
+    .top-bar {
+      margin-block-start: 0;
+    }
+  }
+
   /* A control after the trail (the dashboard's star) sits on its line, outside the landmark. */
   .breadcrumbs-row {
     display: flex;

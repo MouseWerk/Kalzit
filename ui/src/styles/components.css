@@ -1000,8 +1000,13 @@
       height: 100dvh;
     }
 
+    /*
+     * A sticky box holds at its scroll container's padding edge: the room above the top bar is
+     * the bar's own padding here (shellUx.css), so the bar sticks at the window's top.
+     */
     .shell__main {
       overflow: auto;
+      padding-block-start: 0;
       scrollbar-gutter: stable;
       scroll-padding-block-start: calc(
         var(--top-bar-height, 0px) +

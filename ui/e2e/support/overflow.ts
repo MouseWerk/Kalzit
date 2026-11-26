@@ -49,7 +49,9 @@ export function findOverflow(page: Page): Promise<Overflow> {
         }
         const dialog = dialogs.find((d) => d !== element && d.contains(element));
         let limit = width;
-        if (mainScrolls && main?.contains(element) && dialog === undefined) {
+        // The main area's own box ends at the window, its scrollbar's gutter included; only what
+        // it holds stops before the gutter.
+        if (mainScrolls && main !== element && main?.contains(element) && dialog === undefined) {
           limit = Math.min(limit, mainEdge);
         }
         if (dialog !== undefined) {
