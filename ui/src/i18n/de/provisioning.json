@@ -1,5 +1,5 @@
 {
-  "provisioning.guide": "Anleitung",
+  "provisioning.guide": "Im Handbuch: Provisioning als Code",
   "provisioning.open": "Öffnen",
   "provisioning.quoted": "„{name}“",
   "provisioning.badge.managed": "Aus Dateien verwaltet",
@@ -202,6 +202,10 @@
   "provisioning.note.no_queries": "Keine seiner Abfragen ließ sich umwandeln.",
   "provisioning.note.grid_fitted": "Sein Platz wurde in die 24 Spalten eingepasst.",
   "provisioning.note.time_shift": "Die Zeitverschiebung {shift} ist keine einfache Dauer und ist weggefallen.",
+  "provisioning.note.footer_calcs": "Die Fußzeile der Tabelle behält nur ihre erste Rechnung.",
+  "provisioning.note.footer_approximated": "Die Rechnung {grafana} der Tabellen-Fußzeile wurde zu {kalzit}, die etwas anders rechnet.",
+  "provisioning.note.footer_calc": "Die Rechnung der Tabellen-Fußzeile hat kein Gegenstück und ist weggefallen.",
+  "provisioning.note.min_interval": "Das kleinste Intervall {interval} ist keine einfache Dauer bis zu einem Tag und ist weggefallen.",
   "provisioning.note.repeat_dropped": "Die Wiederholung über {variable} ist weggefallen: Diese Variable nimmt hier nicht mehrere Werte an.",
   "provisioning.note.panel_link": "Der Link {title} ist weggefallen: Seine Adresse ist weder http, https, mailto noch ein Pfad.",
   "provisioning.note.options_default": "Die Optionen sind auf die Standardwerte zurückgefallen, weil Kalzit sie nicht übernehmen konnte.",

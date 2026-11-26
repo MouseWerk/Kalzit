@@ -24,7 +24,8 @@ key itself: keep the key apart, as below. The target is a directory
 an administrator allowed in `backups.allowed_dirs` (never the data folder) or a bucket of an
 S3-compatible store (Amazon S3, MinIO, Ceph, Garage; Kalzit never creates the bucket). The target
 is saved only after a connection test passed. The newest `backups.keep_count` (14) backups stay at
-the target. Every run is in the run history and the audit log (docs/api/backups.md).
+the target. Every run is in the run history and the audit log (docs/api/backups.md). Set it up
+under [Administration > Backups](app:/settings/backups).
 
 With PostgreSQL, a scheduled backup holds the files only and a note that points to `pg_dump`
 ([below](#postgresql)): back the database up with the tools of PostgreSQL.

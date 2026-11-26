@@ -48,6 +48,18 @@ body:
     validations:
       required: true
   - type: dropdown
+    id: install
+    attributes:
+      label: How Kalzit is installed
+      options:
+        - Windows installer (MSI)
+        - deb or rpm package
+        - Container image (Docker, Podman)
+        - Plain binary from a release
+        - Built from source
+    validations:
+      required: true
+  - type: dropdown
     id: database
     attributes:
       label: Kalzit's own database

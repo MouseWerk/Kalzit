@@ -8,7 +8,8 @@
 # distribution (the leg does not use Docker Desktop). The leg runs as the user `ci`, as GitHub's
 # runner runs as a user of its own: Kalzit refuses to run plugins as root. `ci` may use sudo
 # without a password (the jobs that use sudo in ci.yml, and the browsers' system packages) and
-# Docker, and has its own Rust stable with rustfmt, clippy and cargo-audit. Windows' PATH is left
+# Docker, and has its own Rust stable with rustfmt, clippy, cargo-audit, sccache and
+# cargo-nextest. Windows' PATH is left
 # out of the distribution (appendWindowsPath=false), so Windows' node, npm and docker never stand
 # in for the Linux ones; that takes effect after `wsl --terminate Ubuntu`.
 
@@ -49,7 +50,12 @@ sudo -u ci -H bash -euo pipefail -c '
   rustup update stable > /dev/null
   rustup component add rustfmt clippy > /dev/null
   command -v cargo-audit > /dev/null || cargo install --locked cargo-audit > /dev/null
-  echo "ci: cargo $(cargo --version | cut -d" " -f2)"
+  # The compiler cache (its folder: ~/kz-ci/cache/sccache) and the test runner of the legs; the
+  # legs build and test without them when they are missing.
+  command -v sccache > /dev/null || cargo install --locked sccache > /dev/null
+  command -v cargo-nextest > /dev/null || cargo install --locked cargo-nextest > /dev/null
+  mkdir -p "$HOME/kz-ci/cache/sccache"
+  echo "ci: cargo $(cargo --version | cut -d" " -f2), $(sccache --version), $(cargo nextest --version | head -1)"
 '
 
 if ! grep -q appendWindowsPath /etc/wsl.conf 2> /dev/null; then

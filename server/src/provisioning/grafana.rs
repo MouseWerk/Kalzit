@@ -841,8 +841,8 @@ impl Converter<'_> {
                 if panel.pointer("/fieldConfig/defaults/custom/filterable").and_then(Value::as_bool) == Some(true) {
                     out.insert("columnFilters".into(), json!(true));
                 }
-                if o.pointer("/footer/show").and_then(Value::as_bool) == Some(true) {
-                    notes.push(note("table_footer", "the table footer is not available in Kalzit yet"));
+                if let Some(footer) = Self::table_footer(&o, notes) {
+                    out.insert("footer".into(), footer);
                 }
                 if o.get("sortBy").and_then(Value::as_array).is_some_and(|s| !s.is_empty()) {
                     notes.push(note("table_sort", "the table's starting sort order is not taken over"));
@@ -871,6 +871,91 @@ impl Converter<'_> {
             _ => {}
         }
         Value::Object(out)
+    }
+
+    /// A table's footer (`options.footer`): its first calculation, for the fields it names, or
+    /// for every number column when it names none. Grafana's names map to Kalzit's; where the
+    /// two calculate differently (a counter-aware delta, population against sample spread, a
+    /// row count against a count per number column) the footer is kept and a note says so.
+    fn table_footer(o: &Value, notes: &mut Vec<ImportNote>) -> Option<Value> {
+        let footer = o.get("footer")?;
+        if footer.get("show").and_then(Value::as_bool) != Some(true) {
+            return None;
+        }
+        let reducers: Vec<&str> =
+            footer.get("reducer").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+        if reducers.len() > 1 {
+            notes.push(note("footer_calcs", "the table footer keeps its first calculation only"));
+        }
+        let approximated = |notes: &mut Vec<ImportNote>, grafana: &str, kalzit: &str| {
+            notes.push(
+                note(
+                    "footer_approximated",
+                    format!("the table footer's {grafana} became {kalzit}, which calculates slightly differently"),
+                )
+                .with("grafana", grafana)
+                .with("kalzit", kalzit),
+            );
+        };
+        let calc: String = if footer.get("countRows").and_then(Value::as_bool) == Some(true) {
+            // Grafana counts the rows once; Kalzit counts the values of each number column.
+            approximated(notes, "countRows", "count");
+            "count".into()
+        } else {
+            match reducers.first().copied() {
+                Some("lastNotNull") => "last".into(),
+                Some("last") => "lastRow".into(),
+                Some("firstNotNull") => "first".into(),
+                Some("first") => "firstRow".into(),
+                Some("distinctCount") => "distinct".into(),
+                Some("diff") => "delta".into(),
+                Some("diffperc") => "deltaPercent".into(),
+                Some(r @ ("sum" | "mean" | "min" | "max" | "count" | "range" | "median")) => r.into(),
+                // Grafana's delta adds up the increases of a counter, across resets.
+                Some("delta") => {
+                    approximated(notes, "delta", "delta");
+                    "delta".into()
+                }
+                // Grafana's spread is the population one, Kalzit's the sample one (n - 1).
+                Some("stdDev") => {
+                    approximated(notes, "stdDev", "stddev");
+                    "stddev".into()
+                }
+                Some("variance") => {
+                    approximated(notes, "variance", "variance");
+                    "variance".into()
+                }
+                Some(p)
+                    if p.strip_prefix('p').is_some_and(|n| {
+                        !n.starts_with('0') && n.parse::<u8>().is_ok_and(|n| (1..=99).contains(&n))
+                    }) =>
+                {
+                    p.into()
+                }
+                _ => {
+                    notes
+                        .push(note("footer_calc", "the table footer’s calculation has no counterpart and was dropped"));
+                    return None;
+                }
+            }
+        };
+        let fields: Vec<String> = match footer.get("fields") {
+            Some(Value::Array(names)) => names.iter().filter_map(Value::as_str).map(str::to_string).take(100).collect(),
+            _ => Vec::new(),
+        };
+        let mut out = json!({ "show": true, "over": "all", "columns": [] });
+        if fields.is_empty() {
+            out["numbers"] = json!(calc);
+        } else {
+            out["columns"] = fields
+                .iter()
+                .filter(|f| !f.is_empty() && f.chars().count() <= 200 && !f.chars().any(char::is_control))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(|f| json!({ "column": f, "calc": calc }))
+                .collect();
+        }
+        Some(out)
     }
 
     /// The heatmap: whether it counts values into buckets or reads buckets, their counts, and
@@ -1075,6 +1160,38 @@ impl Converter<'_> {
                         .with("shift", &shift),
                 );
             }
+        }
+        // Query options: the points per series, the smallest interval (">30s" reads as "30s"),
+        // the cache time (seconds without a unit) and whether the header hides its time note.
+        if let Some(points) = panel.get("maxDataPoints").and_then(Value::as_u64)
+            && let Ok(points) = u32::try_from(points)
+            && (1..=model::MAX_PANEL_DATA_POINTS).contains(&points)
+        {
+            out["maxDataPoints"] = json!(points);
+        }
+        if let Some(interval) = text(panel, "interval").filter(|i| !i.starts_with('$')) {
+            let plain = interval.trim_start_matches('>').to_string();
+            if model::fixed_duration_ms(&plain).is_some_and(|ms| ms <= model::MAX_MIN_INTERVAL_MS) {
+                out["minInterval"] = json!(plain);
+            } else {
+                notes.push(
+                    note(
+                        "min_interval",
+                        format!("the smallest interval {interval} is not a plain length and was dropped"),
+                    )
+                    .with("interval", &interval),
+                );
+            }
+        }
+        if let Some(timeout) = text(panel, "cacheTimeout") {
+            let plain =
+                if timeout.chars().all(|c| c.is_ascii_digit()) { format!("{timeout}s") } else { timeout.clone() };
+            if model::fixed_duration_ms(&plain).is_some_and(|ms| ms <= crate::datasources::cache::MAX_TTL_SECS * 1000) {
+                out["cacheTimeout"] = json!(plain);
+            }
+        }
+        if panel.get("hideTimeOverride").and_then(Value::as_bool) == Some(true) {
+            out["hideTimeNote"] = json!(true);
         }
         if let Some(repeat) = text(panel, "repeat") {
             if self.variables.get(&repeat) == Some(&true) && row_id.is_none_or(|_| true) {
@@ -1886,6 +2003,89 @@ mod tests {
         assert_eq!(panels[1]["fieldConfig"]["defaults"]["axisScale"], "log");
         // What was carried passes Kalzit's own checks, so no option fell back to the defaults.
         assert!(!notes.iter().any(|n| n.starts_with("options_default")), "{notes:?}");
+    }
+
+    #[test]
+    fn query_options_and_table_footers_are_carried() {
+        let prom = json!({ "type": "prometheus", "uid": "prom-uid" });
+        let input = json!({
+            "schemaVersion": 39, "title": "Options",
+            "panels": [
+                { "id": 1, "type": "table", "title": "Totals", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "datasource": prom, "targets": [{ "refId": "A", "expr": "up" }],
+                  "maxDataPoints": 500, "interval": ">30s", "cacheTimeout": "60", "hideTimeOverride": true,
+                  "options": { "footer": { "show": true, "reducer": ["sum", "mean"], "fields": "" } } },
+                { "id": 2, "type": "table", "title": "Named", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": prom, "targets": [{ "refId": "A", "expr": "up" }],
+                  "maxDataPoints": 0, "interval": "1w",
+                  "options": { "footer": { "show": true, "reducer": ["lastNotNull"], "fields": ["Value", "Value"] } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let totals = &c.model["panels"][0];
+        assert_eq!(totals["maxDataPoints"], 500);
+        assert_eq!(totals["minInterval"], "30s");
+        assert_eq!(totals["cacheTimeout"], "60s");
+        assert_eq!(totals["hideTimeNote"], true);
+        assert_eq!(
+            totals["options"]["footer"],
+            json!({ "show": true, "over": "all", "columns": [], "numbers": "sum" })
+        );
+        let codes: Vec<_> = item(&c.report, "panel 1 \"Totals\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(codes.contains(&"footer_calcs".to_string()), "{codes:?}");
+        let named = &c.model["panels"][1];
+        assert!(named.get("maxDataPoints").is_none() && named.get("minInterval").is_none());
+        assert_eq!(named["options"]["footer"]["columns"], json!([{ "column": "Value", "calc": "last" }]));
+        let codes: Vec<_> = item(&c.report, "panel 2 \"Named\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(codes.contains(&"min_interval".to_string()), "{codes:?}");
+    }
+
+    #[test]
+    fn table_footer_calculations_map_and_say_where_they_differ() {
+        let footer_of = |footer: Value| {
+            let input = json!({
+                "schemaVersion": 39, "title": "Footer",
+                "panels": [{ "id": 1, "type": "table", "title": "T", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
+                  "options": { "footer": footer } }]
+            });
+            let c = convert(&input, &sources()).unwrap();
+            let notes: Vec<(String, Option<String>)> = item(&c.report, "panel 1 \"T\"")
+                .notes
+                .iter()
+                .map(|n| (n.code.clone(), n.params.get("grafana").cloned()))
+                .collect();
+            (c.model["panels"][0]["options"].get("footer").cloned(), notes)
+        };
+        let calc = |footer: &Option<Value>| footer.as_ref().map(|f| f["numbers"].clone());
+        let approximated = |notes: &[(String, Option<String>)], grafana: &str| {
+            notes.iter().any(|(code, g)| code == "footer_approximated" && g.as_deref() == Some(grafana))
+        };
+        // Same calculation under another name: no note.
+        for (grafana, kalzit) in
+            [("diff", "delta"), ("diffperc", "deltaPercent"), ("p95", "p95"), ("lastNotNull", "last")]
+        {
+            let (footer, notes) = footer_of(json!({ "show": true, "reducer": [grafana] }));
+            assert_eq!(calc(&footer), Some(json!(kalzit)), "{grafana}");
+            assert!(!notes.iter().any(|(code, _)| code.starts_with("footer")), "{grafana}: {notes:?}");
+        }
+        // Calculated differently: kept, with a note.
+        for (grafana, kalzit) in [("delta", "delta"), ("stdDev", "stddev"), ("variance", "variance")] {
+            let (footer, notes) = footer_of(json!({ "show": true, "reducer": [grafana] }));
+            assert_eq!(calc(&footer), Some(json!(kalzit)), "{grafana}");
+            assert!(approximated(&notes, grafana), "{grafana}: {notes:?}");
+        }
+        let (footer, notes) = footer_of(json!({ "show": true, "reducer": ["sum"], "countRows": true }));
+        assert_eq!(calc(&footer), Some(json!("count")));
+        assert!(approximated(&notes, "countRows"), "{notes:?}");
+        // No counterpart, or out of range: dropped with a note.
+        for grafana in ["allValues", "p0", "p100", "p05"] {
+            let (footer, notes) = footer_of(json!({ "show": true, "reducer": [grafana] }));
+            assert!(footer.is_none(), "{grafana}");
+            assert!(notes.iter().any(|(code, _)| code == "footer_calc"), "{grafana}: {notes:?}");
+        }
+        // Off: nothing.
+        assert!(footer_of(json!({ "show": false, "reducer": ["sum"] })).0.is_none());
     }
 
     #[test]

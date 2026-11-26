@@ -71,6 +71,10 @@ export interface Explorer {
   undo: () => void;
   /** Keeps the first `count` steps and takes back the others (0: back to the query's result). */
   backTo: (count: number) => void;
+  /** Takes back one step by its id, whatever came after it: the view history's undo. */
+  remove: (id: number) => void;
+  /** Puts a step that was taken back in place again, without asking the source: its redo. */
+  putBack: (step: ExplorerStep) => void;
   /** Nodes fetched by id (pins kept from an earlier visit), drawn with the steps. */
   restored: GraphSet | null;
   restore: (ids: readonly string[]) => void;
@@ -293,6 +297,13 @@ export function useExplorer(
     backTo: (count) => {
       cancel();
       setSteps((current) => current.slice(0, Math.max(0, count)));
+    },
+    remove: (id) => {
+      setError(null);
+      setSteps((current) => current.filter((step) => step.id !== id));
+    },
+    putBack: (step) => {
+      setSteps((current) => (current.some((s) => s.id === step.id) ? current : [...current, step]));
     },
     restored,
     restore: (ids) => void restore(ids),

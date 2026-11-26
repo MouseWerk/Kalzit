@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App, createApp } from "../app/app";
 import { createAppRouter } from "../app/router";
+import { GUIDE_SOURCES } from "../help/HelpPage";
 
 /**
  * Pages that load lazily (`lazyRouteComponent`) are loaded once when this helper is imported, so
@@ -25,6 +26,12 @@ async function preloadLazyPages(): Promise<string[]> {
 
 /** The ids of the lazy pages loaded before any test of a file runs. */
 export const PRELOADED_PAGES = await preloadLazyPages();
+
+// The help route's guide pages are chunks of their own too (src/help/HelpPage.tsx), loaded once
+// here for the same reason: under CI load even a module import waits on the test server.
+await Promise.all(
+  Object.values(GUIDE_SOURCES).flatMap((pages) => Object.values(pages).map((load) => load())),
+);
 
 /**
  * Renders the whole app (router, guards, query cache) at `path`, without retries unless a test
