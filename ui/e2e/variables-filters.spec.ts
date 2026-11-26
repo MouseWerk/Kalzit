@@ -3,7 +3,7 @@ import { Api, fixturesDir, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { REGIONS } from "./support/fixture-db";
 import { t } from "./support/i18n";
-import { expect, test } from "./support/test";
+import { expect, signInOwner, test } from "./support/test";
 
 let owner: Api;
 
@@ -42,6 +42,7 @@ test("ad hoc filters narrow a SQL panel through $__filter", async ({ page }) => 
     ],
   });
 
+  await signInOwner(page);
   await page.goto(`/dashboards/${dashboardId}`);
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   const panel = page.getByRole("article", { name: "Per region" });
