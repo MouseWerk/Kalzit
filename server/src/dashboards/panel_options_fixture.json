@@ -1901,7 +1901,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -5178,7 +5183,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -5909,7 +5916,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
