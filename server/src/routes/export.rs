@@ -349,7 +349,7 @@ async fn make_panel(
     // Hidden targets stay with the panel but are not run, unless a step reads them: a panel with
     // only hidden ones nobody reads has nothing to export. The queries resolve as the panel's own
     // do (`query::stored_items`): data source variables, ad hoc filters, checked values.
-    let super::query::PanelRun { items, variables, identifiers, unfiltered } =
+    let super::query::PanelRun { items, variables, identifiers, unfiltered, limits } =
         super::query::stored_items(state, ctx, &model, panel, &req.variables, None, &Default::default()).await?;
     if items.is_empty() {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
@@ -362,8 +362,7 @@ async fn make_panel(
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
     // The panel's query options bound the export as they bound its runs.
-    let (interval_ms, max_data_points) =
-        super::query::PanelLimits::of(panel).apply(req.time_range, req.interval_ms, req.max_data_points);
+    let (interval_ms, max_data_points) = limits.apply(req.time_range, req.interval_ms, req.max_data_points);
     let mut response = run_queries_with(
         state,
         ctx,
