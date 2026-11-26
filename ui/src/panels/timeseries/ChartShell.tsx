@@ -22,7 +22,14 @@ import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
 import { Legend, type LegendItem, Swatch, WithLegend } from "../fieldConfig/Legend";
-import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
+import {
+  type LegendOptions,
+  legendTexts,
+  type TooltipMode,
+  type TooltipOptions,
+} from "../fieldConfig/legendOptions";
+import { useStyleVars } from "../styleVars";
+import { type AxisKey, type AxisPlan, planAxes } from "./axes";
 import { nearestIndex, type Series } from "./series";
 import type { SeriesStyle } from "./styles";
 import "../panels.css";
@@ -36,14 +43,39 @@ export interface TimeSeriesChartProps {
   timeRange: { from: number; to: number };
   title: string;
   legend: LegendOptions;
-  tooltip: TooltipMode;
+  /** The tooltip options, or only its mode (sorted as the series are, zeros shown). */
+  tooltip: TooltipOptions | TooltipMode;
   /** A value of series `index` as text, with its unit, decimals and mappings. */
   format: (index: number, value: number) => string;
-  /** A value axis tick as text. */
-  axisFormat: (value: number) => string;
-  /** Fixed ends of the value axis from the field options; open ends follow the data. */
-  yRange?: { min?: number | undefined; max?: number | undefined };
+  /**
+   * The value axes (left, right) and which one each series is drawn on (`axes.ts`); absent: one
+   * linear axis on the left from the series' own options.
+   */
+  axes?: readonly AxisPlan[] | undefined;
+  axisOf?: readonly AxisKey[] | undefined;
+  /** A tick of a value axis as text; the axis' other ticks decide how many digits it takes. */
+  axisFormat: (value: number, key: AxisKey, ticks: readonly number[]) => string;
+  /** A line under the chart, such as the points a log axis leaves out. */
+  note?: string | undefined;
+  /**
+   * An X axis of numbers instead of time (the Trend panel): `timeRange` is then the span of the
+   * numbers, the ticks are round numbers written by `format`, and the dashboard's shared cursor
+   * and annotations, which are times, stay off.
+   */
+  numberAxis?: NumberAxis;
 }
+
+/** How a number X axis writes its values. */
+export interface NumberAxis {
+  format: (x: number) => string;
+}
+
+/** The shared cursor of a chart that takes no part in the dashboard's (a number axis). */
+const NO_SHARED_CURSOR: ReturnType<typeof useSharedCursor> = {
+  mode: "off",
+  time: null,
+  publish: () => {},
+};
 
 /** Series colors cycle through this many palette entries (`--chart-1` ... `--chart-8`). */
 export const SERIES_COLORS = 8;
@@ -52,6 +84,9 @@ export const SERIES_COLORS = 8;
 export interface PlotArea {
   left: number;
   width: number;
+  /** The plot's top and height; annotations stand on its time axis where these are known. */
+  top?: number | undefined;
+  height?: number | undefined;
 }
 
 interface ChartShellProps {
@@ -60,16 +95,51 @@ interface ChartShellProps {
   styles: readonly SeriesStyle[];
   title: string;
   legend: LegendOptions;
-  tooltip: TooltipMode;
+  tooltip: TooltipOptions | TooltipMode;
   format: (index: number, value: number) => string;
+  note?: string | undefined;
   boxRef: RefObject<HTMLDivElement | null>;
   plot: PlotArea;
   /** The time at a horizontal position in the box. */
   timeAt: (x: number) => number;
   /** The value at a vertical position in the box, for the single-series tooltip. */
   valueAt?: (y: number) => number;
+  /** The X axis is numbers written this way (`numberAxis`), not times. */
+  xFormat?: ((x: number) => string) | undefined;
   /** The drawing; it gets the cursor position to draw, or null. */
   children: (cursorX: number | null) => ReactNode;
+}
+
+/** The tooltip options from the options or a mode alone. */
+function tooltipOf(tooltip: TooltipOptions | TooltipMode): TooltipOptions {
+  return typeof tooltip === "string" ? { mode: tooltip } : tooltip;
+}
+
+/** The value axes a chart draws: the ones given, else one left axis from the series' options. */
+export function chartAxes(
+  props: Pick<TimeSeriesChartProps, "series" | "styles" | "axes" | "axisOf">,
+): { axes: readonly AxisPlan[]; axisOf: readonly AxisKey[] } {
+  if (props.axes !== undefined) {
+    return { axes: props.axes, axisOf: props.axisOf ?? props.series.map(() => "y") };
+  }
+  return planAxes(props.series, props.styles, {});
+}
+
+/**
+ * The rows of the tooltip, scrolling below the time once they are higher than the largest
+ * height (half the window by default) and no wider than the largest width when one is set.
+ */
+function TooltipRows({ options, children }: { options: TooltipOptions; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const sizes: Record<string, string> = {};
+  if (options.maxWidth !== undefined) sizes["--tooltip-max-width"] = `${options.maxWidth}px`;
+  if (options.maxHeight !== undefined) sizes["--tooltip-max-height"] = `${options.maxHeight}px`;
+  useStyleVars(ref, sizes);
+  return (
+    <div className="ts__tooltip-rows" ref={ref}>
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -84,15 +154,19 @@ export function ChartShell({
   styles,
   title,
   legend,
-  tooltip,
+  tooltip: tooltipOptions,
   format,
+  note,
   boxRef,
   plot,
   timeAt,
   valueAt,
+  xFormat,
   children,
 }: ChartShellProps) {
   const { t, language, timeZone } = useI18n();
+  const tip = tooltipOf(tooltipOptions);
+  const tooltip = tip.mode;
   const hintId = useId();
   const tooltipRef = useRef<FloatingTooltipHandle>(null);
   // Where the pointer is, in the viewport: the tooltip's place while this chart is hovered.
@@ -102,7 +176,9 @@ export function ChartShell({
   // Whether the plot has keyboard focus and the cursor follows the keyboard (not the pointer).
   const [focused, setFocused] = useState(false);
   const [byKeyboard, setByKeyboard] = useState(false);
-  const annotations = usePanelAnnotations();
+  // Annotations and the shared cursor are times; a number axis has neither.
+  const panelAnnotations = usePanelAnnotations();
+  const annotations = xFormat === undefined ? panelAnnotations : null;
   const annotateHintId = useId();
   const onAdd = annotations?.onAdd;
 
@@ -115,7 +191,10 @@ export function ChartShell({
   });
   // The dashboard's shared cursor: this chart publishes the time under its pointer and draws the
   // time another panel points at while its own pointer is elsewhere.
-  const sharedCursor = useSharedCursor();
+  const dashboardCursor = useSharedCursor();
+  const sharedCursor = xFormat === undefined ? dashboardCursor : NO_SHARED_CURSOR;
+  const xLabel = (x: number) =>
+    xFormat === undefined ? new Date(x).toLocaleString(language, zoneOption(timeZone)) : xFormat(x);
   const plotFrom = timeAt(plot.left);
   const plotTo = timeAt(plot.left + plot.width);
   const otherX =
@@ -141,7 +220,7 @@ export function ChartShell({
     cursorTime === null || !byKeyboard
       ? ""
       : [
-          new Date(cursorTime).toLocaleString(language, zoneOption(timeZone)),
+          xLabel(cursorTime),
           ...readout.map(
             (row) =>
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : format(row.index, row.value)}`,
@@ -189,6 +268,21 @@ export function ChartShell({
     );
     shown = nearest === undefined ? [] : [nearest];
   }
+  // Series at zero left out, and how many, then the order by the value at the pointer.
+  const zeros = tip.hideZeros === true ? shown.filter((row) => row.value === 0).length : 0;
+  if (zeros > 0) {
+    shown = shown.filter((row) => row.value !== 0);
+  }
+  if (tip.sort !== undefined && tip.sort !== "none") {
+    const descending = tip.sort === "desc";
+    shown = [...shown].sort((a, b) => {
+      // Series without a value stay at the end either way.
+      if (Number.isNaN(a.value) || Number.isNaN(b.value)) {
+        return Number.isNaN(a.value) ? (Number.isNaN(b.value) ? 0 : 1) : -1;
+      }
+      return descending ? b.value - a.value : a.value - b.value;
+    });
+  }
 
   const clamp = (x: number) => Math.min(Math.max(x, plot.left), plot.left + plot.width);
 
@@ -229,19 +323,20 @@ export function ChartShell({
   }
 
   const legendItems: LegendItem[] = series.map((s, index) => {
-    const stats = legend.values.length === 0 ? null : seriesStats(s.values);
-    const values: LegendItem["values"] = {};
-    if (stats !== null) {
-      for (const key of legend.values) {
-        const value = stats[key];
-        values[key] = Number.isNaN(value) ? "" : format(index, value);
-      }
-    }
+    const { texts, numbers } = legendTexts(
+      legend.mode === "hidden" ? [] : legend.values,
+      s.values,
+      s.times,
+      (value) => format(index, value),
+      language,
+      timeZone,
+    );
     return {
       name: s.name,
       colorClass: styles[index]?.swatchClass ?? "",
       freeColor: styles[index]?.freeColor ?? null,
-      values,
+      values: texts,
+      numbers,
     };
   });
 
@@ -318,26 +413,39 @@ export function ChartShell({
           tooltip === "hidden" ||
           (cursorX === null && sharedCursor.mode !== "tooltip") ? null : (
             <FloatingTooltip ref={tooltipRef} className="ts__tooltip" anchor={tooltipAnchor}>
-              <div className="ts__tooltip-time">
-                {new Date(cursorTime).toLocaleString(language, zoneOption(timeZone))}
-              </div>
-              {shown.map((row) => (
-                <div key={row.index} className="ts__tooltip-row">
-                  <Swatch
-                    className={styles[row.index]?.swatchClass ?? ""}
-                    freeColor={styles[row.index]?.freeColor}
-                  />
-                  <span className="truncate" title={row.name}>
-                    {row.name}
-                  </span>
-                  <span className="ts__tooltip-value">
-                    {Number.isNaN(row.value) ? "" : format(row.index, row.value)}
-                  </span>
+              <div className="ts__tooltip-time">{xLabel(cursorTime)}</div>
+              <TooltipRows options={tip}>
+                {shown.map((row) => (
+                  <div key={row.index} className="ts__tooltip-row">
+                    <Swatch
+                      className={styles[row.index]?.swatchClass ?? ""}
+                      freeColor={styles[row.index]?.freeColor}
+                    />
+                    <span className="truncate" title={row.name}>
+                      {row.name}
+                    </span>
+                    <span className="ts__tooltip-value">
+                      {Number.isNaN(row.value) ? "" : format(row.index, row.value)}
+                    </span>
+                  </div>
+                ))}
+              </TooltipRows>
+              {zeros === 0 ? null : (
+                <div className="ts__tooltip-note">
+                  {t(
+                    zeros === 1
+                      ? "panels.tooltip.zerosHidden.one"
+                      : "panels.tooltip.zerosHidden.other",
+                    {
+                      count: zeros,
+                    },
+                  )}
                 </div>
-              ))}
+              )}
             </FloatingTooltip>
           )}
         </div>
+        {note === undefined ? null : <p className="panel-note ts__note">{note}</p>}
       </div>
     </WithLegend>
   );

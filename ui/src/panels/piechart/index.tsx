@@ -216,6 +216,24 @@ export function pieGeometry(
   return { cx: width / 2, cy: height / 2, radius };
 }
 
+/** Outside labels are drawn only while the circle keeps at least this radius in px ... */
+const MIN_LABELED_RADIUS = 32;
+/** ... and at least this share of the radius it would have without them. */
+const MIN_LABELED_SHARE = 0.5;
+
+/**
+ * Whether labels of this width fit outside the circle: only while the circle beside them keeps
+ * a readable size. In a narrow panel the circle wins and the labels give way.
+ */
+export function outsideLabelsFit(width: number, height: number, labelWidth: number): boolean {
+  if (labelWidth <= 0) {
+    return true;
+  }
+  const bare = pieGeometry(width, height, 0).radius;
+  const labeled = pieGeometry(width, height, labelWidth).radius;
+  return labeled >= MIN_LABELED_RADIUS && labeled >= bare * MIN_LABELED_SHARE;
+}
+
 /** A slice as an SVG path between two angles (radians from twelve o'clock, clockwise). */
 export function slicePath(
   from: number,
@@ -281,15 +299,19 @@ function PiePanel({
         ? nameOf(slice)
         : valueText(slice);
   });
-  const widest = inside
+  const measured = inside
     ? 0
     : Math.max(0, ...texts.map((text) => (text === null ? 0 : labelWidth(text, labelFont))));
+  // Outside labels that would shrink the circle to a dot are left out; the legend and the
+  // tooltip still name every slice.
+  const outsideFits = outsideLabelsFit(width, height, measured);
+  const widest = outsideFits ? measured : 0;
   const { cx, cy, radius } = pieGeometry(width, height, widest);
   const inner = options.pieType === "donut" ? (radius * HOLE) / RADIUS : 0;
   const labels = texts.map((text, index) => {
     if (text === null) return null;
     const arc = arcs[index] as { from: number; to: number };
-    if (!inside) return { text, radius: radius + LABEL_OFFSET };
+    if (!inside) return outsideFits ? { text, radius: radius + LABEL_OFFSET } : null;
     const place = insideLabel(arc, inner, radius, labelWidth(text, labelFont));
     return place === null ? null : { text, radius: place.radius };
   });

@@ -454,6 +454,7 @@ mod tests {
                 budget: super::super::frame::ResponseBudget::new(1 << 20),
             },
             cursor: None,
+            filters: Vec::new(),
         };
         let QueryResult::Frame { frame } = step("query", Redis.query(&conn, req)).await.unwrap() else {
             panic!("frame")

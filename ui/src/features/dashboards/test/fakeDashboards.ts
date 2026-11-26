@@ -75,6 +75,11 @@ export interface FakeDashboardsState {
   unqueryable: string[];
   /** Variables whose options answer says more exist than were sent. */
   truncatedOptions: string[];
+  /** Variables whose options query fails, as a data source error with this message. */
+  failingOptions: Record<string, string>;
+  /** Holds every options request until the test calls `releaseOptions`. */
+  holdOptions: boolean;
+  releaseOptions: () => void;
   /** The organization setting `dashboards.default_time_range`, applied on create. */
   orgDefaultTimeRange: { from: string; to: string };
   /** Titles of dashboards created without a time range of their own. */
@@ -157,11 +162,21 @@ function summary(d: StoredDashboard) {
     createdAt: d.createdAt,
     updatedAt: current.createdAt,
     updatedBy: current.authorId,
+    updatedByName: current.authorName,
     deletedAt: d.deletedAt,
     tags: current.model.tags ?? [],
     ownerTeam: null,
     teamOnly: false,
   };
+}
+
+/** The layout preview of a model, as the server builds it (panels outside rows only here). */
+function layoutOf(model: DashboardModel) {
+  const items = model.panels
+    .filter((panel) => panel.rowId === undefined)
+    .map((panel) => ({ ...panel.grid, type: panel.type }))
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+  return { items: items.slice(0, 24), more: items.length > 24 };
 }
 
 function detail(d: StoredDashboard, areas?: FakeAreaStates) {
@@ -248,6 +263,10 @@ const PANEL_FIELDS = [
   "repeat",
   "timeFrom",
   "timeShift",
+  "maxDataPoints",
+  "minInterval",
+  "cacheTimeout",
+  "hideTimeNote",
   "links",
   "libraryPanelId",
   "analysisId",
@@ -263,8 +282,49 @@ const VARIABLE_FIELDS = [
   "options",
   "current",
   "multi",
+  "valuesFrom",
+  "includeAll",
+  "allValue",
+  "regex",
+  "sort",
+  "refresh",
+  "staticOptions",
+  "allowCustom",
+  "datasourceKind",
+  "onValue",
+  "offValue",
 ];
-const VARIABLE_TYPES = ["query", "custom", "constant", "textbox", "interval"];
+const VARIABLE_TYPES = [
+  "query",
+  "custom",
+  "constant",
+  "textbox",
+  "interval",
+  "datasource",
+  "adhoc",
+  "switch",
+];
+
+/** The server's rules for data source variables, ad hoc filters and switches (model.rs). */
+function kindProblem(variable: Record<string, unknown>, at: string): string | null {
+  if (variable.type === "datasource") {
+    if (typeof variable.datasourceKind !== "string") return `${at}.datasourceKind: required`;
+    if (typeof variable.current !== "string" || variable.current === "") {
+      return `${at}.current: the id of the default data source`;
+    }
+  } else if (variable.datasourceKind !== undefined) {
+    return `${at}.datasourceKind: only for data source variables`;
+  }
+  if (variable.type === "switch") {
+    if (typeof variable.onValue !== "string" || typeof variable.offValue !== "string") {
+      return `${at}.onValue and offValue are required for a switch`;
+    }
+    if (variable.onValue === variable.offValue) return `${at}.onValue and offValue must differ`;
+  } else if (variable.onValue !== undefined || variable.offValue !== undefined) {
+    return `${at}.onValue and offValue belong only to switches`;
+  }
+  return null;
+}
 
 /** The documented model checks that matter to the UI; a message names the place like the server. */
 export function modelProblem(model: unknown): string | null {
@@ -286,9 +346,12 @@ export function modelProblem(model: unknown): string | null {
     const field = unknownField(variable, VARIABLE_FIELDS);
     if (field !== undefined) return `model.variables[${i}].${field}: unknown field`;
     if (!VARIABLE_TYPES.includes(String(variable.type))) return `model.variables[${i}].type`;
-    if ((variable.type === "query") !== (variable.datasourceId !== undefined)) {
-      return `model.variables[${i}].datasourceId: only and always for query variables`;
+    const takesSource = variable.type === "query" || variable.type === "adhoc";
+    if (takesSource !== (variable.datasourceId !== undefined)) {
+      return `model.variables[${i}].datasourceId: only and always for query variables and ad hoc filters`;
     }
+    const problem = kindProblem(variable, `model.variables[${i}]`);
+    if (problem !== null) return problem;
   }
   const ids = new Set<string>();
   for (const [i, panel] of ((m.panels ?? []) as Record<string, unknown>[]).entries()) {
@@ -353,7 +416,15 @@ function variablesProblem(model: DashboardModel, sent: unknown): boolean {
         typeof o === "object" && o !== null ? String((o as { value?: unknown }).value) : String(o),
       );
       const values = Array.isArray(value) ? value : [value];
-      if (!values.every((v) => options.includes(String(v)))) {
+      // As on the server: the custom value for "All" alone, or any value where typed ones are
+      // allowed, passes too.
+      const allValue = variable.includeAll === true ? variable.allValue : undefined;
+      const isAllValue = allValue !== undefined && values.length === 1 && values[0] === allValue;
+      if (
+        !values.every((v) => options.includes(String(v))) &&
+        !isAllValue &&
+        !variable.allowCustom
+      ) {
         return true;
       }
     }
@@ -368,6 +439,7 @@ function validation(field: string, message = `invalid ${field}`): Response {
 export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsState> {
   let nextId = 1;
   let waiting: (() => void)[] = [];
+  let waitingOptions: (() => void)[] = [];
   const state: FakeDashboardsState = {
     folders: [],
     teams: [],
@@ -378,6 +450,14 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     grants: {},
     unqueryable: [],
     truncatedOptions: [],
+    failingOptions: {},
+    holdOptions: false,
+    releaseOptions: () => {
+      state.holdOptions = false;
+      const pending = waitingOptions;
+      waitingOptions = [];
+      for (const resolve of pending) resolve();
+    },
     orgDefaultTimeRange: { from: "now-6h", to: "now" },
     createdWithoutRange: [],
     variableRequests: [],
@@ -655,6 +735,38 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     if (parts[0] !== "dashboards") {
       return undefined;
     }
+    // The caller's stars and recently opened dashboards live in the shell's fake.
+    const starredIds = () => new Set(areas.shell.stars.map((s) => s.dashboardId));
+    const openedAt = (id: string) => areas.shell.views.find((v) => v.dashboardId === id)?.at;
+    const listable = (d: StoredDashboard) =>
+      d.deletedAt === null &&
+      visible(d.folderId) &&
+      !trashedChain(d.folderId) &&
+      inScope(d.folderId);
+    if (parts.length === 2 && parts[1] === "counts" && method === "GET") {
+      if (!can("dashboards:read")) return error(403, "forbidden");
+      const extra = unknownParam(search, ["team"]);
+      if (extra !== undefined) return validation(extra);
+      const shown = state.dashboards.filter(listable);
+      const folders = new Map<string | null, number>();
+      const tags = new Map<string, { tag: string; count: number }>();
+      for (const d of shown) {
+        folders.set(d.folderId, (folders.get(d.folderId) ?? 0) + 1);
+        for (const tag of latest(d).model.tags ?? []) {
+          const entry = tags.get(tag.toLowerCase()) ?? { tag, count: 0 };
+          entry.count += 1;
+          tags.set(tag.toLowerCase(), entry);
+        }
+      }
+      const stars = starredIds();
+      return json(200, {
+        total: shown.length,
+        folders: [...folders].map(([folderId, count]) => ({ folderId, count })),
+        starred: shown.filter((d) => stars.has(d.id)).length,
+        opened: shown.filter((d) => openedAt(d.id) !== undefined).length,
+        tags: [...tags.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)),
+      });
+    }
     if (parts.length === 1 && method === "GET") {
       if (!can("dashboards:read")) return error(403, "forbidden");
       const extra = unknownParam(search, [
@@ -665,20 +777,33 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         "limit",
         "cursor",
         "team",
+        "starred",
+        "opened",
+        "layout",
+        "sort",
       ]);
       if (extra !== undefined) return validation(extra);
+      const sort = search.get("sort") ?? "title";
+      if (!["title", "updated", "opened"].includes(sort)) return validation("sort");
       const folderId = search.get("folderId");
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
         return error(404, "not_found");
       }
       const trashed = search.get("trashed") === "true";
       const q = (search.get("q") ?? "").toLowerCase();
+      const stars = starredIds();
+      // Title, a tag or the name of the folder it is in, as on the server.
+      const matches = (d: StoredDashboard) =>
+        latest(d).model.title.toLowerCase().includes(q) ||
+        (q !== "" &&
+          ((latest(d).model.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+            (folderById(d.folderId)?.name.toLowerCase().includes(q) ?? false)));
       const items = state.dashboards
         .filter((d) => (trashed ? d.deletedAt !== null : d.deletedAt === null))
         .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
         .filter((d) => inScope(d.folderId))
-        .filter((d) => latest(d).model.title.toLowerCase().includes(q))
+        .filter(matches)
         .filter((d) => {
           const tag = search.get("tag");
           return (
@@ -686,8 +811,30 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
             (latest(d).model.tags ?? []).some((t) => t.toLowerCase() === tag.toLowerCase())
           );
         })
-        .map((d) => ({ ...summary(d), access: accessOf(d) }))
-        .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+        .filter((d) => search.get("starred") !== "true" || stars.has(d.id))
+        .filter((d) => search.get("opened") !== "true" || openedAt(d.id) !== undefined)
+        .map((d) => {
+          const opened = openedAt(d.id);
+          return {
+            ...summary(d),
+            access: accessOf(d),
+            starred: stars.has(d.id),
+            ...(opened === undefined ? {} : { openedAt: opened }),
+            ...(search.get("layout") === "true" ? { layout: layoutOf(latest(d).model) } : {}),
+          };
+        })
+        .sort((a, b) => {
+          const byTitle = a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+          if (sort === "updated") return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+          if (sort === "opened") {
+            return (
+              (b.openedAt ?? 0) - (a.openedAt ?? 0) ||
+              b.updatedAt - a.updatedAt ||
+              b.id.localeCompare(a.id)
+            );
+          }
+          return byTitle;
+        });
       return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {
@@ -772,13 +919,26 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (extra !== undefined) return validation(extra);
       const name = decodeURIComponent(parts[3] ?? "");
       const variable = latest(dashboard).model.variables.find((v) => v.name === name);
-      if (variable === undefined || variable.type !== "query") return error(404, "not_found");
+      // A data source variable answers the sources the test seeded in `variableOptions`.
+      if (variable === undefined || (variable.type !== "query" && variable.type !== "datasource")) {
+        return error(404, "not_found");
+      }
       if (variablesProblem(latest(dashboard).model, body.variables)) return validation("variables");
       if (name in ((body.variables ?? {}) as Record<string, unknown>))
         return validation("variables");
       state.variableRequests.push({ name, body });
-      const options = state.variableOptions[name] ?? [];
-      return json(200, { options, truncated: state.truncatedOptions.includes(name) });
+      const answer = (): Response => {
+        const failure = state.failingOptions[name];
+        if (failure !== undefined) {
+          return json(502, { error: { code: "datasource_error", message: failure } });
+        }
+        const options = state.variableOptions[name] ?? [];
+        return json(200, { options, truncated: state.truncatedOptions.includes(name) });
+      };
+      if (state.holdOptions) {
+        return new Promise<void>((resolve) => waitingOptions.push(resolve)).then(answer);
+      }
+      return answer();
     }
     if (parts[2] === "versions" && method === "GET") {
       const denied = needs("dashboards:read");

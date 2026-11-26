@@ -88,10 +88,31 @@ hätten die Standardwerte sie nicht gesetzt.
 
 ## Zeitreihe
 
-Werte über die Zeit als Linien. Optionen: **Legende** (Liste, Tabelle, Ausgeblendet; Position
-Unten oder Rechts; Werte Letzter, Minimum, Maximum, Mittelwert), **Tooltip** (Nächste Reihe, Alle
-Reihen, Ausgeblendet), **Namen der Reihen** (Label-Namen in doppelten geschweiften Klammern, etwa
-`{{job}} on {{instance}}`) und der **Diagrammstil**:
+Werte über die Zeit als Linien. Optionen: **Tooltip** (Nächste Reihe, Alle Reihen, Ausgeblendet;
+sortiert nach dem Wert am Zeiger, Nullen ausgeblendet, größte Breite und Höhe), **Legende**
+(gezeigt oder nicht, Liste oder Tabelle, Unten oder Rechts, eine Breite neben dem Diagramm,
+**Höchstens** eine Zahl von Serien mit „alle zeigen“ für den Rest, und bis zu sechs **Werte** je
+Serie), **Namen der Reihen** (Label-Namen in doppelten geschweiften Klammern, etwa
+`{{job}} on {{instance}}`), die **Achsen** und der **Diagrammstil**.
+
+Die Werte der Legende werden über den sichtbaren Zeitraum gerechnet: Letzter, Min, Max, Mittel,
+Summe; Erster, Differenz, Änderung in %, Spanne; Median, jedes Perzentil (p1 bis p99),
+Standardabweichung, Varianz; Anzahl, Eindeutige Werte, Lücken; und Letzter oder Erster als Zeile
+(genau die jüngste oder älteste Zeile, leer bei einer Lücke) und Zeitpunkt des Max. Letzter und
+Erster überspringen Lücken. Die Liste zeigt die ersten zwei, die Tabelle jeden als Spalte und sortiert
+per Klick auf den Spaltenkopf.
+
+**Achsen**: Platzierung Auto (links; ein Feld mit einer zweiten Einheit bekommt die rechte Achse),
+Links, Rechts oder Aus, eine Beschriftung, eine feste Breite, Gitterlinien (Auto: nur von der
+linken Achse), die Farbe der Achse (Text oder wie die Serie) und die Achsenlinie, die **Skala**
+linear, logarithmisch (Basis 2 oder 10) oder **Log um null** (nahe null linear, darüber
+logarithmisch, auch negative Werte), Null in der Mitte und eine weiche Unter- und Obergrenze, die
+die Achse mindestens erreicht und über die sie hinauswächst. Ein Override setzt sie für ein Feld,
+etwa eine zweite Achse rechts. Eine logarithmische Skala kann Werte von null und darunter nicht
+zeichnen: das Diagramm nennt, wie viele Punkte es ausgelassen hat. Balkendiagramm und Histogramm
+nehmen dieselben Achsen-Optionen für ihre Werteachse.
+
+Der **Diagrammstil**:
 
 - **Zeichnen als**: Linien, Balken oder Punkte.
 - **Linienverlauf**: linear, geglättet, Stufe davor, Stufe danach. **Linienstärke** (0 bis 10 px)
@@ -149,6 +170,18 @@ setzt** eine Dashboard-Variable auf den Wert der Zeile in der **Spalte für die 
 Name, den die Kopfzeile zeigt, oder der Feldname; leer nimmt die erste Spalte); diese Zelle wird
 zu einer Schaltfläche, sodass auch die Tastatur sie erreicht.
 
+**Fußzeile** fügt unten eine Zeile an, die beim Scrollen stehen bleibt: eine Rechnung je Spalte,
+etwa **Summe**, **Mittel**, **Anzahl** (als „4 von 2.000 Zeilen“), **Min**, **Max**, **Median**,
+**p95** oder **Erster** und **Letzter** (die leere Zellen überspringen; **Erste Zeile** und
+**Letzte Zeile** nicht). **Alle Zahlenspalten** setzt eine Rechnung für jede Zahlenspalte, **Je
+Spalte** setzt oder ändert sie für eine Spalte. **Rechnet über** alle Zeilen der Abfrage oder nur
+die Zeilen, die die Spaltenfilter behalten; eine Zeile unter der Tabelle sagt immer, worüber,
+und „über die geladenen N Zeilen“, wenn das Zeilenlimit der Abfrage die Antwort gekürzt hat.
+Summe, Mittel und Perzentile tragen die Einheit der Spalte; Anzahlen und die Varianz sind reine
+Zahlen. Importierte Grafana-Tabellen behalten die erste Rechnung ihrer Fußzeile; wo Grafana anders
+rechnet (seine Differenz für Zähler, die Streuung der Grundgesamtheit, eine Zeilenzahl), sagt es
+der Import-Bericht.
+
 ## Kreisdiagramm
 
 **Form** Kreis oder Ring. **Beschriftung** Keine, Prozent, Name oder Wert; **Position der
@@ -161,6 +194,35 @@ eines wird.
 
 Wie sich Werte auf gleich breite Klassen verteilen. Optionen: **Klassen** (Anzahl; leer wählt eine
 Anzahl nach der Datenmenge), **Klassenbreite**, **Alle Felder zusammen zählen**.
+
+## XY-Diagramm
+
+Zwei Zahlfelder gegeneinander, ein Punkt je Zeile: Warenkorb gegen Lieferzeit, Preis gegen
+Losgröße. **Zuordnung**: **Automatisch** nimmt das erste Zahlfeld als X und jedes weitere als
+Y-Serie; **Von Hand** nimmt das **X-Feld** und **Y-Feld**, das du wählst. **Serie je Wert von**
+einem Feld gibt jedem Wert eine eigene Farbe, bis 8; weitere Werte fasst Kalzit als **Weitere**
+zusammen. **Größe nach** einem Zahlfeld skaliert die Punkte zwischen **Punktgröße von** und
+**bis**; **Farbe nach** einem Zahlfeld färbt sie von hell nach dunkel, mit der Skala über dem
+Diagramm. **Zeigen**: Punkte, Linien (verbinden die Punkte einer Serie in der Reihenfolge von X)
+oder Beides, dazu die **Deckkraft der Punkte**.
+
+Das Diagramm liest Tabellen, wie sie sind: Dokumente und Graphen brauchen vorher den Schritt **In
+Tabelle projizieren**. Es zeichnet bis 12.000 Punkte; darüber zeichnet es eine gleichmäßige
+Auswahl, sagt, wie viele von allen es zeigt (die Achsen gelten für alle), und bietet **Als Dichte
+zeigen** an. Ein gezogenes Rechteck vergrößert, **Zurücksetzen** oder ein Doppelklick stellt
+zurück; der Ausschnitt wird nicht gespeichert. Die Pfeiltasten gehen durch die Punkte in der
+Reihenfolge von X, die Ansage nennt die Felder der Zeile.
+
+## Trend
+
+Eine Zeitreihe ohne Zeit: die X-Achse ist ein Zahlfeld mit aufsteigenden Werten, etwa das Alter
+eines Kontos in Tagen, eine Stufe, eine Menge oder eine Kalenderwoche. **X-Feld**: Automatisch
+nimmt das erste Zahlfeld, dessen Werte aufsteigen; alle anderen Zahlfelder sind Serien, gezeichnet
+wie in der Zeitreihe (**Darstellung**, Achsen, Legende und Tooltip). Das Panel sortiert und
+gruppiert nie von selbst. Springt X zurück, sagt es, in welcher Zeile, und bietet den Schritt
+**Sortieren** an; wiederholt sich ein X-Wert, den Schritt **Gruppieren** mit dem Mittel; ist X
+Text, das Balkendiagramm. **Als XY-Diagramm zeigen** nimmt die Zeilen, wie sie sind. Die Knöpfe
+stehen im Panel-Editor, auf dem Dashboard erklärt der Hinweis.
 
 ## Heatmap
 
@@ -293,6 +355,23 @@ ausgewählter Knoten werden gezeichnet, egal was sie verdecken, sodass sie über
 können. Eine Auswahl gibt einer Variablen mit mehreren Werten höchstens 100 Werte und sagt das;
 ein Klick auf einen Knoten, dessen Nachbarn sich nicht laden lassen, öffnet stattdessen seine
 Details.
+
+Die Werkzeuge auf der Zeichenfläche (oben links) bestimmen, wie der Zeiger wählt (**Zeiger** V,
+**Rechteck** R, **Lasso** L; Umschalt nimmt dazu, Alt nimmt weg, ein Doppelklick hält das
+Werkzeug fest), öffnen die **Suche** (F), tragen **Rückgängig** und **Wiederholen** mit dem
+Verlauf dieser Ansicht und zoomen. Einen Knoten zu ziehen verschiebt ihn und heftet ihn dort an,
+wo du ihn loslässt; **Lösen** (P) lässt das Layout ihn wieder platzieren. Beim Ansehen merkt sich
+der Server deine angehefteten Knoten, ihre Plätze und was du ausgeblendet hast, für dich; im
+Panel-Editor werden angeheftete Knoten mit dem Panel für alle gespeichert. Bleibt der Zeiger auf
+einem Knoten oder einer Kante stehen (oder mit I auf der Tastatur), erscheint seine Info-Karte;
+der Panel-Editor wählt dafür bis zu vier Properties je Label. Ein Klick auf eine Kante wählt sie
+und öffnet ihre eigenen Details. Ein Rechtsklick (oder Umschalt+F10) öffnet das Menü eines
+Knotens, einer Kante, der Auswahl oder der freien Fläche, mit **Ausblenden** (H),
+**Ausgeblendete einblenden** (Umschalt+H), **Auswahl umkehren** (Strg+I) und mehr. Die Suche
+durchsucht Beschriftungen und Properties dessen, was das Panel geladen hat, und springt zu jedem
+Treffer; die Minikarte (M) zeigt, wo du bist. Strg+Z nimmt den letzten Schritt der Ansicht zurück:
+Verschieben, Anheften, Ausblenden, Explorer-Schritte, geöffnete Gruppen; Zoom und Auswahl gehören
+nicht dazu. Alle Tasten stehen unter **Graph** in der Tastaturhilfe (?).
 
 ![Ein Netzwerk-Panel mit einem ausgewählten Kunden und den Details neben der Zeichnung](../../screenshots/graph-inspector-dark.png)
 

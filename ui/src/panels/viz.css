@@ -256,6 +256,50 @@
     }
   }
 
+  /*
+   * Below the drawing the legend takes only what the drawing leaves (--legend-room, from the
+   * code, which keeps the drawing a least height), so a short panel still shows its chart.
+   */
+  .viz-layout.viz-layout--stacked {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend {
+    align-self: stretch;
+    max-width: none;
+    max-height: min(var(--size-legend-max), var(--legend-room, 100%));
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend--table {
+    max-height: min(var(--size-preview), var(--legend-room, 100%));
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend--list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: var(--space-1) 0 0;
+  }
+
+  /* A short, wide panel keeps its legend beside the drawing, even under the width above. */
+  .viz-layout.viz-layout--beside {
+    flex-direction: row;
+    gap: var(--space-3);
+  }
+
+  .viz-layout.viz-layout--beside > .viz-legend {
+    align-self: center;
+    max-width: min(40%, var(--size-legend-side));
+    max-height: 100%;
+  }
+
+  .viz-layout.viz-layout--beside > .viz-legend--list {
+    align-self: flex-start;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    padding: 0;
+  }
+
   .viz-legend__table {
     width: 100%;
     border-collapse: collapse;
@@ -303,6 +347,41 @@
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+
+  /* In a narrow panel the legend names the series; the values are in the tooltip. */
+  .viz-layout--names-only .viz-legend__number,
+  .viz-layout--names-only .viz-legend__value {
+    display: none;
+  }
+
+  /* A legend width set in the options, beside the drawing only. */
+  .viz-layout.viz-layout--beside > .viz-legend--fixed {
+    width: var(--legend-width);
+    max-width: 50%;
+  }
+
+  /* "5 of 23 series" and "show all" after the named series. */
+  .viz-legend__more {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+  }
+
+  /* A column heading of the legend table sorts by its column. */
+  .viz-legend__sort {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .viz-legend__sort:hover {
+    color: var(--text);
   }
 
   /* Keyboard readout around discrete charts. */
@@ -384,7 +463,6 @@
 
   .gauge__svg {
     width: 100%;
-    max-width: var(--size-gauge);
     height: 100%;
     min-height: 0;
   }
@@ -647,22 +725,28 @@
 
   /* Pie */
 
+  /*
+   * The box takes the room it is given and never the drawing's size: an SVG in the flow made the
+   * box as wide as the first (fallback) drawing, which the box then measured again, so the
+   * circle stood half outside the panel and pushed the legend out of it.
+   */
   .pie {
     display: grid;
-    place-items: center;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   }
 
   .pie__box {
-    width: 100%;
-    height: 100%;
+    position: relative;
+    min-width: 0;
     min-height: 0;
+    overflow: hidden;
   }
 
   /* Drawn in the box's own pixels: the circle shrinks so its labels fit beside it. */
   .pie__svg {
-    width: 100%;
-    height: 100%;
-    max-height: 100%;
+    display: block;
+    position: absolute;
+    inset: 0;
   }
 
   /* The gaps between slices are the card showing through. */
@@ -1058,6 +1142,143 @@
     padding-inline-start: var(--space-2);
     border-radius: var(--radius-sm);
     background: var(--bg-hover);
+    font-size: var(--font-size-xs);
+  }
+
+  /* The legend's values: chips in their order and the picker in four groups. */
+  .legend-values__chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0;
+    list-style: none;
+  }
+
+  .legend-values__chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-half);
+    min-height: var(--size-target-min);
+    padding-inline-start: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    font-size: var(--font-size-xs);
+    cursor: grab;
+  }
+
+  .legend-values__name {
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: inherit;
+  }
+
+  .legend-values__remove {
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--size-target-min);
+    min-height: var(--size-target-min);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .legend-values__remove:hover {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .legend-values__picker {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .legend-values__list,
+  .legend-values__list [role="group"] {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .legend-values__list {
+    max-height: var(--size-preview);
+    overflow: auto;
+  }
+
+  .legend-values__group {
+    display: block;
+    padding: var(--space-1) var(--space-1) 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-transform: uppercase;
+  }
+
+  .legend-values__option {
+    display: grid;
+    grid-template-columns: var(--size-target-min) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--size-target-min);
+    padding-inline-end: var(--space-1);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .legend-values__option:hover,
+  .legend-values__option--active {
+    background: var(--bg-hover);
+  }
+
+  /* Chosen: a quiet tint, bold text and a check; never an accent border. */
+  .legend-values__option[aria-selected="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .legend-values__option[aria-disabled="true"] {
+    color: var(--text-muted);
+    cursor: default;
+  }
+
+  .legend-values__check {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .legend-values__explain {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .legend-values__percentile {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2);
+  }
+
+  .legend-values__percentile .input {
+    width: var(--size-label);
+  }
+
+  .legend-values__status {
+    color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
 

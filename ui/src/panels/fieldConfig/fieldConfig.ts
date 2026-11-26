@@ -8,11 +8,13 @@ import {
   customSuffix,
   formatUnit,
   isCatalogUnit,
+  isKnownUnit,
   joinFormatted,
   MAX_DECIMALS,
   MAX_UNIT_CHARS,
 } from "./units";
 import "../viz.css";
+import { AXIS_KEYS, type AxisOptions, parseAxisOptions } from "./axisOptions";
 import { GRAPH_STYLE_KEYS, type GraphStyleOptions, parseGraphStyle } from "./graphStyle";
 import { compilePattern } from "./pattern";
 
@@ -107,8 +109,11 @@ export type ValueMapping =
   | { type: "range"; from: number | null; to: number | null; text?: string; tone?: Tone }
   | { type: "regex"; pattern: string; text?: string; tone?: Tone };
 
-/** Field options; the graph style keys only matter to the time series (`graphStyle.ts`). */
-export interface FieldOptions extends GraphStyleOptions {
+/**
+ * Field options; the graph style keys only matter to the time series (`graphStyle.ts`), the axis
+ * keys to charts with a value axis (`axisOptions.ts`).
+ */
+export interface FieldOptions extends GraphStyleOptions, AxisOptions {
   /** A catalog unit id (`bytes`, `currency:EUR`) or `suffix:<text>`. */
   unit?: string;
   decimals?: number;
@@ -167,6 +172,7 @@ export const OPTION_KEYS = [
   "link",
   "width",
   ...GRAPH_STYLE_KEYS,
+  ...AXIS_KEYS,
 ] as const satisfies readonly (keyof FieldOptions)[];
 
 export interface FieldConfig {
@@ -268,7 +274,7 @@ export function parseFieldOptions(value: unknown): FieldOptions {
   if (!isRecord(value)) {
     return {};
   }
-  const options: FieldOptions = parseGraphStyle(value);
+  const options: FieldOptions = { ...parseGraphStyle(value), ...parseAxisOptions(value) };
   const unit = text(value.unit, LIMITS.unitChars + CUSTOM_PREFIX.length);
   if (unit !== undefined && unit !== "") options.unit = unit;
   const decimals = finite(value.decimals);
@@ -353,6 +359,27 @@ export function matches(matcher: FieldMatcher, field: Field): boolean {
   }
   const pattern = matcher.value === "" ? null : compilePattern(matcher.value);
   return pattern !== null && names.some((name) => pattern.test(name));
+}
+
+/**
+ * The field options as panels draw them: a stored unit Kalzit does not know (an id another tool
+ * wrote, such as an imported one) is left out, so it is never printed after a value and the unit
+ * the data source sent stays in effect. The editor keeps it and names it as unknown.
+ */
+export function shownFieldConfig(config: FieldConfig): FieldConfig {
+  const known = (unit: unknown) => typeof unit !== "string" || isKnownUnit(unit);
+  if (known(config.defaults.unit) && config.overrides.every((o) => known(o.properties.unit))) {
+    return config;
+  }
+  const { unit: defaultUnit, ...defaults } = config.defaults;
+  return {
+    defaults: known(defaultUnit) ? config.defaults : defaults,
+    overrides: config.overrides.map((o) => {
+      if (known(o.properties.unit)) return o;
+      const { unit: _unknown, ...properties } = o.properties;
+      return { ...o, properties };
+    }),
+  };
 }
 
 /**

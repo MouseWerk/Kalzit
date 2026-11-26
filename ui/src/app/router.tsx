@@ -9,6 +9,7 @@ import { exploreRoutes } from "../features/explore/routes";
 import { appsRoutes } from "../features/plugins/apps/routes";
 import { reportsRoutes } from "../features/reports/routes";
 import { settingsRoutes } from "../features/settings/routes";
+import { handbookRoutes } from "../handbook/routes";
 import { basePath } from "../lib/basePath";
 import { forgetClippingAncestors } from "../lib/tooltipPlace";
 import { HomePage } from "../pages/HomePage";
@@ -31,6 +32,7 @@ import {
   setupRoute,
   ssoTestRoute,
 } from "./baseRoutes";
+import { grafanaAddressRoutes } from "./grafanaAddresses";
 
 export { type LoginSearch, parseLoginSearch, type RouterContext } from "./baseRoutes";
 
@@ -67,6 +69,8 @@ const routeTree = rootRoute.addChildren([
     ...adminRoutes,
     ...settingsRoutes,
     ...appsRoutes,
+    ...grafanaAddressRoutes,
+    ...handbookRoutes,
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {

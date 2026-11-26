@@ -13,7 +13,7 @@ import { browserZone, timeZones } from "../../lib/timeSettings";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { dashboardQuery, fetchDashboards } from "../dashboards/api";
-import { optionChoices, readingOrder, type VariableModel } from "../dashboards/model";
+import { ALL_VALUE, optionChoices, readingOrder, type VariableModel } from "../dashboards/model";
 import { rangeLabel } from "../dashboards/rangeLabel";
 import { PRESETS } from "../dashboards/timeRange";
 import {
@@ -962,12 +962,18 @@ function VariableField({
     variable.multi === true || (variable.type !== "custom" && variable.type !== "interval")
       ? []
       : optionChoices(variable);
+  // "All" is kept as the marker, so each run reads the values anew; typing the word picks it.
+  const offersAll = variable.includeAll === true;
+  const allText = t("reports.variables.all");
   if (choices.length > 0) {
     return (
       <Field id={id} label={label}>
         <Select id={id} value={value} onChange={onChange}>
           <option value="">{t("reports.variables.saved")}</option>
-          {choices.some((choice) => choice.value === value) || value === "" ? null : (
+          {offersAll ? <option value={ALL_VALUE}>{allText}</option> : null}
+          {choices.some((choice) => choice.value === value) ||
+          value === "" ||
+          value === ALL_VALUE ? null : (
             <option value={value}>{value}</option>
           )}
           {choices.map((choice) => (
@@ -988,9 +994,13 @@ function VariableField({
       <input
         id={id}
         className="input"
-        value={value}
+        value={
+          offersAll && value.split(",").some((part) => part.trim() === ALL_VALUE) ? allText : value
+        }
         placeholder={t("reports.variables.saved")}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) =>
+          onChange(offersAll && event.target.value === allText ? ALL_VALUE : event.target.value)
+        }
       />
     </Field>
   );

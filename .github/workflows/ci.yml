@@ -28,8 +28,19 @@ name: CI
 #   of a release gate.
 
 on:
-  # A manual run (Actions tab or `gh workflow run ci.yml --ref <branch>`) checks everything.
+  # A manual run (Actions tab or `gh workflow run ci.yml --ref <branch>`) checks everything, or
+  # with `-f suite=gate` the fast gate tools/local-ci runs before a merge: fmt, clippy, the unit
+  # and core integration tests (the list in the server job, as GATE_RUST_TESTS in
+  # tools/local-ci/common.sh), the UI checks, sdk, devkit, devgen, and the smoke e2e set (@smoke)
+  # in Chromium. Everything else (the services, packages, docker, the MSI, every e2e test in every
+  # browser) is the full suite, which runs on main after the merges.
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "full: every job (the default); gate: the fast gate before a merge"
+        type: choice
+        options: [full, gate]
+        default: full
 
 concurrency:
   # One group per pull request; every other run gets a group of its own (its run id), so pushes
@@ -117,6 +128,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+        if: inputs.suite != 'gate'
+      # The fast gate: the unit tests and the integration tests of the core flows.
+      - name: cargo test (fast gate)
+        if: inputs.suite == 'gate'
+        shell: bash
+        run: |
+          args=(--lib --bins)
+          for name in access alerting alerting_delivery alerting_routing analyses api dashboard_features \
+            explore_history provisioning reports service_accounts settings_dashboards sharing shell team_spaces \
+            two_factor; do
+            args+=(--test "$name")
+          done
+          cargo test --locked --no-fail-fast "${args[@]}"
 
   # The example plugins (examples/plugins), built, packaged and signed per system the way a
   # release does (release.yml, jobs `plugin-*`), but with a throwaway key made in the job: pull
@@ -124,13 +148,16 @@ jobs:
   plugins:
     name: plugins (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux-x64
+            exe: ""
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
             exe: ""
           - os: windows-latest
             platform: windows-x64
@@ -190,7 +217,7 @@ jobs:
   postgres:
     name: postgres
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -230,7 +257,7 @@ jobs:
   ldap:
     name: ldap
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       openldap:
@@ -279,7 +306,7 @@ jobs:
   update-rights:
     name: update rights (sudo)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -319,7 +346,7 @@ jobs:
   datasources:
     name: datasources
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -543,7 +570,7 @@ jobs:
   datasources-sql-kv:
     name: datasources (Graphite, Redis, Oracle, ClickHouse native)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       graphite:
@@ -624,7 +651,7 @@ jobs:
   datasources-more:
     name: datasources-more
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       arangodb:
@@ -769,7 +796,7 @@ jobs:
         run: npm test
       - working-directory: sdk/typescript
         run: npm run build
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: sdk/go/go.mod
           cache: false
@@ -879,13 +906,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     # The tests take about 10 (Linux) to 14 minutes (Windows); the build before them up to 25
     # minutes on Windows when the cache is cold, and a green Windows run on main took 38 minutes.
-    # The steps that download have their own, shorter limits.
-    timeout-minutes: 60
+    # Linux adds the visual comparison after the tests. The steps that download have their own,
+    # shorter limits.
+    timeout-minutes: 90
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       # The test plugin of the server's contract tests, packaged by ui/e2e/plugins.spec.ts.
       KALZIT_E2E_PLUGIN_BINARY: ${{ github.workspace }}/target/e2e/kalzit-test-plugin${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+      # The fast gate runs the smoke set (@smoke) in Chromium; the full suite every test in every
+      # browser.
+      KALZIT_E2E_BROWSERS: ${{ inputs.suite == 'gate' && 'chromium' || 'chromium,firefox,webkit' }}
+      KALZIT_E2E_ARGS: ${{ inputs.suite == 'gate' && '--project chromium --grep @smoke' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1045,14 +1077,59 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .github/scripts/tcp-watch.ps1 start
-      - run: npm run e2e
+      # KALZIT_E2E_ARGS narrows the fast gate to the smoke set (the browsers above stay complete,
+      # since their cache is shared with the full suite).
+      - run: npm run e2e -- $KALZIT_E2E_ARGS
         timeout-minutes: 20
         working-directory: ui
+        shell: bash
         env:
           KALZIT_E2E_QUIET_FILE: ${{ runner.os == 'Windows' && format('{0}/tcp-watch.pause', runner.temp) || '' }}
           # The server's data directory goes to the runner's work drive (D: on Windows) instead of
           # the system temp folder on C:, where virus scans can hold a commit for seconds.
           KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-e2e
+      # The visual comparison (ui/e2e/visual.config.ts): every screen in light and dark at four
+      # widths (30 of them also at twice the device scale), against approved baselines.
+      # Linux only: the baselines are Linux pictures (fonts differ per system). It runs even when
+      # the e2e tests failed, so its pictures are there to look at; it starts its own server.
+      # The baselines live in MouseWerk/kalzit-visual, at the commit ui/e2e/visual/baselines.lock
+      # names; `npm run visual` fetches it unless the cache has it.
+      - name: Visual baselines commit
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: visual
+        run: echo "commit=$(sed -n 's/^commit=//p' ui/e2e/visual/baselines.lock)" >> "$GITHUB_OUTPUT"
+      - name: Restore the visual baselines
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: baselines
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: visual-baselines-${{ steps.visual.outputs.commit }}
+      - name: Visual comparison
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: compare
+        run: npm run visual
+        timeout-minutes: 40
+        working-directory: ui
+        env:
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-visual
+      - name: Save the visual baselines
+        if: >-
+          !cancelled() && runner.os == 'Linux' && steps.baselines.outputs.cache-hit != 'true'
+          && steps.compare.outcome != 'skipped' && github.event_name != 'merge_group'
+          && hashFiles('ui/e2e/.visual-baselines/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ui/e2e/.visual-baselines
+          key: ${{ steps.baselines.outputs.cache-primary-key }}
+      # Expected, actual and diff pictures of each screen that differs, with summary.md.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() && runner.os == 'Linux' }}
+        with:
+          name: visual-diffs
+          path: ui/e2e/.output/visual-diffs
+          if-no-files-found: ignore
+          retention-days: 14
       - name: TCP connections during the run
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
@@ -1080,7 +1157,7 @@ jobs:
   msi:
     name: msi (windows-latest)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -1159,7 +1236,7 @@ jobs:
   docker:
     name: docker
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1191,7 +1268,7 @@ jobs:
   packages:
     name: packages${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1288,7 +1365,7 @@ jobs:
   acme:
     name: acme (pebble)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -1301,7 +1378,7 @@ jobs:
           ref: v2.10.1
           path: pebble-src
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: pebble-src/go.mod
           cache: false
@@ -1355,6 +1432,8 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/pebble.log" "$RUNNER_TEMP/challtestsrv.log"
 
+  # Also in the fast gate (a manual run has no diff to see whether a lock file changed; the local
+  # gate runs it only then), so a dependency update never merges unaudited.
   audit:
     name: audit
     needs: changes
@@ -1364,7 +1443,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-audit
       # The advisory database is fetched with retries, so a network failure does not read as a

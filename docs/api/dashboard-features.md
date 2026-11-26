@@ -31,6 +31,10 @@ interface Panel {                                // in addition to version 1
   repeat?: { variable: string; direction: "horizontal" | "vertical"; maxPerRow?: number };  // 1 to 24
   timeFrom?: string;                             // relative range of its own: "now-24h", "now-7d/d"
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
+  maxDataPoints?: number;                        // query options: 1 to 10000 points per series
+  minInterval?: string;                          // 1 to 5 digits and s, m, h or d, at most a day: "30s"
+  cacheTimeout?: string;                         // as minInterval, at most a day: "5m"
+  hideTimeNote?: boolean;                        // the header leaves out the own range and shift; true or absent
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
   analysisId?: string;                           // shows that saved analysis (docs/api/analyses.md, "Linked panels"); targets must be empty
@@ -42,7 +46,24 @@ interface Target {                               // in addition to version 1
 }
 interface Variable {                             // in addition to version 1
   multi?: boolean;                               // custom and query variables only
+  includeAll?: boolean;                          // custom and query: "All" is offered first; true or absent
+  allValue?: string;                             // needs includeAll; 1 to 1000 characters: what "All" sends instead of the list
+  allowCustom?: boolean;                         // custom and query: values outside the list may be typed in
+  regex?: string;                                // query only; 1 to 1000 characters, "/pattern/flags" or the bare pattern
+  sort?: "alphabetical" | "alphabeticalDesc" | "numerical" | "numericalDesc"
+       | "caseInsensitive" | "caseInsensitiveDesc";   // query only; absent keeps the query's order
+  refresh?: "load" | "timeRange";                // query only; absent reads the options on every new range
+  staticOptions?: { value: string; label?: string }[];  // query only; up to 100, distinct values, listed after the query's
+  datasourceKind?: string;                       // datasource only, required: the kind offered ("postgres")
+  onValue?: string;                              // switch only, required: sent when on (up to 1000 characters)
+  offValue?: string;                             // switch only, required: sent when off; differs from onValue
 }
+// Variable types after version 0.7.5 (schemaVersion 2):
+//   "datasource": current is the default source's id (required); regex filters source names.
+//   "adhoc": datasourceId names the source (no "$name"); current is a list of
+//            { key, operator: "=" | "!=" | "=~" | "!~" | "<" | ">", value }, at most 20 per dashboard.
+//   "switch": current is onValue or offValue.
+// A panel target's datasourceId may be "$name" of a "datasource" variable.
 interface AnnotationQuery {
   id: string;                                    // unique among annotation queries
   name: string;                                  // 1 to 200 characters
@@ -65,9 +86,77 @@ fields refused, so a server from before them refuses a dashboard that uses them:
 a version needs the database backup taken with the update, or those panels saved without them
 first.
 
+**"All".** A variable with `includeAll` offers "All" first and, without another stored value,
+opens with it; a selection of "All" is stored as `current: "$__all"` (or `["$__all"]` for several
+values). The marker never reaches a query: the browser sends the list of every value the variable
+offers (a custom variable's own options, a query variable's options as last loaded), or exactly
+`allValue` when it is set, as one value. Values go to the database as parameters, never as text in
+the query: SQL binds one parameter per value (`region IN ($region)` becomes `region IN ($1, $2)`),
+PromQL matches a pattern of escaped values (`a\.b|c`). The server accepts `allValue` sent alone
+as the dashboard's own value: it counts as checked like a custom variable's option, so a pattern
+such as `.*` stays a pattern in PromQL. A list has at most 1,000 values (`variables.list_too_long`);
+longer ones need `allValue`. The browser holds the panels, annotations and links that use a query
+variable at "All" until its options have loaded, and shows the options query's error on them when
+it fails, instead of running them with an empty list.
+
+Where the server runs stored queries with an "All" it did not get as a list, it fills the marker
+in itself (`routes::query::expand_all`): share links (public links and snapshots, saved without
+values or with "All" from the share dialog), reports (the dashboard's saved values or "All" taken
+from the dashboard), AI tools (`run_panel` with the saved values), the options route (another
+variable a query variable uses) and the panel route. It uses `allValue`, else a custom variable's
+options, else it runs the query variable's options query with the rights of whoever the run
+belongs to: the public link's or report's creator (checked again on every run), the signed-in
+person for AI tools (the variable's source must then be open to AI too) and for the dashboard's
+own routes. That person must be able to read the dashboard; the regex, order, fixed options and
+the list cap apply as in the options route. Only the variables the queries about to run use are
+read this way (and those their own queries use). An options query that fails is the panel's error
+(`variables.all_options_failed`, with the variable's name and the database's message), never an
+empty list; public visitors get only the neutral unavailable answer, never the variable or the
+source's error. For public links and snapshots the options queries' sources count among the
+link's sources: the creator needs `datasources:query` on them to share, and losing it suspends
+the link like losing it on a panel's source. Public links, snapshots and reports also check that
+right when the options query runs; AI tools check the options query like the panel's own (open to
+AI, chosen, no excluded field named). The share dialog, copied links (`var-name=$__all`) and "Bericht anlegen" carry "All"
+as the marker, so the values are read when the link or report runs, not frozen when it was made.
+
+**Typed values.** `allowCustom` lets the bar take a value outside the list. A custom variable's
+typed value is then a free value: bound as a parameter, never an identifier and never a pattern
+in PromQL; values from its options stay checked.
+
+**Data source variables, ad hoc filters and switches.** A `datasource` variable lets the bar
+switch the source of every panel target written as `$name`; its saved default is what saving
+checks and what reading the dashboard authorizes, another pick needs the viewer's own
+`datasources:query` (docs/api/datasources.md, "Variables"). An `adhoc` variable holds filters
+the server builds into every target of its source (docs/api/datasources.md, "Ad hoc filters").
+A `switch` sends one of its two values, both checked like a custom variable's options.
+
+`includeAll`, `allValue`, `allowCustom`, `regex`, `sort`, `refresh`, `staticOptions`, the types
+`datasource`, `adhoc` and `switch`, `datasourceKind`, `onValue` and `offValue` came after
+version 0.7.5 under `schemaVersion` 2 (optional, left out while unset); a server from before them
+refuses a model that sets one.
+
+**Query options** (`maxDataPoints`, `minInterval`, `cacheTimeout`, `hideTimeNote`) came after
+version 0.7.5; a server from before them refuses a dashboard that uses them, as above. The server
+applies the first three to the panel's stored queries wherever they run (the panel query route,
+live updates, exports, field distributions, reports, public links and snapshots), whatever the
+request asks:
+
+- `maxDataPoints` is the most points per series: a request asking for more gets this many, and
+  `$__interval` is never finer than the range spread over them. A request may ask for fewer
+  points or a coarser interval.
+- `minInterval` raises a finer `$__interval` to it.
+- `cacheTimeout` shortens the query cache's time for the panel's answers to it; it never
+  lengthens what the data source sets, and sources without the cache ignore it. An answer kept
+  longer (by another panel with the same query) is not served to this panel past its time.
+- `hideTimeNote` only hides the note on an own range or shift in the panel's header.
+
+`timeFrom` and `timeShift` are resolved where "now" is known: the browser sends the panel's
+range with each request (`panelRange`), reports work it out on the server.
+
 Rules:
 
-- A repeat must name a variable with `multi: true`. A panel inside a repeated row cannot repeat
+- A repeat must name a variable with `multi: true`. With "All" picked, it repeats per value "All"
+  stands for. A panel inside a repeated row cannot repeat
   on its own.
 - **Link addresses** (`links[].url` of the dashboard and of panels) must start with `http://`,
   `https://`, `mailto:` or `/` (a path on this server, not `//host`), written out: no spaces
@@ -202,24 +291,43 @@ Naming a dashboard the caller cannot read is `422 validation` field `items`. Aud
 ## Panel view state
 
 What a viewer keeps of their own exploration of a dashboard panel (a graph panel's pins and
-selection), for them alone. Only node ids are stored, never a node's properties or any other part
-of a result; it changes neither the panel nor its query. Reading and writing need read access to
-the dashboard and a panel of that id in its current version; anything else, a trashed dashboard
-included, is `404 not_found`. The row goes with the user, organization and dashboard, with a
-member who leaves the organization, and with a panel that a saved version no longer has.
+selection, where they dragged nodes to, and what they hid), for them alone. Only node and edge
+ids and positions are stored, never a node's properties or any other part of a result; it
+changes neither the panel nor its query. Reading and writing need read access to the dashboard
+and a panel of that id in its current version; anything else, a trashed dashboard included, is
+`404 not_found`. The row goes with the user, organization and dashboard, with a member who leaves
+the organization, and with a panel that a saved version no longer has. An entry for a node that
+is no longer in the result rests until it is again.
 
 ```ts
 interface PanelViewState {
-  pinned: string[];   // node ids, at most 200, each 1 to 512 characters, each once
-  selected: string[]; // the same bounds
+  pinned: string[];        // node ids, at most 200, each 1 to 512 characters, each once
+  selected: string[];      // the same bounds
+  positions?: Position[];  // where pinned nodes were dragged to; at most 200, one per node
+  hidden?: string[];       // node ids hidden from the view; the bounds of `pinned`
+  hiddenEdges?: string[];  // edge ids hidden from the view; the same bounds
+  released?: string[];     // nodes the panel pins (options.pinned) that this viewer released
+}
+interface Position {
+  id: string;              // a node id, as in `pinned`
+  x: number;               // in the drawing's own units, finite, within 1e9 of zero
+  y: number;
 }
 ```
+
+The four lists added in 0.8.1 are optional; an answer leaves out the ones that are empty, so a
+state kept before them reads as it did.
 
 | Route | |
 |---|---|
 | `GET /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | the caller's `PanelViewState`; empty lists when none is kept |
-| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; empty lists remove it; unknown fields and ids beyond the bounds are `422 validation` (field `pinned` or `selected`) |
+| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; all lists empty remove it; unknown fields, positions that are no numbers and lists beyond the bounds are `422 validation` (the field names the list: `pinned`, `selected`, `positions`, `hidden`, `hiddenEdges` or `released`) |
 | `DELETE /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | `204`, also when none was kept or the dashboard is no longer readable |
+
+A graph panel's own pinned nodes, saved with the dashboard for everyone from the panel editor,
+live in its options: `options.pinned` is a list of `Position` with the same bounds (at most 200,
+each node once), and `options.infoCard` names up to four properties per node label for the info
+card (at most 50 labels). The server refuses other shapes with `422 validation`.
 
 ## Library panels
 

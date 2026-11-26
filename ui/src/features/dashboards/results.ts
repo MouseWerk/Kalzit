@@ -2,6 +2,7 @@ import type {
   CacheInfo,
   DocumentSet,
   Frame,
+  Notice,
   QueryResponse,
   QueryResult,
   Shape,
@@ -156,4 +157,30 @@ export function isTruncated(outcomes: readonly TargetOutcome[]): boolean {
     framesOf(outcomes).some((frame) => frame.meta?.rowsTruncated === true) ||
     documentsOf(outcomes).some(({ documents }) => documents.truncated !== undefined)
   );
+}
+
+/** Every notice of the outcomes' results, whatever their shape. */
+export function noticesOf(outcomes: readonly TargetOutcome[]): Notice[] {
+  return outcomes.flatMap((outcome) => {
+    if (!("result" in outcome)) return [];
+    const result = outcome.result;
+    switch (result.shape) {
+      case "frame":
+        return result.frame.meta?.notices ?? [];
+      case "documents":
+        return result.documents.notices;
+      case "graph":
+        return result.graph.notices ?? [];
+      default:
+        return result.trace.notices ?? [];
+    }
+  });
+}
+
+/**
+ * Whether a target ran on a source picked through a data source variable while the dashboard's
+ * ad hoc filters belong to another one, so they did not narrow it (`query.filters_not_applied`).
+ */
+export function filtersNotApplied(outcomes: readonly TargetOutcome[]): boolean {
+  return noticesOf(outcomes).some((notice) => notice.code === "query.filters_not_applied");
 }

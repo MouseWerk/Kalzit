@@ -411,6 +411,10 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   if (!isRecord(query)) {
     return false;
   }
+  // A Prometheus helper (`{"helper": "labelValues", ...}`): its fields are the query.
+  if (typeof query.helper === "string" && (kind === undefined || kind === "prometheus")) {
+    return true;
+  }
   const family = kind === undefined ? undefined : familyOf(kind);
   if (family === "search") {
     return isSearchQuery(query);

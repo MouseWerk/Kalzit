@@ -253,6 +253,124 @@
     }
   },
   {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "table",
+        "placement": "right",
+        "values": [
+          "last",
+          "sum",
+          "p95",
+          "p1",
+          "p99",
+          "maxTime"
+        ],
+        "width": 1000,
+        "limit": 1
+      },
+      "tooltip": {
+        "mode": "all",
+        "sort": "desc",
+        "hideZeros": true,
+        "maxWidth": 100,
+        "maxHeight": 2000
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": [
+          "count",
+          "distinct",
+          "gaps",
+          "lastRow",
+          "firstRow",
+          "maxTime"
+        ],
+        "width": 80,
+        "limit": 1000
+      },
+      "tooltip": {
+        "mode": "single",
+        "sort": "asc"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
     "type": "stat",
     "options": {
       "reducer": "last",
@@ -481,6 +599,60 @@
     }
   },
   {
+    "type": "stat",
+    "options": {
+      "reducer": "last",
+      "colorMode": "none",
+      "graphMode": "area",
+      "textMode": "auto"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "gauge",
     "options": {
       "reducer": "last",
@@ -699,6 +871,58 @@
     }
   },
   {
+    "type": "gauge",
+    "options": {
+      "reducer": "last",
+      "showThresholdMarkers": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "bargauge",
     "options": {
       "reducer": "last",
@@ -926,6 +1150,61 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -1220,6 +1499,66 @@
   {
     "type": "bar",
     "options": {
+      "showValues": false,
+      "categoryLabels": "auto",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "bar",
+    "options": {
       "showValues": true,
       "categoryLabels": "hidden",
       "legend": {
@@ -1237,13 +1576,60 @@
     }
   },
   {
-    "type": "table",
+    "type": "bar",
     "options": {
-      "columnFilters": false,
-      "pagination": false,
-      "pageSize": 50,
-      "variable": "",
-      "variableColumn": ""
+      "showValues": false,
+      "categoryLabels": "auto",
+      "legend": {
+        "mode": "table",
+        "placement": "right",
+        "values": [
+          "last",
+          "sum",
+          "p95",
+          "p1",
+          "p99",
+          "maxTime"
+        ],
+        "width": 1000,
+        "limit": 1
+      },
+      "tooltip": {
+        "mode": "all",
+        "sort": "desc",
+        "hideZeros": true,
+        "maxWidth": 100,
+        "maxHeight": 2000
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "bar",
+    "options": {
+      "showValues": false,
+      "categoryLabels": "auto",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": [
+          "count",
+          "distinct",
+          "gaps",
+          "lastRow",
+          "firstRow",
+          "maxTime"
+        ],
+        "width": 80,
+        "limit": 1000
+      },
+      "tooltip": {
+        "mode": "single",
+        "sort": "asc"
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -1257,7 +1643,31 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1311,7 +1721,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1329,7 +1744,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1406,7 +1826,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1464,6 +1889,66 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -1476,7 +1961,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "customer",
-      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -1766,6 +2256,72 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "piechart",
+    "options": {
+      "pieType": "pie",
+      "reducer": "last",
+      "labels": "percent",
+      "labelPlacement": "inside",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -2047,6 +2603,774 @@
     }
   },
   {
+    "type": "histogram",
+    "options": {
+      "combine": false,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 3,
+      "sizeMax": 9,
+      "show": "points",
+      "pointOpacity": 55,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "manual",
+      "sizeMin": 1,
+      "sizeMax": 40,
+      "show": "both",
+      "pointOpacity": 5,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "x": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seriesBy": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "sizeBy": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "colorBy": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "xy",
+    "options": {
+      "mapping": "auto",
+      "sizeMin": 40,
+      "sizeMax": 40,
+      "show": "lines",
+      "pointOpacity": 100,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trend",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "xField": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
     "type": "heatmap",
     "options": {
       "mode": "calculate",
@@ -2290,6 +3614,63 @@
     }
   },
   {
+    "type": "heatmap",
+    "options": {
+      "mode": "calculate",
+      "xBuckets": 40,
+      "yBuckets": 10,
+      "scale": "linear",
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "state-timeline",
     "options": {
       "legend": {
@@ -2537,6 +3918,65 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "state-timeline",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -2824,6 +4264,65 @@
       "tooltip": {
         "mode": "all"
       },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "status-history",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
       "colorStateWords": false
     },
     "fieldConfig": {
@@ -3057,6 +4556,59 @@
   {
     "type": "documents",
     "options": {
+      "variable": "",
+      "variablePath": "",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "documents",
+    "options": {
       "variable": "customer",
       "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
       "dataLinks": []
@@ -3295,6 +4847,55 @@
     }
   },
   {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "distribution",
     "options": {
       "path": ""
@@ -3508,6 +5109,57 @@
     }
   },
   {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "document",
     "options": {
       "titlePath": "",
@@ -3730,6 +5382,60 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": "",
+      "variable": "",
+      "variablePath": "",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -3808,7 +5514,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -3849,7 +5557,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -3930,7 +5640,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -3975,7 +5687,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4079,7 +5793,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4145,6 +5861,90 @@
   {
     "type": "network",
     "options": {
+      "caption": "",
+      "colorBy": "label",
+      "colorProperty": "",
+      "colorScheme": "blues",
+      "colorRange": "auto",
+      "colorMin": null,
+      "colorMax": null,
+      "labelColors": {},
+      "labelShapes": {},
+      "sizeBy": "degree",
+      "sizeMin": 4,
+      "sizeMax": 14,
+      "edgeWidthBy": "",
+      "arrows": "always",
+      "edgeLabels": "never",
+      "labels": "zoom",
+      "labelTop": 0,
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "clickAction": "details",
+      "clickDetails": true,
+      "variable": "",
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "network",
+    "options": {
       "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "colorBy": "label",
       "colorProperty": "",
@@ -4176,7 +5976,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4217,7 +6019,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4258,7 +6062,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4299,7 +6105,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4340,7 +6148,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4394,7 +6204,9 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4435,7 +6247,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4476,7 +6290,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4557,7 +6373,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4602,7 +6420,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4706,7 +6526,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4772,6 +6594,90 @@
   {
     "type": "hierarchy",
     "options": {
+      "caption": "",
+      "colorBy": "label",
+      "colorProperty": "",
+      "colorScheme": "blues",
+      "colorRange": "auto",
+      "colorMin": null,
+      "colorMax": null,
+      "labelColors": {},
+      "labelShapes": {},
+      "sizeBy": "degree",
+      "sizeMin": 4,
+      "sizeMax": 14,
+      "edgeWidthBy": "",
+      "arrows": "always",
+      "edgeLabels": "never",
+      "labels": "zoom",
+      "labelTop": 0,
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "clickAction": "details",
+      "clickDetails": true,
+      "variable": "",
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
       "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "colorBy": "label",
       "colorProperty": "",
@@ -4803,7 +6709,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4844,7 +6752,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4885,7 +6795,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4926,7 +6838,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4967,7 +6881,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -5021,7 +6937,9 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -5251,6 +7169,60 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": "",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]
@@ -5573,6 +7545,70 @@
     }
   },
   {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "text",
     "options": {
       "mode": "markdown",
@@ -5785,6 +7821,58 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "text",
+    "options": {
+      "mode": "markdown",
+      "content": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]

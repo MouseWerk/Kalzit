@@ -240,6 +240,11 @@ impl DataSourcePlugin for ClickHouse {
         "clickhouse"
     }
 
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Frame]
     }
@@ -323,6 +328,7 @@ impl DataSourcePlugin for ClickHouse {
             Some(f) => f,
             None => FrameBuilder::new(Vec::new(), req.limits.max_rows, req.limits.budget.clone()),
         };
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql);
         for (name, type_name) in reader.unsupported {
             let message = format!("{name} has the type {type_name}, which is shown as text; convert it in the query");
@@ -553,6 +559,7 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 2, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 
@@ -564,6 +571,8 @@ mod tests {
             variables: &r.variables,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         sql::prepare(sql_text, Engine::ClickHouse, &ctx)
     }
@@ -692,6 +701,8 @@ mod tests {
                 variables: &vars,
                 identifiers: Some(&names),
                 identifier_variables: None,
+                filters: &[],
+                column_types: None,
             };
             let p = sql::prepare("SELECT * FROM ${t:identifier}", Engine::ClickHouse, &ctx);
             match ok {

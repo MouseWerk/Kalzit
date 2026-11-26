@@ -5,6 +5,8 @@ const ICONS: Readonly<Record<string, IconName>> = {
   timeseries: "activity",
   bar: "barChart",
   histogram: "barChart",
+  xy: "outlier",
+  trend: "forecast",
   stat: "stat",
   table: "table",
   gauge: "gauge",

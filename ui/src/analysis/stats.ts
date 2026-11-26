@@ -31,11 +31,17 @@ export function percentile(values: readonly number[], p: number): number | null 
 
 /** The sample standard deviation (n - 1); needs two values. */
 export function stddev(values: readonly number[]): number | null {
+  const v = variance(values);
+  return v === null ? null : Math.sqrt(v);
+}
+
+/** The sample variance (n - 1, as Excel's VAR.S); needs two values. */
+export function variance(values: readonly number[]): number | null {
   if (values.length < 2) return null;
   const m = mean(values) as number;
   let squares = 0;
   for (const v of values) squares += (v - m) * (v - m);
-  return Math.sqrt(squares / (values.length - 1));
+  return squares / (values.length - 1);
 }
 
 export function min(values: readonly number[]): number | null {

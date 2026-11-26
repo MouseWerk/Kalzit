@@ -48,7 +48,7 @@ export interface CompletionResult {
 /** Enough to choose from without a long list to scroll through. */
 const MAX_OPTIONS = 50;
 
-/** The SQL macros of docs/ARCHITECTURE.md; the server turns them into bind parameters. */
+/** The SQL macros of docs/api/datasources.md; the server turns them into bind parameters. */
 export const SQL_MACROS: { name: string; detail: string; help: MessageKey }[] = [
   {
     name: "$__timeFilter",
@@ -62,6 +62,62 @@ export const SQL_MACROS: { name: string; detail: string; help: MessageKey }[] = 
     name: "$__interval_ms",
     detail: "$__interval_ms",
     help: "datasources.editor.macro.intervalMs",
+  },
+  { name: "$__time", detail: "$__time(column)", help: "datasources.editor.macro.time" },
+  {
+    name: "$__timeEpoch",
+    detail: "$__timeEpoch(column)",
+    help: "datasources.editor.macro.timeEpoch",
+  },
+  {
+    name: "$__timeGroup",
+    detail: "$__timeGroup(column, 1h[, fill])",
+    help: "datasources.editor.macro.timeGroup",
+  },
+  {
+    name: "$__timeGroupAlias",
+    detail: "$__timeGroupAlias(column, 1h[, fill])",
+    help: "datasources.editor.macro.timeGroupAlias",
+  },
+  {
+    name: "$__unixEpochFilter",
+    detail: "$__unixEpochFilter(column)",
+    help: "datasources.editor.macro.unixEpochFilter",
+  },
+  {
+    name: "$__unixEpochNanoFilter",
+    detail: "$__unixEpochNanoFilter(column)",
+    help: "datasources.editor.macro.unixEpochNanoFilter",
+  },
+  {
+    name: "$__unixEpochFrom",
+    detail: "$__unixEpochFrom()",
+    help: "datasources.editor.macro.unixEpochFrom",
+  },
+  {
+    name: "$__unixEpochTo",
+    detail: "$__unixEpochTo()",
+    help: "datasources.editor.macro.unixEpochTo",
+  },
+  {
+    name: "$__unixEpochNanoFrom",
+    detail: "$__unixEpochNanoFrom()",
+    help: "datasources.editor.macro.unixEpochNanoFrom",
+  },
+  {
+    name: "$__unixEpochNanoTo",
+    detail: "$__unixEpochNanoTo()",
+    help: "datasources.editor.macro.unixEpochNanoTo",
+  },
+  {
+    name: "$__unixEpochGroup",
+    detail: "$__unixEpochGroup(column, 1h)",
+    help: "datasources.editor.macro.unixEpochGroup",
+  },
+  {
+    name: "$__unixEpochGroupAlias",
+    detail: "$__unixEpochGroupAlias(column, 1h)",
+    help: "datasources.editor.macro.unixEpochGroupAlias",
   },
 ];
 

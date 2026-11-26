@@ -23,8 +23,23 @@ import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { withBase } from "../../lib/basePath";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { useOrgPermissions } from "../../org/useOrg";
+import { operatorSign } from "../dashboards/AdhocFilters";
+import type { AdhocFilter } from "../dashboards/adhoc";
 import { VARIABLE_PARAM } from "../dashboards/links";
-import { type VariableValue, valueList, valueText } from "../dashboards/model";
+import { isAll, type VariableValue, valueList, valueText } from "../dashboards/model";
+
+/**
+ * A value as the dialog shows it: "All" by its word (the link or snapshot reads the values when
+ * it runs), anything else as on the bar.
+ */
+function shownValue(variable: SharedVariable, all: string): string {
+  const { value, filters } = variable;
+  if (filters !== undefined) {
+    return filters.map((f) => `${f.key} ${operatorSign(f.operator)} ${f.value}`).join(", ");
+  }
+  return isAll(value) ? all : valueText(value);
+}
+
 import { rangeLabel } from "../dashboards/rangeLabel";
 import { errorsOf, type TargetOutcome } from "../dashboards/results";
 import { isRelative, type TextRange, toStoredAbsolute } from "../dashboards/timeRange";
@@ -71,6 +86,16 @@ export interface SharedVariable {
   name: string;
   label: string;
   value: VariableValue | undefined;
+  /**
+   * For ad hoc filters: the filters on screen. A link or snapshot sends them as filters; `value`
+   * holds them as the bar keeps them, for an address.
+   */
+  filters?: AdhocFilter[] | undefined;
+}
+
+/** A variable's value as the server takes it: ad hoc filters as `{ key, operator, value }`. */
+function wireValue(variable: SharedVariable): unknown {
+  return variable.filters ?? variable.value;
 }
 
 export interface ShareDialogProps {
@@ -387,12 +412,13 @@ function Address({ label, url, onCopy }: { label: string; url: string; onCopy: (
 
 /** The fixed values as quiet chips; each reads as "Region: Nord". */
 function ValueChips({ variables }: { variables: readonly SharedVariable[] }) {
+  const { t } = useI18n();
   return (
     <ul className="share-chips">
       {variables.map((variable) => (
         <li key={variable.name} className="share-chip">
           <span className="share-chip__name">{variable.label}</span>
-          <span>{valueText(variable.value)}</span>
+          <span>{shownValue(variable, t("dashboards.variables.all"))}</span>
         </li>
       ))}
     </ul>
@@ -506,7 +532,10 @@ function OrgLinkTab({
             labelId={`${ids}-values`}
             text={t("sharing.org.valuesText", {
               values: variables
-                .map((variable) => `${variable.label} = ${valueText(variable.value)}`)
+                .map(
+                  (variable) =>
+                    `${variable.label} = ${shownValue(variable, t("dashboards.variables.all"))}`,
+                )
                 .join(", "),
             })}
           >
@@ -757,7 +786,7 @@ function PublicLinkTab({
         ...(isRelative(textRange.from) && isRelative(textRange.to) ? { timeRange: textRange } : {}),
         variables: Object.fromEntries(
           variables.flatMap((variable) =>
-            variable.value === undefined ? [] : [[variable.name, variable.value]],
+            variable.value === undefined ? [] : [[variable.name, wireValue(variable)]],
           ),
         ),
       }),
@@ -989,7 +1018,7 @@ function SnapshotTab({
         timeRange: range,
         variables: Object.fromEntries(
           variables.flatMap((variable) =>
-            variable.value === undefined ? [] : [[variable.name, variable.value]],
+            variable.value === undefined ? [] : [[variable.name, wireValue(variable)]],
           ),
         ),
         expiresAt: expiryAt(days, limits.maxExpiryDays),

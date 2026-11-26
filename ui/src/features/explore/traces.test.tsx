@@ -6,6 +6,7 @@ import { TRACE_ID } from "../../panels/trace/test/fixture";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { pickOption } from "../../test/select";
+import { addStep, catalogNames, catalogOption, openCatalog } from "../../test/stepCatalog";
 import { addTraceSources, JAEGER_ID, TEMPO_ID } from "../datasources/test/fakeTraces";
 import { GRAPH_STEPS_SETTLE_MS } from "./ExplorePage";
 
@@ -204,15 +205,8 @@ describe("Explore with a Tempo source", () => {
     await screen.findByRole("treegrid", { name: "Result" });
 
     // The catalog offers the trace steps, each with the shape it makes.
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    const catalog = screen.getByRole("menu", { name: "Add step" });
-    expect(
-      within(catalog)
-        .getAllByRole("menuitem")
-        .slice(0, 6)
-        .map((item) => item.getAttribute("aria-labelledby"))
-        .map((id) => document.getElementById(id ?? "")?.textContent),
-    ).toEqual([
+    const catalog = await openCatalog(user);
+    expect(catalogNames(catalog).slice(0, 6)).toEqual([
       "Filter spans",
       "Critical path",
       "Spans as a table",
@@ -220,9 +214,12 @@ describe("Explore with a Tempo source", () => {
       "Service map",
       "Span tree as a graph",
     ]);
-    expect(within(catalog).getAllByText("Trace → Table")).toHaveLength(2);
-    expect(within(catalog).getAllByText("Trace → Graph")).toHaveLength(2);
-    await user.click(within(catalog).getByRole("menuitem", { name: "Spans as a table" }));
+    const preview = () => within(catalog).getByRole("complementary");
+    await user.hover(catalogOption(catalog, "Service map"));
+    expect(within(preview()).getByText("Trace → Graph")).toBeTruthy();
+    await user.hover(catalogOption(catalog, "Spans as a table"));
+    expect(within(preview()).getByText("Trace → Table")).toBeTruthy();
+    await user.click(catalogOption(catalog, "Spans as a table"));
     // The step runs with the query on the server; its answer is a table of the spans.
     await waitFor(
       () =>
@@ -252,8 +249,7 @@ describe("Explore with a Tempo source", () => {
     });
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByRole("treegrid", { name: "Result" });
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    await user.click(screen.getByRole("menuitem", { name: "Service map" }));
+    await addStep(user, "Service map");
     expect(
       await screen.findByText(
         "This step would read 120000 spans, more than 100000. Confirm to compute it anyway.",

@@ -1,26 +1,18 @@
 import { LANGUAGES, type Language } from "../i18n/i18n";
-import {
-  DARK_VARIANTS,
-  type DarkVariant,
-  LIGHT_VARIANTS,
-  type LightVariant,
-  THEMES,
-  type Theme,
-} from "../theme/theme";
+import { THEMES, type Theme } from "../theme/theme";
 import { readPreference, writePreference } from "./storage";
 
 /**
- * Language, theme and theme variants someone chose explicitly in this browser while no account's preferences
- * applied: on the sign-in and setup pages. Kept apart from the values the UI applies (which also
- * come from an account's preferences or the server's default), so signing in adopts only a real
- * choice, never what the previous user of a shared browser had. Tagged with the account it
- * belongs to (none on the sign-in page) and cleared on sign-out.
+ * Language and theme mode someone chose explicitly in this browser while no account's
+ * preferences applied: on the sign-in and setup pages (the variants are chosen only in the
+ * account settings). Kept apart from the values the UI applies (which also come from an
+ * account's preferences or the server's default), so signing in adopts only a real choice, never
+ * what the previous user of a shared browser had. Tagged with the account it belongs to (none on
+ * the sign-in page) and cleared on sign-out.
  */
 export interface LocalChoice {
   language?: Language;
   theme?: Theme;
-  themeLight?: LightVariant;
-  themeDark?: DarkVariant;
   /** The account that made the choice; absent when it was made before signing in. */
   userId?: string;
 }
@@ -48,10 +40,6 @@ function read(): LocalChoice {
   if (language !== undefined) choice.language = language;
   const theme = THEMES.find((t) => t === value.theme);
   if (theme !== undefined) choice.theme = theme;
-  const themeLight = LIGHT_VARIANTS.find((v) => v === value.themeLight);
-  if (themeLight !== undefined) choice.themeLight = themeLight;
-  const themeDark = DARK_VARIANTS.find((v) => v === value.themeDark);
-  if (themeDark !== undefined) choice.themeDark = themeDark;
   if (typeof value.userId === "string") choice.userId = value.userId;
   return choice;
 }
@@ -75,12 +63,7 @@ export function choiceFor(userId: string): LocalChoice {
 /** Marks the choice as this account's, so no other account adopts it. */
 export function claimChoice(userId: string): void {
   const choice = read();
-  if (
-    choice.language !== undefined ||
-    choice.theme !== undefined ||
-    choice.themeLight !== undefined ||
-    choice.themeDark !== undefined
-  ) {
+  if (choice.language !== undefined || choice.theme !== undefined) {
     writePreference(LOCAL_CHOICE_KEY, JSON.stringify({ ...choice, userId }));
   }
 }

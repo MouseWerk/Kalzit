@@ -211,6 +211,74 @@ describe("the dashboard settings page", () => {
     expect(latest(stored).model.title).toBe("Main 2");
   });
 
+  it("edits a query variable's regex, order, refresh, extras and “All” with a preview", async () => {
+    const { server, stored } = setup("editor");
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "city",
+          type: "query",
+          datasourceId: PG_ID,
+          query: { sql: "SELECT id, name FROM c" },
+        },
+      ],
+    };
+    const { user } = renderApp("/dashboards/d-main/settings?section=variables");
+    const section = await screen.findByRole("region", { name: "Variables" });
+    const preview = await within(section).findByRole("region", { name: "Preview of the values" });
+    expect(await within(preview).findByText("Ada")).toBeTruthy();
+    await user.type(within(section).getByRole("textbox", { name: "Regex (optional)" }), "/^2$/");
+    expect(
+      await within(preview).findByText(/1 values did not match the regex/, {}, { timeout: 3000 }),
+    ).toBeTruthy();
+    // The server applies the regex: the preview sends the variable as edited.
+    expect(server.areas.datasources.variablePreviews.at(-1)).toMatchObject({
+      variable: { name: "city", regex: "/^2$/" },
+    });
+    await pickOption(user, within(section).getByRole("combobox", { name: "Sort" }), "Z to A");
+    await pickOption(user, within(section).getByRole("combobox", { name: "Refresh" }), "On load");
+    await user.type(
+      within(section).getByRole("textbox", { name: "Fixed extra values (optional)" }),
+      "intern = _int, unbekannt",
+    );
+    await user.click(within(section).getByRole("checkbox", { name: "Allow several values" }));
+    await user.click(within(section).getByRole("switch", { name: "Offer “All”" }));
+    expect(within(section).getByRole("switch", { name: "Open with “All”" })).toHaveProperty(
+      "checked",
+      true,
+    );
+    // Opening with "All" needs no other start value.
+    expect(
+      within(section).queryByRole("textbox", { name: "Value when the dashboard opens (optional)" }),
+    ).toBeNull();
+    await user.type(
+      within(section).getByRole("textbox", { name: "Custom value for “All” (optional)" }),
+      ".*",
+    );
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.variables[0]).toEqual({
+      name: "city",
+      type: "query",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT id, name FROM c" },
+      regex: "/^2$/",
+      sort: "alphabeticalDesc",
+      refresh: "load",
+      staticOptions: [{ value: "_int", label: "intern" }, { value: "unbekannt" }],
+      multi: true,
+      includeAll: true,
+      allValue: ".*",
+      current: ["$__all"],
+    });
+  }, 20_000);
+
   it("offers constant and interval variables and saves them", async () => {
     const { stored } = setup("editor");
     const { user } = renderApp("/dashboards/d-main/settings?section=variables");

@@ -110,6 +110,10 @@ pub struct CacheUse {
     /// What else decides what the caller may see, beyond organization, user and permissions,
     /// which are always in the key: the AI data rules for an AI call (`ai:` and their print).
     pub scope: String,
+    /// The longest a kept answer serves this run, in milliseconds (a panel's `cacheTimeout`):
+    /// shorter than the source's TTL shortens it, longer leaves the source's. An older answer
+    /// is not served; the new one replaces it.
+    pub max_age_ms: Option<i64>,
 }
 
 impl CacheUse {
@@ -119,7 +123,18 @@ impl CacheUse {
 
     /// Reads the cache, or refreshes it when `refresh`.
     pub fn read(refresh: bool) -> Self {
-        Self { mode: if refresh { CacheMode::Refresh } else { CacheMode::Use }, scope: String::new() }
+        Self { mode: if refresh { CacheMode::Refresh } else { CacheMode::Use }, ..Self::default() }
+    }
+
+    /// Keeps and serves answers at most `max_age_ms` (none: as the source says).
+    pub fn at_most(mut self, max_age_ms: Option<i64>) -> Self {
+        self.max_age_ms = max_age_ms.map(|ms| ms.max(1_000));
+        self
+    }
+
+    /// The TTL a run uses: the source's, shortened by `max_age_ms`.
+    pub fn ttl_ms(&self, source_ttl_ms: i64) -> i64 {
+        self.max_age_ms.map_or(source_ttl_ms, |most| source_ttl_ms.min(most))
     }
 
     pub fn scoped(mut self, scope: impl Into<String>) -> Self {
@@ -177,6 +192,9 @@ pub struct Query<'a> {
     pub shapes: &'a [Shape],
     pub query: Value,
     pub steps: Vec<Value>,
+    /// Ad hoc filters; left out of the key when there are none, so earlier keys stay valid.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub filters: &'a [crate::shapes::AdhocFilter],
     pub cursor: Option<&'a str>,
     pub range: TimeRange,
     pub interval_ms: u64,
@@ -715,6 +733,7 @@ mod tests {
             shapes: &[Shape::Frame],
             query: canonical(&q),
             steps: Vec::new(),
+            filters: &[],
             cursor: None,
             range: TimeRange { from: 0, to: 60_000 },
             interval_ms: 1_000,

@@ -28,10 +28,13 @@ flowchart TD
   W --> P[Pull request<br/>feature branch, release fragment]
   P --> R[Review agent<br/>read-only findings]
   R -- findings --> W
-  R -- clean --> C[Local CI on this machine<br/>Windows and WSL, PR merged onto main]
+  R -- clean --> C[Fast gate on this machine<br/>Windows and WSL, PR merged onto main]
   C -- red --> W
   C -- green --> Q[Merge by the orchestrator<br/>squash, only on the main it was tested on]
   Q --> M[main<br/>branch and worktree deleted]
+  M --> F[Full suite on main<br/>after each merge batch]
+  F -- red --> V[Bisect, revert pull request<br/>through review and the gate]
+  V --> W
   M --> G["Release<br/>fragments assembled, one full local run, tag"]
   G --> S[Two independent security reviews<br/>fixes as normal pull requests]
 ```
@@ -48,17 +51,23 @@ flowchart TD
    `docs/releases/unreleased/`. Commits are authored as the owner and carry no trailers.
 5. **Review.** Every pull request gets a read-only review. Its findings go back to the builder.
    The pull request moves on only when the review has no open findings.
-6. **CI.** The local CI (`tools/local-ci`) tests the pull request merged onto the current
-   `main`, on Windows and in WSL, and posts the statuses `local/windows` and `local/linux`;
-   `main` requires both. A red status goes back to the builder. Tests are never weakened or
-   skipped to get green.
+6. **CI.** The local CI (`tools/local-ci`) runs the fast gate on the pull request merged onto
+   the current `main`, on Windows and in WSL (about 30 minutes: fmt, clippy, unit and core
+   integration tests, the UI checks and build, the smoke e2e set), and posts the statuses
+   `local/windows` and `local/linux`; `main` requires both. A red status goes back to the
+   builder. A failed job runs once more only to diagnose: the status stays red, and a pass on
+   that rerun goes to the flaky log as a test to fix. Tests are never weakened, skipped or
+   quarantined to get green.
 7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
-   both statuses passed for exactly the content the merge makes (the merged tree; otherwise it
-   runs the CI first). Several pull requests can be tested and merged as one batch, and
-   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners, for example overnight.
-   `main` takes no direct or force pushes.
+   both statuses passed the fast gate (or the full suite) for exactly the content the merge
+   makes (the merged tree; otherwise it runs the gate first). Several pull requests can be
+   tested and merged as one batch, and `tools/local-ci/gh-run.sh` runs the same test on
+   GitHub's runners, for example overnight. `main` takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
-   folders.
+   folders. The full suite runs on `main` after each merge batch, or within the hour when `main`
+   changed (`tools/local-ci/main-watch.sh`). When it fails, it bisects the batch and opens a
+   pull request that reverts the merge that broke it; that revert goes through review and the
+   gate like any other pull request, and the change comes back with its fix.
 9. **Release.** The release pull request assembles the fragments into
    `docs/releases/v<version>.md` and bumps the version. The tag follows one full local CI run
    on the release commit (`tools/local-ci/run.sh --ref origin/main --full`). Releases
@@ -109,18 +118,90 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
 
 | Run | What runs |
 |---|---|
-| `run.sh <pr>` | The jobs for the areas the pull request changes (`.github/scripts/changes.sh`), on the PR merged onto the current `main` |
-| `run.sh <pr> --full` | Everything |
-| `run.sh --ref origin/main --full` | Everything, on that commit: the release gate |
+| `run.sh <pr>` | The fast gate for the areas the pull request changes (`.github/scripts/changes.sh`), on the PR merged onto the current `main`: enough to merge |
+| `run.sh <pr> --full` | The full suite on the same content |
+| `main-watch.sh` | The full suite on `main` after each merge batch, or hourly when `main` changed; bisect and revert pull request on a failure |
+| `run.sh --ref origin/main --full` | The full suite on that commit: the release gate |
 
+- **Two stages** (owner decision 2026-11-24). The fast gate (about 30 minutes when the server
+  crate changed, less for UI-only changes) runs fmt,
+  clippy, the unit tests and the core integration tests, the UI checks, build and bundle
+  budget, and 30 core e2e flows (`@smoke`) in Chromium on both systems. The full suite (70 to
+  160 minutes) runs every test (the e2e tests in Chromium, the engine checks also in Firefox and
+  WebKit), the databases and services, packages and docker, on `main` after the merges; the MSI
+  only when asked (`--msi`). A merge needs the gate only. The gate also runs the security audit
+  when a lock file changes.
+- **Failures.** A failed job runs once more, only to diagnose; the status stays failure. Tests
+  that failed and then passed on rerun go to `C:/Users/klein/kz-ci/flaky.log` and the run's
+  summary, which lists those that needed it more than twice in 7 days: they need a root-cause
+  fix. A full-suite failure on `main` is bisected to the merge that caused it and reverted
+  through a pull request; an intermittent one (every failed job passed on its rerun) is
+  reported for a fix instead. Nothing is skipped, quarantined or retried into a pass.
 - **Areas.** Docs and boards run only the change detection test (and `roadmap` for the
   README's progress bars). A change under `.github/` or `tools/local-ci/`, or a path no area
-  knows, runs everything.
-- **Statuses.** Each leg posts one status to the PR's head commit, naming the `main` commit it
-  ran on. `merge.sh` merges only when that is still the current `main`.
+  knows, runs everything of the stage.
+- **Statuses.** Each leg posts one status to the PR's head commit, naming the tested tree and
+  the `main` commit it ran on (`passed gate tree ...` or `passed tree ...`). `merge.sh` merges
+  only when a merge would make exactly that tree.
 - **Not covered locally.** `packages (arm64)`; the release workflow still builds and checks
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.
+
+## Visual comparison
+
+Every screen of the UI is photographed in light and dark at 360, 1280, 2560 and 3440 px wide
+(30 screens, one or two of each area, also at 1280 px with twice the device scale:
+`HIDPI_SCREENS` in `ui/e2e/visual/variants.ts`), and compared pixel by pixel with an approved
+baseline (`ui/e2e/visual.config.ts`). The screens are the pages of the UI sweep
+(`ui/e2e/sweep/pages.ts`, held against the router, so a new route is photographed too), the
+four setup steps and Explore with each result shape.
+
+- **Where the baselines live.** In their own public repository, `MouseWerk/kalzit-visual`
+  (`baselines/<width>/<screen>--<theme>.png`), so Kalzit's history does not carry every version
+  of about a thousand pictures. Kalzit pins the commit it compares against in
+  `ui/e2e/visual/baselines.lock` (repository and commit SHA). `npm run visual` fetches that
+  commit once into a cache folder (`ui/e2e/.visual-baselines/<sha>`; the local CI keeps it under
+  its cache folder, GitHub in the Actions cache keyed by the SHA) and compares against it.
+- **Where it runs.** Linux with Chromium only, in the Linux leg of the local CI (job `visual`)
+  and in the Linux e2e job of `ci.yml`. On Windows and macOS the run skips every test (fonts are
+  drawn differently there); `KALZIT_VISUAL_ANY_SYSTEM=1` runs it anyway, to look at pictures.
+- **Same pictures every run and machine.** Its own server with a fresh data folder, seeded once
+  with fixed names; the fixture data lies around a fixed moment and the pages run on a clock
+  fixed to it; times the server stamps during the run are moved to that moment; counters that
+  grow with the run (page views of public links, the query activity of data sources, recent
+  dashboards, the Explore history, usage and cache counts) are held still in the answers of
+  their own endpoints; animations, the caret and hover are off. Text that differs by machine or
+  run (run-folder paths, the server's port, the host name, ids, the commit and build date,
+  measured times, free disk space) is replaced by a placeholder in the places of the UI that
+  show it. Text is drawn in grayscale, scroll positions are whole pixels, and the font stacks end
+  in Noto Sans and Noto Sans Mono from the dev dependencies instead of the system's fonts. Two
+  runs on the same commit give no difference.
+- **Threshold.** Per pixel, a color distance of 0.1 (YIQ, 0 to 1) counts as equal; one pixel
+  beyond it fails the screen. The threshold is not raised to get a run green; a failing
+  comparison is never accepted on its own.
+- **When it fails.** The run lists the screens that differ (console, `summary.md`, the job
+  summary on GitHub) and keeps expected, actual and diff pictures per screen: locally in
+  `ui/e2e/.output/visual-diffs/`, in the local CI in the run's log folder
+  (`linux-visual-diffs/`), on GitHub as the artifact `visual-diffs`. Look at the diff: an
+  unintended change is a bug to fix. A flaky picture from text that differs by run: run with
+  `KALZIT_VISUAL_DISCOVER=1`, which lists every such text outside the known places in
+  `ui/e2e/.output/visual-discover.jsonl`, and add the place to `ui/e2e/visual/stage.ts`.
+- **Updating baselines.** Only on purpose, as a pair of pull requests:
+  1. Clone `MouseWerk/kalzit-visual` beside the Kalzit checkout and run, on Linux (WSL works),
+     `KALZIT_VISUAL_BASELINES=../../kalzit-visual npm run visual:update` in `ui/`; or on
+     GitHub: `gh workflow run visual.yml --ref <branch> -f update=true` and copy the artifact
+     `visual-baselines` into `baselines/` of the clone. Only the screens that changed are
+     written; a removed screen's pictures are deleted by hand (a test fails on pictures without
+     a screen).
+  2. A pull request in `kalzit-visual` with the changed pictures, named after the Kalzit pull
+     request; merged once reviewed, always with a merge commit (never squash or rebase) and
+     without deleting its branch first: the lock names the pull request's own commit, which must
+     stay reachable from `main` there.
+  3. In the Kalzit pull request, `ui/e2e/visual/baselines.lock` set to that merged commit. Its
+     CI then compares against the new pictures.
+- **Review.** The reviewer opens every changed picture in the `kalzit-visual` pull request
+  (GitHub shows image diffs side by side, as swipe and as onion skin) and checks that each
+  change is the one the Kalzit pull request intends. The pull request template asks for it.
 
 ## Keeping things clean
 
