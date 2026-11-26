@@ -91,7 +91,7 @@ test("searches traces without a query language and opens one as a waterfall", as
   await expect(page.getByRole("table", { name: t("explore.result") })).toBeVisible();
 });
 
-test("sets CORS at once with undo and checks an origin", async ({ page }) => {
+test("sets CORS at once with undo and checks an origin", { tag: "@smoke" }, async ({ page }) => {
   await signInOwner(page, "en");
   await page.goto("/settings/cors");
   const field = page.getByRole("textbox", {

@@ -278,249 +278,256 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   );
 
   return (
-    <div className="browser dashboards-browser">
-      {canWrite ? (
-        <PageActions>
-          <ToolbarMenu
-            appearance="button"
-            label={t("dashboards.import.menu")}
-            text={t("dashboards.import.menu")}
-            icon="upload"
-            entries={importEntries}
-          />
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={() => setCreating("dashboard")}
-          >
-            {t("dashboards.new")}
-          </button>
-        </PageActions>
-      ) : null}
-      <aside className="browser__side dashboards-side">
-        <nav className="dashboards-side__group" aria-label={t("dashboards.views.label")}>
-          {sideEntry(
-            {},
-            view === undefined && search.folder === undefined,
-            "dashboards",
-            t("dashboards.folders.all"),
-            counts.data?.total,
-          )}
-          {sideEntry(
-            { view: "starred" },
-            view === "starred",
-            "star",
-            t("dashboards.views.starred"),
-            counts.data?.starred,
-          )}
-          {sideEntry(
-            { view: "recent" },
-            view === "recent",
-            "clock",
-            t("dashboards.views.recent"),
-            undefined,
-          )}
-        </nav>
-        <hr className="dashboards-side__separator" />
-        {folders.isError ? (
-          <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
-        ) : (
-          <FolderTree
-            folders={allFolders}
-            selected={folderId}
-            onSelect={select}
-            storageKey={`kalzit.folderTree.${userId}`}
-            activeTeam={teams.scope}
-            showAll={false}
-            counts={
-              counts.data === undefined
-                ? undefined
-                : { all: counts.data.total, folders: counts.data.folders }
-            }
-          />
-        )}
-        {mayCreateSpace ? (
-          <button
-            type="button"
-            className="dashboards-side__entry dashboards-side__action"
-            onClick={() => setCreating("space")}
-          >
-            <Icon name="members" />
-            {t("dashboards.team.newSpace")}
-          </button>
-        ) : null}
-        {permissions.has("folders:write") ? (
-          <button
-            type="button"
-            className="dashboards-side__entry dashboards-side__action"
-            onClick={() => setCreating("folder")}
-          >
-            <Icon name="plus" />
-            {t("dashboards.folders.new")}
-          </button>
-        ) : null}
-        <hr className="dashboards-side__separator" />
-        <nav className="dashboards-side__group" aria-label={t("dashboards.more.label")}>
-          <Link to="/dashboards/playlists" className="dashboards-side__entry">
-            <Icon name="screen" />
-            {t("playlists.title")}
-          </Link>
-          <Link to="/dashboards/library" className="dashboards-side__entry">
-            <Icon name="library" />
-            {t("libraryPanels.title")}
-          </Link>
-          {permissions.has("dashboards:delete") ? (
-            <Link to="/dashboards/trash" className="dashboards-side__entry">
-              <Icon name="trash" />
-              {t("dashboards.trash.link")}
-            </Link>
-          ) : null}
-        </nav>
-      </aside>
-      <section className="browser__main" aria-labelledby={`${searchId}-title`}>
-        {folder === undefined ? (
-          <Breadcrumbs crumbs={[{ label: t("dashboards.title") }]} />
-        ) : (
-          <Breadcrumbs
-            crumbs={[
-              {
-                label: t("dashboards.folders.all"),
-                link: { to: "/dashboards", search: {} },
-              },
-              ...folderTrail(allFolders, folder.id).map((step) => ({
-                label: step.name,
-                link: { to: "/dashboards" as const, search: { folder: step.id } },
-              })),
-            ]}
-          />
-        )}
-        <div className="browser__header">
-          <h2 className="section-title" id={`${searchId}-title`}>
-            {where}
-            {folder?.ownerTeam ? (
-              <span className="browser__restricted">
-                <Icon name="members" />
-                {t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", {
-                  team: folder.ownerTeam.name,
-                })}
-              </span>
-            ) : null}
-            {folder !== undefined && isRestricted(allFolders, folder.id) && !folder.teamSpace ? (
-              <span className="browser__restricted">
-                <Icon name="lock" />
-                {t("dashboards.folders.restricted")}
-              </span>
-            ) : null}
-          </h2>
-        </div>
-        <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
-        {folder === undefined ? null : (
-          <FolderActions
-            orgId={orgId}
-            folder={folder}
-            folders={allFolders}
-            onDeleted={(deleted) => {
-              showToast({
-                message: t("dashboards.folders.deleted", { name: deleted.name }),
-                undo: () => restore.mutate(deleted.id),
-              });
-              void select(undefined);
-            }}
-          />
-        )}
-        <div className="dashboards-toolbar">
-          <div className="field dashboards-toolbar__search">
-            <label className="visually-hidden" htmlFor={searchId}>
-              {t("dashboards.search")}
-            </label>
-            <input
-              id={searchId}
-              type="search"
-              className="input"
-              placeholder={t("dashboards.searchPlaceholder")}
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
+    // The layout is the container that decides whether the folders fit beside the list.
+    <div className="dashboards-layout">
+      <div className="browser dashboards-browser">
+        {canWrite ? (
+          <PageActions>
+            <ToolbarMenu
+              appearance="button"
+              label={t("dashboards.import.menu")}
+              text={t("dashboards.import.menu")}
+              icon="upload"
+              entries={importEntries}
             />
-          </div>
-          <ToolbarMenu
-            appearance="button"
-            label={tagText}
-            text={tagText}
-            icon="filter"
-            entries={tagEntries}
-          />
-          <ToolbarMenu
-            appearance="button"
-            label={sortText}
-            text={sortText}
-            icon="arrowDown"
-            entries={sortEntries}
-          />
-          {/* biome-ignore lint/a11y/useSemanticElements: two toggle buttons, not a form fieldset */}
-          <div
-            className="dashboards-display"
-            role="group"
-            aria-label={t("dashboards.display.label")}
-          >
-            {(["list", "tiles"] as const).map((name) => (
-              <button
-                key={name}
-                type="button"
-                className="dashboards-display__option"
-                aria-pressed={display === name}
-                onClick={() => chooseDisplay(name)}
-              >
-                <Icon name={name === "list" ? "rows" : "dashboards"} />
-                {name === "list" ? t("dashboards.display.list") : t("dashboards.display.tiles")}
-              </button>
-            ))}
-          </div>
-        </div>
-        {showRecents ? (
-          <RecentRow orgId={orgId} team={teams.scope} enabled={teams.settled} />
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => setCreating("dashboard")}
+            >
+              {t("dashboards.new")}
+            </button>
+          </PageActions>
         ) : null}
-        <DashboardList
-          orgId={orgId}
-          meId={userId}
-          filter={{
-            folderId,
-            q: search.q,
-            tag: search.tag,
-            starred: view === "starred",
-            opened: view === "recent",
-            sort,
-          }}
-          view={view}
-          display={display}
-          folders={allFolders}
-          team={teams.scope}
-          enabled={teams.settled}
-          onClearFilters={clearFilters}
-          onCreate={canWrite ? () => setCreating("dashboard") : undefined}
-        />
-      </section>
-      {creating === "dashboard" ? (
-        <NewDashboardDialog
-          orgId={orgId}
-          folders={allFolders}
-          folderId={folderId ?? teams.context.defaultFolderId ?? undefined}
-          onClose={() => setCreating(null)}
-        />
-      ) : null}
-      {creating === "space" ? (
-        <TeamSpaceDialog orgId={orgId} onClose={() => setCreating(null)} onCreated={select} />
-      ) : null}
-      {creating === "import" ? (
-        <ImportDialog orgId={orgId} folderId={folderId ?? null} onClose={() => setCreating(null)} />
-      ) : null}
-      {creating === "folder" ? (
-        <FolderDialog
-          orgId={orgId}
-          folders={allFolders}
-          parentId={folderId ?? null}
-          onClose={() => setCreating(null)}
-        />
-      ) : null}
+        <aside className="browser__side dashboards-side">
+          <nav className="dashboards-side__group" aria-label={t("dashboards.views.label")}>
+            {sideEntry(
+              {},
+              view === undefined && search.folder === undefined,
+              "dashboards",
+              t("dashboards.folders.all"),
+              counts.data?.total,
+            )}
+            {sideEntry(
+              { view: "starred" },
+              view === "starred",
+              "star",
+              t("dashboards.views.starred"),
+              counts.data?.starred,
+            )}
+            {sideEntry(
+              { view: "recent" },
+              view === "recent",
+              "clock",
+              t("dashboards.views.recent"),
+              undefined,
+            )}
+          </nav>
+          <hr className="dashboards-side__separator" />
+          {folders.isError ? (
+            <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
+          ) : (
+            <FolderTree
+              folders={allFolders}
+              selected={folderId}
+              onSelect={select}
+              storageKey={`kalzit.folderTree.${userId}`}
+              activeTeam={teams.scope}
+              showAll={false}
+              counts={
+                counts.data === undefined
+                  ? undefined
+                  : { all: counts.data.total, folders: counts.data.folders }
+              }
+            />
+          )}
+          {mayCreateSpace ? (
+            <button
+              type="button"
+              className="dashboards-side__entry dashboards-side__action"
+              onClick={() => setCreating("space")}
+            >
+              <Icon name="members" />
+              {t("dashboards.team.newSpace")}
+            </button>
+          ) : null}
+          {permissions.has("folders:write") ? (
+            <button
+              type="button"
+              className="dashboards-side__entry dashboards-side__action"
+              onClick={() => setCreating("folder")}
+            >
+              <Icon name="plus" />
+              {t("dashboards.folders.new")}
+            </button>
+          ) : null}
+          <hr className="dashboards-side__separator" />
+          <nav className="dashboards-side__group" aria-label={t("dashboards.more.label")}>
+            <Link to="/dashboards/playlists" className="dashboards-side__entry">
+              <Icon name="screen" />
+              {t("playlists.title")}
+            </Link>
+            <Link to="/dashboards/library" className="dashboards-side__entry">
+              <Icon name="library" />
+              {t("libraryPanels.title")}
+            </Link>
+            {permissions.has("dashboards:delete") ? (
+              <Link to="/dashboards/trash" className="dashboards-side__entry">
+                <Icon name="trash" />
+                {t("dashboards.trash.link")}
+              </Link>
+            ) : null}
+          </nav>
+        </aside>
+        <section className="browser__main" aria-labelledby={`${searchId}-title`}>
+          {folder === undefined ? (
+            <Breadcrumbs crumbs={[{ label: t("dashboards.title") }]} />
+          ) : (
+            <Breadcrumbs
+              crumbs={[
+                {
+                  label: t("dashboards.folders.all"),
+                  link: { to: "/dashboards", search: {} },
+                },
+                ...folderTrail(allFolders, folder.id).map((step) => ({
+                  label: step.name,
+                  link: { to: "/dashboards" as const, search: { folder: step.id } },
+                })),
+              ]}
+            />
+          )}
+          <div className="browser__header">
+            <h2 className="section-title" id={`${searchId}-title`}>
+              {where}
+              {folder?.ownerTeam ? (
+                <span className="browser__restricted">
+                  <Icon name="members" />
+                  {t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", {
+                    team: folder.ownerTeam.name,
+                  })}
+                </span>
+              ) : null}
+              {folder !== undefined && isRestricted(allFolders, folder.id) && !folder.teamSpace ? (
+                <span className="browser__restricted">
+                  <Icon name="lock" />
+                  {t("dashboards.folders.restricted")}
+                </span>
+              ) : null}
+            </h2>
+          </div>
+          <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
+          {folder === undefined ? null : (
+            <FolderActions
+              orgId={orgId}
+              folder={folder}
+              folders={allFolders}
+              onDeleted={(deleted) => {
+                showToast({
+                  message: t("dashboards.folders.deleted", { name: deleted.name }),
+                  undo: () => restore.mutate(deleted.id),
+                });
+                void select(undefined);
+              }}
+            />
+          )}
+          <div className="dashboards-toolbar">
+            <div className="field dashboards-toolbar__search">
+              <label className="visually-hidden" htmlFor={searchId}>
+                {t("dashboards.search")}
+              </label>
+              <input
+                id={searchId}
+                type="search"
+                className="input"
+                placeholder={t("dashboards.searchPlaceholder")}
+                value={query}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+              />
+            </div>
+            <ToolbarMenu
+              appearance="button"
+              label={tagText}
+              text={tagText}
+              icon="filter"
+              entries={tagEntries}
+            />
+            <ToolbarMenu
+              appearance="button"
+              label={sortText}
+              text={sortText}
+              icon="arrowDown"
+              entries={sortEntries}
+            />
+            {/* biome-ignore lint/a11y/useSemanticElements: two toggle buttons, not a form fieldset */}
+            <div
+              className="dashboards-display"
+              role="group"
+              aria-label={t("dashboards.display.label")}
+            >
+              {(["list", "tiles"] as const).map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className="dashboards-display__option"
+                  aria-pressed={display === name}
+                  onClick={() => chooseDisplay(name)}
+                >
+                  <Icon name={name === "list" ? "rows" : "dashboards"} />
+                  {name === "list" ? t("dashboards.display.list") : t("dashboards.display.tiles")}
+                </button>
+              ))}
+            </div>
+          </div>
+          {showRecents ? (
+            <RecentRow orgId={orgId} team={teams.scope} enabled={teams.settled} />
+          ) : null}
+          <DashboardList
+            orgId={orgId}
+            meId={userId}
+            filter={{
+              folderId,
+              q: search.q,
+              tag: search.tag,
+              starred: view === "starred",
+              opened: view === "recent",
+              sort,
+            }}
+            view={view}
+            display={display}
+            folders={allFolders}
+            team={teams.scope}
+            enabled={teams.settled}
+            onClearFilters={clearFilters}
+            onCreate={canWrite ? () => setCreating("dashboard") : undefined}
+          />
+        </section>
+        {creating === "dashboard" ? (
+          <NewDashboardDialog
+            orgId={orgId}
+            folders={allFolders}
+            folderId={folderId ?? teams.context.defaultFolderId ?? undefined}
+            onClose={() => setCreating(null)}
+          />
+        ) : null}
+        {creating === "space" ? (
+          <TeamSpaceDialog orgId={orgId} onClose={() => setCreating(null)} onCreated={select} />
+        ) : null}
+        {creating === "import" ? (
+          <ImportDialog
+            orgId={orgId}
+            folderId={folderId ?? null}
+            onClose={() => setCreating(null)}
+          />
+        ) : null}
+        {creating === "folder" ? (
+          <FolderDialog
+            orgId={orgId}
+            folders={allFolders}
+            parentId={folderId ?? null}
+            onClose={() => setCreating(null)}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -812,102 +819,104 @@ function DashboardList({
           })}
         </ul>
       ) : (
-        <table className="data-table data-table--stack dashboard-table" {...STACK_ROLES.table}>
-          <thead {...STACK_ROLES.rowgroup}>
-            <tr {...STACK_ROLES.row}>
-              <th scope="col" {...STACK_ROLES.columnheader} className="dashboard-table__star">
-                <span className="visually-hidden">{t("dashboards.column.star")}</span>
-              </th>
-              <th
-                scope="col"
-                {...STACK_ROLES.columnheader}
-                aria-sort={filter.sort === "title" ? "ascending" : undefined}
-              >
-                {t("dashboards.column.name")}
-              </th>
-              <th scope="col" {...STACK_ROLES.columnheader}>
-                {t("dashboards.column.folder")}
-              </th>
-              <th scope="col" {...STACK_ROLES.columnheader}>
-                {t("dashboards.column.tags")}
-              </th>
-              <th
-                scope="col"
-                {...STACK_ROLES.columnheader}
-                aria-sort={filter.sort === "updated" ? "descending" : undefined}
-              >
-                {t("dashboards.column.changed")}
-              </th>
-            </tr>
-          </thead>
-          <tbody {...STACK_ROLES.rowgroup}>
-            {items.map((item) => {
-              const by = changedBy(item);
-              return (
-                <tr key={item.id} className="dashboard-row" {...STACK_ROLES.row}>
-                  <td {...STACK_ROLES.cell} className="dashboard-table__star">
-                    {starButton(item)}
-                  </td>
-                  <td {...STACK_ROLES.cell}>
-                    <span className="dashboard-row__title">
-                      <span className="dashboard-row__mini" aria-hidden="true">
-                        <Icon name="dashboards" />
+        <div className="dashboard-table-frame">
+          <table className="data-table data-table--stack dashboard-table" {...STACK_ROLES.table}>
+            <thead {...STACK_ROLES.rowgroup}>
+              <tr {...STACK_ROLES.row}>
+                <th scope="col" {...STACK_ROLES.columnheader} className="dashboard-table__star">
+                  <span className="visually-hidden">{t("dashboards.column.star")}</span>
+                </th>
+                <th
+                  scope="col"
+                  {...STACK_ROLES.columnheader}
+                  aria-sort={filter.sort === "title" ? "ascending" : undefined}
+                >
+                  {t("dashboards.column.name")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("dashboards.column.folder")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("dashboards.column.tags")}
+                </th>
+                <th
+                  scope="col"
+                  {...STACK_ROLES.columnheader}
+                  aria-sort={filter.sort === "updated" ? "descending" : undefined}
+                >
+                  {t("dashboards.column.changed")}
+                </th>
+              </tr>
+            </thead>
+            <tbody {...STACK_ROLES.rowgroup}>
+              {items.map((item) => {
+                const by = changedBy(item);
+                return (
+                  <tr key={item.id} className="dashboard-row" {...STACK_ROLES.row}>
+                    <td {...STACK_ROLES.cell} className="dashboard-table__star">
+                      {starButton(item)}
+                    </td>
+                    <td {...STACK_ROLES.cell}>
+                      <span className="dashboard-row__title">
+                        <span className="dashboard-row__mini" aria-hidden="true">
+                          <Icon name="dashboards" />
+                        </span>
+                        {/* The link covers the whole row for the pointer; the star stays above it. */}
+                        <Link
+                          to="/dashboards/$dashboardId"
+                          params={{ dashboardId: item.id }}
+                          search={{}}
+                          className="dashboard-row__link"
+                        >
+                          {titleOf(item)}
+                        </Link>
                       </span>
-                      {/* The link covers the whole row for the pointer; the star stays above it. */}
-                      <Link
-                        to="/dashboards/$dashboardId"
-                        params={{ dashboardId: item.id }}
-                        search={{}}
-                        className="dashboard-row__link"
-                      >
-                        {titleOf(item)}
-                      </Link>
-                    </span>
-                    {teamNote(item)}
-                  </td>
-                  {/* Optional: a dashboard outside any folder leaves no empty line on a phone. */}
-                  <td
-                    {...STACK_ROLES.cell}
-                    className="data-table__muted data-table__optional"
-                    data-label={t("dashboards.column.folder")}
-                  >
-                    {folderPath(folders, item.folderId)}
-                  </td>
-                  <td
-                    {...STACK_ROLES.cell}
-                    className="data-table__optional"
-                    data-label={t("dashboards.column.tags")}
-                  >
-                    {(item.tags ?? []).length === 0 ? null : (
-                      <span className="dashboard-tags">
-                        {(item.tags ?? []).map((tag) => (
-                          <span key={tag} className="dashboard-tag">
-                            {tag}
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                  </td>
-                  <td
-                    {...STACK_ROLES.cell}
-                    className="data-table__muted dashboard-row__changed"
-                    data-label={t("dashboards.column.changed")}
-                  >
-                    {item.updatedAt > 0 ? (
-                      <time
-                        dateTime={new Date(item.updatedAt).toISOString()}
-                        title={dateFormat.format(item.updatedAt)}
-                      >
-                        {changed(item)}
-                      </time>
-                    ) : null}
-                    {by === "" ? null : ` · ${by}`}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      {teamNote(item)}
+                    </td>
+                    {/* Optional: a dashboard outside any folder leaves no empty line on a phone. */}
+                    <td
+                      {...STACK_ROLES.cell}
+                      className="data-table__muted data-table__optional"
+                      data-label={t("dashboards.column.folder")}
+                    >
+                      {folderPath(folders, item.folderId)}
+                    </td>
+                    <td
+                      {...STACK_ROLES.cell}
+                      className="data-table__optional"
+                      data-label={t("dashboards.column.tags")}
+                    >
+                      {(item.tags ?? []).length === 0 ? null : (
+                        <span className="dashboard-tags">
+                          {(item.tags ?? []).map((tag) => (
+                            <span key={tag} className="dashboard-tag">
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      {...STACK_ROLES.cell}
+                      className="data-table__muted dashboard-row__changed"
+                      data-label={t("dashboards.column.changed")}
+                    >
+                      {item.updatedAt > 0 ? (
+                        <time
+                          dateTime={new Date(item.updatedAt).toISOString()}
+                          title={dateFormat.format(item.updatedAt)}
+                        >
+                          {changed(item)}
+                        </time>
+                      ) : null}
+                      {by === "" ? null : ` · ${by}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {list.hasNextPage ? (
         <button

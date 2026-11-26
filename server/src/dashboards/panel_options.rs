@@ -54,6 +54,14 @@ pub const MAX_LABEL_TOP: u32 = 200;
 pub const MAX_LABEL_COLORS: usize = 50;
 /// Labels with a node shape of their own (`MAX_LABEL_SHAPES` in the UI).
 pub const MAX_LABEL_SHAPES: usize = 50;
+/// Nodes pinned with a graph panel (`MAX_PINNED_NODES` in the UI), as a viewer's own state keeps.
+pub const MAX_PINNED_NODES: usize = 200;
+/// Longest id of a pinned node, in characters (`MAX_ID_CHARS` of the panel view state).
+pub const MAX_PINNED_ID_CHARS: usize = 512;
+/// Largest coordinate of a pinned node, either way from zero.
+pub const MAX_PINNED_COORDINATE: f64 = 1.0e9;
+/// Properties per label on a graph panel's info card (`MAX_INFO_CARD_PROPERTIES` in the UI).
+pub const MAX_INFO_CARD_PROPERTIES: usize = 4;
 /// ELK's gaps in the hierarchy panel, in px (`ELK_NODE_SPACING`, `ELK_LAYER_SPACING` in the UI).
 pub const MIN_ELK_NODE_SPACING: u32 = 5;
 pub const MAX_ELK_NODE_SPACING: u32 = 200;
@@ -402,6 +410,90 @@ struct TableOptions {
     /// Dashboard variable a click on a row sets, and the column it takes (empty: the first).
     variable: Option<String>,
     variable_column: Option<String>,
+    footer: Option<TableFooter>,
+}
+
+/// The table's footer: one calculation per column, over all rows of the answer or only the rows
+/// the column filters keep.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct TableFooter {
+    show: Option<bool>,
+    over: Option<FooterRows>,
+    /// The calculation of every number column without one of its own.
+    numbers: Option<String>,
+    #[serde(default)]
+    columns: Vec<FooterColumn>,
+}
+
+choice!(FooterRows { All = "all", Filtered = "filtered" });
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FooterColumn {
+    /// The column's shown name or field name.
+    column: String,
+    calc: String,
+}
+
+/// Columns a footer names one by one.
+const MAX_FOOTER_COLUMNS: usize = 100;
+
+/// The calculations that reduce many values to one, by the names the legend, the footer and the
+/// steps share (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and
+/// `lastRow` take the row, `stddev` and `variance` are the sample measures, `p1` to `p99`.
+const CALCS: &[&str] = &[
+    "last",
+    "min",
+    "max",
+    "mean",
+    "sum",
+    "first",
+    "delta",
+    "deltaPercent",
+    "range",
+    "median",
+    "stddev",
+    "variance",
+    "count",
+    "distinct",
+    "gaps",
+    "lastRow",
+    "firstRow",
+];
+
+fn is_calc(text: &str) -> bool {
+    CALCS.contains(&text)
+        || text.strip_prefix('p').is_some_and(|n| {
+            !n.starts_with('0') && n.len() <= 2 && n.parse::<u8>().is_ok_and(|p| (1..=99).contains(&p))
+        })
+}
+
+fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
+    let Some(footer) = footer else { return Ok(()) };
+    if let Some(calc) = &footer.numbers
+        && !is_calc(calc)
+    {
+        return Err(format!("options.footer.numbers: {calc} is not a calculation"));
+    }
+    if footer.columns.len() > MAX_FOOTER_COLUMNS {
+        return Err(format!("options.footer.columns takes at most {MAX_FOOTER_COLUMNS} entries"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, c) in footer.columns.iter().enumerate() {
+        check_text(&format!("options.footer.columns[{i}].column"), &c.column, MAX_TEXT_CHARS, false)?;
+        if c.column.is_empty() {
+            return Err(format!("options.footer.columns[{i}].column must not be empty"));
+        }
+        if !seen.insert(c.column.as_str()) {
+            return Err(format!("options.footer.columns[{i}]: {} has a calculation already", c.column));
+        }
+        if !is_calc(&c.calc) {
+            return Err(format!("options.footer.columns[{i}].calc: {} is not a calculation", c.calc));
+        }
+    }
+    Ok(())
 }
 
 choice!(TraceView { Auto = "auto", List = "list", Waterfall = "waterfall" });
@@ -565,6 +657,19 @@ struct GraphOptions {
     elk_layer_spacing: Option<u32>,
     elk_edge_routing: Option<ElkEdgeRouting>,
     data_links: Option<Vec<DataLink>>,
+    /// Nodes pinned for everyone with the panel, each where it was dragged to (0.8.1).
+    pinned: Option<Vec<PinnedNode>>,
+    /// Up to four properties per node label on the info card of a hovered node (0.8.1).
+    info_card: Option<std::collections::BTreeMap<String, Vec<String>>>,
+}
+
+/// A node pinned with the panel: its id and its place in the drawing's own units.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedNode {
+    id: String,
+    x: f64,
+    y: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,6 +987,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             if let Some(column) = &o.variable_column {
                 check_text("options.variableColumn", column, MAX_TEXT_CHARS, false)?;
             }
+            check_footer(o.footer.as_ref())?;
             check_range("options.pageSize", o.page_size, 5, 1000)
         }
         "trace" => {
@@ -1009,6 +1115,50 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                     check_text("options.labelShapes", label, MAX_GRAPH_TEXT_CHARS, false)?;
                 }
             }
+            if let Some(pinned) = &o.pinned {
+                if pinned.len() > MAX_PINNED_NODES {
+                    return Err(format!("options.pinned takes at most {MAX_PINNED_NODES} nodes"));
+                }
+                let mut seen = std::collections::HashSet::new();
+                for node in pinned {
+                    let chars = node.id.chars().count();
+                    if chars == 0 || chars > MAX_PINNED_ID_CHARS || node.id.chars().any(char::is_control) {
+                        return Err(format!(
+                            "options.pinned takes ids of 1 to {MAX_PINNED_ID_CHARS} characters without control characters"
+                        ));
+                    }
+                    if !seen.insert(node.id.as_str()) {
+                        return Err("options.pinned names each node once".into());
+                    }
+                    let within = |v: f64| v.is_finite() && v.abs() <= MAX_PINNED_COORDINATE;
+                    if !within(node.x) || !within(node.y) {
+                        return Err("options.pinned takes coordinates within 1e9 of zero".into());
+                    }
+                }
+            }
+            if let Some(cards) = &o.info_card {
+                if cards.len() > MAX_LABEL_SHAPES {
+                    return Err(format!("options.infoCard takes at most {MAX_LABEL_SHAPES} labels"));
+                }
+                for (label, properties) in cards {
+                    check_text("options.infoCard", label, MAX_GRAPH_TEXT_CHARS, false)?;
+                    if label.trim().is_empty() {
+                        return Err("options.infoCard takes labels that are not empty".into());
+                    }
+                    if properties.len() > MAX_INFO_CARD_PROPERTIES {
+                        return Err(format!(
+                            "options.infoCard takes at most {MAX_INFO_CARD_PROPERTIES} properties per label"
+                        ));
+                    }
+                    let mut seen = std::collections::HashSet::new();
+                    for property in properties {
+                        check_text("options.infoCard", property, MAX_GRAPH_TEXT_CHARS, false)?;
+                        if property.trim().is_empty() || !seen.insert(property.as_str()) {
+                            return Err("options.infoCard names each property once, none empty".into());
+                        }
+                    }
+                }
+            }
             Ok(())
         }
         "path" => {
@@ -1067,6 +1217,14 @@ mod tests {
             ("bar", json!({ "categoryLabels": "hidden" })),
             ("table", json!({ "columnFilters": true, "pagination": true, "pageSize": 50 })),
             ("table", json!({})),
+            (
+                "table",
+                json!({ "footer": { "show": true, "over": "filtered", "numbers": "sum", "columns": [
+                    { "column": "Umsatz", "calc": "p95" },
+                    { "column": "Kunde", "calc": "count" },
+                    { "column": "Land", "calc": "firstRow" }
+                ] } }),
+            ),
             ("gauge", json!({ "reducer": "mean", "showThresholdMarkers": false })),
             ("bargauge", json!({ "reducer": "last", "displayMode": "lcd", "orientation": "vertical" })),
             ("bargauge", json!({ "valueDisplay": "color", "namePlacement": "top" })),
@@ -1099,6 +1257,13 @@ mod tests {
                     "labelShapes": { "Kunde": "diamond", "Händler": "circle", "Produkt": "square" },
                     "sizeMin": MIN_NODE_SIZE, "sizeMax": MAX_NODE_SIZE, "arrows": "selection", "edgeLabels": "always",
                     "labels": "selection", "labelTop": MAX_LABEL_TOP, "clickAction": "expand", "clickDetails": false
+                }),
+            ),
+            (
+                "network",
+                json!({
+                    "pinned": [{ "id": "4:abc:1042", "x": -12.5, "y": 340.25 }, { "id": "17", "x": 0, "y": 0 }],
+                    "infoCard": { "Kunde": ["kundennr", "stadt", "seit", "umsatz"], "Produkt": [] }
                 }),
             ),
             ("hierarchy", json!({ "colorBy": "component", "cluster": "auto", "caption": "x".repeat(100) })),
@@ -1284,6 +1449,11 @@ mod tests {
         let long = "x".repeat(MAX_GRAPH_TEXT_CHARS + 1);
         let too_many_shapes: serde_json::Map<String, Value> =
             (0..=MAX_LABEL_SHAPES).map(|i| (format!("L{i}"), json!("circle"))).collect();
+        let too_many_cards: serde_json::Map<String, Value> =
+            (0..=MAX_LABEL_SHAPES).map(|i| (format!("L{i}"), json!(["name"]))).collect();
+        let pinned_twice = json!([{ "id": "a", "x": 0, "y": 0 }, { "id": "a", "x": 1, "y": 1 }]);
+        let too_many_pinned: Vec<Value> =
+            (0..=MAX_PINNED_NODES).map(|i| json!({ "id": i.to_string(), "x": 0, "y": 0 })).collect();
         for (kind, options, expect) in [
             ("network", json!({ "nodeLimit": 0 }), "options.nodeLimit"),
             ("network", json!({ "nodeLimit": MAX_NODE_LIMIT + 1 }), "options.nodeLimit"),
@@ -1319,6 +1489,21 @@ mod tests {
             ("network", json!({ "labelShapes": { "Kunde": "star" } }), "options"),
             ("network", json!({ "labelShapes": { long.clone(): "square" } }), "options.labelShapes"),
             ("network", json!({ "labelShapes": too_many_shapes }), "options.labelShapes"),
+            ("network", json!({ "pinned": pinned_twice }), "options.pinned"),
+            ("network", json!({ "pinned": [{ "id": "", "x": 0, "y": 0 }] }), "options.pinned"),
+            ("network", json!({ "pinned": [{ "id": "a\nb", "x": 0, "y": 0 }] }), "options.pinned"),
+            ("network", json!({ "pinned": [{ "id": "a", "x": 1e12, "y": 0 }] }), "options.pinned"),
+            ("network", json!({ "pinned": [{ "id": "a", "x": 0 }] }), "options"),
+            ("network", json!({ "pinned": [{ "id": "a", "x": 0, "y": 0, "name": "A" }] }), "options"),
+            ("network", json!({ "pinned": too_many_pinned }), "options.pinned"),
+            ("network", json!({ "infoCard": { "K": ["a", "b", "c", "d", "e"] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": [long.clone()] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": "stadt" } }), "options"),
+            ("network", json!({ "infoCard": { "Kunde": ["stadt", "stadt"] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": [""] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": ["  "] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "": ["name"] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": too_many_cards }), "options.infoCard"),
             ("network", json!({ "colorProperty": long }), "options.colorProperty"),
             ("path", json!({ "caption": long }), "options.caption"),
             ("path", json!({ "variable": long }), "options.variable"),
@@ -1342,6 +1527,20 @@ mod tests {
             ("table", json!({ "pageSize": 4 }), "options.pageSize"),
             ("table", json!({ "pageSize": 1001 }), "options.pageSize"),
             ("table", json!({ "rowColors": true }), "unknown field"),
+            ("table", json!({ "footer": { "numbers": "average" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p0" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p100" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "numbers": "p05" } }), "options.footer.numbers"),
+            ("table", json!({ "footer": { "over": "visible" } }), "options"),
+            ("table", json!({ "footer": { "rows": 1 } }), "unknown field"),
+            (
+                "table",
+                json!({ "footer": { "columns": [{ "column": "a", "calc": "sum" }, { "column": "a", "calc": "max" }] } }),
+                "options.footer.columns[1]",
+            ),
+            ("table", json!({ "footer": { "columns": [{ "column": "", "calc": "sum" }] } }), "must not be empty"),
+            ("table", json!({ "footer": { "columns": [{ "column": "a\u{7}", "calc": "sum" }] } }), "control"),
+            ("table", json!({ "footer": { "columns": [{ "column": "a", "calc": "total" }] } }), "columns[0].calc"),
             ("timeseries", json!({ "lineWidth": 9 }), "options.lineWidth"),
             ("timeseries", json!({ "legend": { "mode": "grid", "placement": "bottom" } }), "options"),
             ("stat", json!({ "colorMode": "rainbow" }), "options"),

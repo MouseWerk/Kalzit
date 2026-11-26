@@ -25,5 +25,12 @@ git -C "$src" checkout --quiet -f --detach refs/local-ci/tested
 git -C "$src" clean -ffdxq
 
 AREAS="$(cat "$LOGS/areas.txt")"
-export AREAS SRC="$src" CARGO_TARGET_DIR=$HOME/kz-target/ci KALZIT_CI_CACHE=$HOME/kz-ci/cache
+# The stage, the selected jobs and the rerun switch (run.sh writes them next to the areas).
+KALZIT_CI_STAGE="$(cat "$LOGS/stage.txt" 2> /dev/null || echo full)"
+KALZIT_CI_ONLY="$(cat "$LOGS/only.txt" 2> /dev/null || true)"
+KALZIT_CI_RERUN="$(cat "$LOGS/rerun.txt" 2> /dev/null || echo 1)"
+export AREAS SRC="$src" CARGO_TARGET_DIR=$HOME/kz-target/ci KALZIT_CI_CACHE=$HOME/kz-ci/cache \
+  KALZIT_CI_STAGE KALZIT_CI_ONLY KALZIT_CI_RERUN KALZIT_CI_TESTS_FILE="$LOGS/tests.txt"
+# cargo installs sccache and cargo-nextest there (setup-wsl.sh).
+export PATH="$HOME/.cargo/bin:$PATH"
 exec bash "$RUNNER/linux.sh"

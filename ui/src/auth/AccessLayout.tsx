@@ -8,17 +8,7 @@ import { Icon, LOGO_PATH } from "../components/Icon";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 import { LANGUAGES, setLanguage, useI18n } from "../i18n/i18n";
 import { recordChoice } from "../lib/localChoice";
-import {
-  DARK_VARIANTS,
-  LIGHT_VARIANTS,
-  setDarkVariant,
-  setLightVariant,
-  setTheme,
-  THEMES,
-  useDarkVariant,
-  useLightVariant,
-  useTheme,
-} from "../theme/theme";
+import { setTheme, THEMES, useTheme } from "../theme/theme";
 import "../appearance/appearance.css";
 import "./auth.css";
 
@@ -89,8 +79,6 @@ export function AccessLayout({
   const branding = useBrandingSync();
   const brand = useBrand();
   const theme = useTheme();
-  const lightVariant = useLightVariant();
-  const darkVariant = useDarkVariant();
   const noticed = notice !== undefined && notice !== null;
   const [aboveSlot, setAboveSlot] = useState<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
@@ -117,8 +105,9 @@ export function AccessLayout({
       recordChoice({ language: option });
     },
   }));
-  // The mode, then one light and one dark variant (board Themes, frame 7). Chosen here, they
-  // hold for this browser and become the account's choice on signing in.
+  // The mode only; the light and dark variants are chosen only in the account settings, and here
+  // the server's default variants apply (board Themes, frame 7). Chosen here, the mode holds for
+  // this browser and becomes the account's choice on signing in.
   const themes: ToolbarMenuEntry[] = [
     { kind: "heading", key: "mode-heading", label: t("theme.mode") },
     ...THEMES.map(
@@ -130,34 +119,6 @@ export function AccessLayout({
         onSelect: () => {
           setTheme(option);
           recordChoice({ theme: option });
-        },
-      }),
-    ),
-    { kind: "separator", key: "light-separator" },
-    { kind: "heading", key: "light-heading", label: t("theme.lightVariant") },
-    ...LIGHT_VARIANTS.map(
-      (option): ToolbarMenuEntry => ({
-        kind: "radio",
-        key: `light-${option}`,
-        label: t(`theme.variant.${option}`),
-        checked: option === lightVariant,
-        onSelect: () => {
-          setLightVariant(option);
-          recordChoice({ themeLight: option });
-        },
-      }),
-    ),
-    { kind: "separator", key: "dark-separator" },
-    { kind: "heading", key: "dark-heading", label: t("theme.darkVariant") },
-    ...DARK_VARIANTS.map(
-      (option): ToolbarMenuEntry => ({
-        kind: "radio",
-        key: `dark-${option}`,
-        label: t(`theme.variant.${option}`),
-        checked: option === darkVariant,
-        onSelect: () => {
-          setDarkVariant(option);
-          recordChoice({ themeDark: option });
         },
       }),
     ),
