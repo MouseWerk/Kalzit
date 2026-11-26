@@ -29,6 +29,7 @@ import {
   type DatasourceAccess,
   type DatasourceSummary,
   fetchDatasource,
+  setDefaultDatasource,
 } from "./api";
 import { forgetHealth } from "./sourceStatus";
 import "./datasources.css";
@@ -72,19 +73,45 @@ export function useTrash(orgId: string) {
   };
 }
 
-/** The row's menu, as on the board: Explore, test, edit, share, duplicate, trash. */
+/**
+ * Makes a source the organization's default data source, or stops it being the default, and
+ * says so; the lists load again, since the previous default changed with it.
+ */
+export function useSetDefault(orgId: string) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  return async (source: DatasourceSummary, isDefault: boolean) => {
+    try {
+      await setDefaultDatasource(orgId, source.id, isDefault);
+    } catch (error) {
+      showErrorToast(errorMessage(t, error));
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
+    showToast({
+      message: isDefault
+        ? t("datasources.default.set", { name: source.name })
+        : t("datasources.default.unset", { name: source.name }),
+    });
+  };
+}
+
+/** The row's menu, as on the board: Explore, test, edit, default, share, duplicate, trash. */
 export function RowMenu({
   source,
   access,
   onTest,
   onShare,
   onTrash,
+  onDefault,
 }: {
   source: DatasourceSummary;
   access: DatasourceAccess;
   onTest: () => void;
   onShare: () => void;
   onTrash: () => void;
+  /** Makes the source the default (true) or stops it being the default (false). */
+  onDefault: (isDefault: boolean) => void;
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -112,6 +139,21 @@ export function RowMenu({
       onSelect: () =>
         void navigate({ to: "/data-sources/$datasourceId", params: { datasourceId: source.id } }),
     });
+    entries.push(
+      source.isDefault === true
+        ? {
+            key: "default",
+            label: t("datasources.menu.unsetDefault"),
+            icon: "star",
+            onSelect: () => onDefault(false),
+          }
+        : {
+            key: "default",
+            label: t("datasources.menu.setDefault"),
+            icon: "star",
+            onSelect: () => onDefault(true),
+          },
+    );
   }
   if (access.permissions) {
     entries.push({

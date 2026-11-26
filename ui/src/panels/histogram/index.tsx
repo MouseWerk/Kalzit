@@ -2,7 +2,6 @@ import { useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { valueAxis } from "../axis";
 import {
   displayNameOf,
   EMPTY_FIELD_CONFIG,
@@ -26,6 +25,7 @@ import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason, NumberField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
+import { axisRoom, barAxis, ValueAxisMarks } from "../valueAxis";
 import "../viz.css";
 
 export const BUCKETS = { min: 2, max: 200 } as const;
@@ -131,7 +131,8 @@ export function histogram(
   return { edges, series };
 }
 
-const AXIS_LEFT = 48;
+/** Width of the count axis' labels (the histogram does not measure them). */
+const LABELS_WIDTH = 40;
 const AXIS_BOTTOM = 22;
 const PAD = 8;
 
@@ -149,13 +150,18 @@ function HistogramPanel({
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   const buckets = data.edges.length - 1;
-  let top = 0;
-  for (const s of data.series) for (const c of s.counts) if (c > top) top = c;
-  // Rounded up to the next tick, so the highest bucket is never cut off.
-  const { ticks, max: yMax } = valueAxis(0, Math.max(top, 1), 4);
-  const plotWidth = Math.max(width - AXIS_LEFT - PAD, 10);
+  // The count axis from the panel's axis options; min and max there bound the values, not the
+  // counts. Rounded up to the next tick, so the highest bucket is never cut off.
+  const { min: _min, max: _max, ...axisOptions } = fieldConfig.defaults;
+  const counts = data.series.flatMap((s) => s.counts);
+  const axis = barAxis([...counts, 1], axisOptions, 4);
+  const room = axisRoom(axis, LABELS_WIDTH);
+  const AXIS_LEFT = room.left;
+  const plotWidth = Math.max(width - AXIS_LEFT - room.right, 10);
   const plotHeight = Math.max(height - AXIS_BOTTOM - PAD, 10);
-  const y = (v: number) => PAD + plotHeight - (v / (yMax || 1)) * plotHeight;
+  const y = (v: number) =>
+    PAD + plotHeight - axis.fraction(Math.min(Math.max(v, axis.min), axis.max)) * plotHeight;
+  const foot = axis.spec.scale === "log" ? axis.min : 0;
   const group = plotWidth / buckets;
   const barWidth = group / data.series.length;
   const number = new Intl.NumberFormat(language, { maximumFractionDigits: 0 });
@@ -206,20 +212,16 @@ function HistogramPanel({
                   height={plotHeight}
                 />
               )}
-              {ticks.map((tick) => (
-                <g key={tick}>
-                  <line
-                    className="ts__grid"
-                    x1={AXIS_LEFT}
-                    x2={AXIS_LEFT + plotWidth}
-                    y1={y(tick)}
-                    y2={y(tick)}
-                  />
-                  <text className="ts__label" x={AXIS_LEFT - 6} y={y(tick)} textAnchor="end">
-                    {number.format(tick)}
-                  </text>
-                </g>
-              ))}
+              <ValueAxisMarks
+                axis={axis}
+                ticks={axis.ticks.map((tick) => ({ tick, text: number.format(tick) }))}
+                y={y}
+                plotLeft={AXIS_LEFT}
+                plotWidth={plotWidth}
+                top={PAD}
+                plotHeight={plotHeight}
+                boxWidth={width}
+              />
               {data.edges.map((edge, i) =>
                 i % labelEvery === 0 ? (
                   <text
@@ -248,7 +250,7 @@ function HistogramPanel({
                         x={AXIS_LEFT + b * group + index * barWidth}
                         y={y(count)}
                         width={Math.max(barWidth - 1, 1)}
-                        height={Math.max(y(0) - y(count), 1)}
+                        height={Math.max(y(foot) - y(count), 1)}
                         onPointerEnter={() => hover(b, index)}
                       />
                     );
@@ -320,6 +322,6 @@ export const histogramPanel: PanelPlugin<HistogramOptions> = {
   options: parseOptions,
   Panel: HistogramPanel,
   Editor: HistogramEditor,
-  fieldOptions: ["standard", "range", "color", "overrides"],
+  fieldOptions: ["standard", "range", "axes", "color", "overrides"],
   Preview: HistogramPreview,
 };

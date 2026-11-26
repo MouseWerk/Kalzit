@@ -4,6 +4,7 @@ import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { pickOption } from "../../test/select";
+import { addStep } from "../../test/stepCatalog";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
@@ -236,8 +237,7 @@ describe("Explore", () => {
     await runSql(user, "SELECT * FROM customers");
     await screen.findByText("Grace");
     expect(screen.getByRole("button", { name: "Export…" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    await user.click(screen.getByRole("menuitem", { name: "Calculated field" }));
+    await addStep(user, "Calculated field");
     // A step just added opens for editing; its compact card names it and what it does.
     const step = screen.getByRole("listitem", { name: "Step 1" });
     expect(within(step).getByRole("button", { expanded: true }).textContent).toMatch(/^1 · /);

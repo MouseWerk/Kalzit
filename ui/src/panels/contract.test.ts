@@ -1,10 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MAX_CALCS, NAMED_CALCS } from "./calcs";
 import { type DataLink, MAX_DATA_LINK_TITLE, MAX_DATA_LINK_URL } from "./dataLinks";
+import { AXIS_LIMITS } from "./fieldConfig/axisOptions";
 import { newMapping, newOverride, newStep } from "./fieldConfig/FieldConfigEditor";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { GRAPH_LIMITS } from "./fieldConfig/graphStyle";
+import { LEGEND_LIMITS, TOOLTIP_LIMITS } from "./fieldConfig/legendOptions";
 import { CUSTOM_PREFIX } from "./fieldConfig/units";
 import { MAX_EXPAND_LIMIT } from "./graph/adapter";
 import { CLUSTER_MODES, COLOR_BY, MAX_NODE_LIMIT, parseGraphOptions } from "./graph/options";
@@ -127,8 +130,74 @@ function editorFieldConfigs(): FieldConfig[] {
         },
       ],
     },
+    // The axis group at both ends of every bound, and one field on the right through an override.
+    {
+      defaults: {
+        axisPlacement: "left",
+        axisLabel: "a".repeat(AXIS_LIMITS.labelChars),
+        axisWidth: AXIS_LIMITS.maxWidth,
+        axisGrid: "on",
+        axisColor: "text",
+        axisLine: false,
+        axisScale: "log",
+        axisLogBase: 10,
+        axisCenteredZero: false,
+        axisSoftMin: -1.5,
+        axisSoftMax: 100,
+      },
+      overrides: [
+        {
+          matcher: { type: "name", value: "Bestellungen" },
+          properties: {
+            axisPlacement: "right",
+            axisLabel: "Bestellungen",
+            axisWidth: AXIS_LIMITS.minWidth,
+            axisGrid: "off",
+            axisColor: "series",
+            axisLine: true,
+            axisScale: "symlog",
+            axisLogBase: 2,
+            axisCenteredZero: true,
+          },
+        },
+        {
+          matcher: { type: "regex", value: "^p" },
+          properties: { axisPlacement: "hidden", axisScale: null, axisSoftMax: null },
+        },
+      ],
+    },
   ];
 }
+
+/** The legend and tooltip as their editors write them: every choice, both ends of each number. */
+const LEGEND_TOOLTIP = [
+  {
+    legend: {
+      mode: "table",
+      placement: "right",
+      values: ["last", "sum", "p95", "p1", "p99", "maxTime"],
+      width: LEGEND_LIMITS.maxWidth,
+      limit: LEGEND_LIMITS.minLimit,
+    },
+    tooltip: {
+      mode: "all",
+      sort: "desc",
+      hideZeros: true,
+      maxWidth: TOOLTIP_LIMITS.minSize,
+      maxHeight: TOOLTIP_LIMITS.maxSize,
+    },
+  },
+  {
+    legend: {
+      mode: "list",
+      placement: "bottom",
+      values: NAMED_CALCS.slice(-MAX_CALCS),
+      width: LEGEND_LIMITS.minWidth,
+      limit: LEGEND_LIMITS.maxLimit,
+    },
+    tooltip: { mode: "single", sort: "asc" },
+  },
+];
 
 /** Text as long as the editors' fields take (`maxLength`). */
 const LONGEST = "x".repeat(100);
@@ -202,7 +271,13 @@ function editorOptions(type: string): unknown[] {
   }
   // The other choice of each layout option, and a pie legend without values.
   if (type === "bar") {
-    return [parse({ categoryLabels: "hidden", showValues: true })];
+    return [
+      parse({ categoryLabels: "hidden", showValues: true }),
+      ...LEGEND_TOOLTIP.map((stored) => parse(stored)),
+    ];
+  }
+  if (type === "timeseries") {
+    return LEGEND_TOOLTIP.map((stored) => parse(stored));
   }
   if (type === "bargauge") {
     return [
@@ -212,6 +287,28 @@ function editorOptions(type: string): unknown[] {
   }
   if (type === "piechart") {
     return [parse({ labelPlacement: "outside", legendValues: [] })];
+  }
+  // Every field the XY chart names, at the longest, and the other end of each bound.
+  if (type === "xy") {
+    const field = "f".repeat(200);
+    return [
+      parse({
+        mapping: "manual",
+        x: field,
+        y: field,
+        seriesBy: field,
+        sizeBy: field,
+        colorBy: field,
+        sizeMin: 1,
+        sizeMax: 40,
+        show: "both",
+        pointOpacity: 5,
+      }),
+      parse({ show: "lines", pointOpacity: 100, sizeMin: 40, sizeMax: 40 }),
+    ];
+  }
+  if (type === "trend") {
+    return [parse({ xField: "f".repeat(200) })];
   }
   return [];
 }
