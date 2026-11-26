@@ -338,6 +338,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
                 <HealthResult
                   health={test.data ?? null}
                   error={test.error}
+                  play
                   empty={
                     <div className="ds-test-status" data-state="untested">
                       <span className="ds-status__dot" aria-hidden="true" />
@@ -506,6 +507,7 @@ export function HealthResult({
   error,
   empty = null,
   warnings = true,
+  play = false,
 }: {
   health: Health | null;
   error: Error | null;
@@ -513,6 +515,8 @@ export function HealthResult({
   empty?: ReactNode;
   /** Whether the result shows its warnings (off where the page shows them on its own). */
   warnings?: boolean;
+  /** A result the person just asked for: its check draws itself once. */
+  play?: boolean;
 }) {
   const { t } = useI18n();
   let content = empty;
@@ -526,7 +530,11 @@ export function HealthResult({
   } else if (health !== null) {
     content = (
       <div className={health.ok ? "notice" : "notice notice--danger"}>
-        <Icon name={health.ok ? "check" : "alert"} className={health.ok ? "icon--success" : ""} />
+        <Icon
+          name={health.ok ? "check" : "alert"}
+          className={health.ok ? "icon--success" : ""}
+          play={play}
+        />
         <div className="ds-health">
           <strong>
             {health.ok
@@ -999,6 +1007,7 @@ export function SettingsForm({
               type="button"
               className="button button--secondary"
               disabled={busy || testing}
+              aria-busy={testing || undefined}
               onClick={testNow}
             >
               <Icon name="refresh" />

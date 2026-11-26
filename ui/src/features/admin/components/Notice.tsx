@@ -78,7 +78,7 @@ export function Notice({
   const body =
     notice === null ? null : (
       <div className={notice.error === true ? "notice notice--danger" : "notice"}>
-        <Icon name={notice.error === true ? "alert" : "check"} />
+        <Icon name={notice.error === true ? "alert" : "check"} play />
         <div className="admin-notice__text">{notice.message}</div>
         {notice.undo === undefined ? null : (
           <button

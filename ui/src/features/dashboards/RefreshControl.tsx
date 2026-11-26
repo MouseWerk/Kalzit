@@ -20,6 +20,8 @@ interface RefreshControlProps {
   onLive?: ((live: LiveChoice) => void) | undefined;
   /** The icon alone, without the word (the panel editor's bar). */
   compact?: boolean;
+  /** While the queries run: the icon turns (aria-busy). */
+  busy?: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export function RefreshControl({
   live = "off",
   onLive,
   compact = false,
+  busy = false,
 }: RefreshControlProps) {
   const { t } = useI18n();
   const liveOn = onLive !== undefined && live !== "off";
@@ -89,6 +92,7 @@ export function RefreshControl({
             <span className="dash-toolbar__text">{t("dashboards.refresh")}</span>
           )
         }
+        aria-busy={busy || undefined}
         onClick={onRefresh}
       />
       {entries.length === 0 ? null : (

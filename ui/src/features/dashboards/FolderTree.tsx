@@ -108,6 +108,11 @@ interface FolderTreeProps {
    * of its whole subtree beside its name. No numbers when left out.
    */
   counts?: { all: number; folders: ReadonlyMap<string | null, number> } | undefined;
+  /**
+   * Whether the tree starts with the entry above every folder; `false` when the page lists it
+   * elsewhere (the dashboards page shows it with Favorites and Recently opened).
+   */
+  showAll?: boolean | undefined;
 }
 
 /** The tree's own key for "All dashboards", which has no folder id. */
@@ -129,19 +134,20 @@ export function FolderTree({
   activeTeam,
   allLabel,
   counts,
+  showAll = true,
 }: FolderTreeProps) {
   const { t } = useI18n();
   const ids = useId();
   const treeRef = useRef<HTMLDivElement>(null);
   const [folded, setFolded] = useState<string[]>(() => readFolded(storageKey));
-  const [focused, setFocused] = useState<string>(selected ?? ALL);
+  const [focused, setFocused] = useState<string>(selected ?? (showAll ? ALL : ""));
   const byId = new Map(folders.map((f) => [f.id, f]));
   const withChildren = folders.filter((f) => folders.some((c) => c.parentId === f.id));
   // The way to the current folder stays open, whatever was folded before.
   const path = ancestorIds(folders, selected);
   const isOpen = (id: string) => !folded.includes(id) || path.includes(id);
   // What is shown in order: the tab stop must be one of these.
-  const shown: string[] = [ALL];
+  const shown: string[] = showAll ? [ALL] : [];
   const walk = (nodes: FolderNode[]) => {
     for (const node of nodes) {
       shown.push(node.folder.id);
@@ -152,7 +158,11 @@ export function FolderTree({
   };
   const tree = buildTree(folders, activeTeam);
   walk(tree);
-  const tabStop = shown.includes(focused) ? focused : (selected ?? ALL);
+  const tabStop = shown.includes(focused)
+    ? focused
+    : selected !== undefined && shown.includes(selected)
+      ? selected
+      : (shown[0] ?? ALL);
 
   function store(next: string[]) {
     setFolded(next);
@@ -236,7 +246,7 @@ export function FolderTree({
       case "Enter":
       case " ":
         event.preventDefault();
-        onSelect(id === ALL ? undefined : id);
+        if (id !== ALL || showAll) onSelect(id === ALL ? undefined : id);
         return;
       default:
         return;
@@ -399,16 +409,18 @@ export function FolderTree({
         aria-labelledby={`${ids}-heading`}
         onKeyDown={onKeyDown}
       >
-        {item(
-          ALL,
-          1,
-          <span className="truncate" title={allLabel ?? t("dashboards.folders.all")}>
-            {allLabel ?? t("dashboards.folders.all")}
-          </span>,
-          "dashboards",
-          { hasChildren: false, open: false },
-          null,
-        )}
+        {showAll
+          ? item(
+              ALL,
+              1,
+              <span className="truncate" title={allLabel ?? t("dashboards.folders.all")}>
+                {allLabel ?? t("dashboards.folders.all")}
+              </span>,
+              "dashboards",
+              { hasChildren: false, open: false },
+              null,
+            )
+          : null}
         {renderNodes(tree, 1)}
       </div>
     </nav>

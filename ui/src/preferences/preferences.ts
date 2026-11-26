@@ -10,13 +10,27 @@ import { expectShape, isRecord, request } from "../api/client";
 import { getTargetLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
 import { choiceFor, claimChoice, clearChoice, type LocalChoice } from "../lib/localChoice";
 import { setTimeZone, setWeekStart, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
-import { getTheme, setTheme, THEMES, type Theme } from "../theme/theme";
+import {
+  DARK_VARIANTS,
+  type DarkVariant,
+  getDarkVariant,
+  getLightVariant,
+  getTheme,
+  LIGHT_VARIANTS,
+  type LightVariant,
+  setDarkVariant,
+  setLightVariant,
+  setTheme,
+  THEMES,
+  type Theme,
+} from "../theme/theme";
 
 /**
  * The signed-in user's preferences, stored on the server per user (`/api/me/preferences`,
- * docs/api/shell.md). Language and theme left unset follow an explicit choice made on the sign-in
- * page, else the server's default; time zone left unset is the browser's, week start Monday. Language and theme
- * also stay in the browser, so the next visit paints in them before the server answers.
+ * docs/api/shell.md). Language, theme and the theme's light and dark variant left unset follow an
+ * explicit choice made on the sign-in page, else the server's default; time zone left unset is
+ * the browser's, week start Monday. Language and theme also stay in the browser, so the next visit
+ * paints in them before the server answers.
  */
 
 export { WEEK_STARTS, type WeekStart };
@@ -30,6 +44,10 @@ export interface StartDashboard {
 export interface Preferences {
   language: Language | null;
   theme: Theme | null;
+  /** The light variant (Light, Paper, Calcite) that the light mode and "System" show. */
+  themeLight: LightVariant | null;
+  /** The dark variant (Dark, Graphite, Night) that the dark mode and "System" show. */
+  themeDark: DarkVariant | null;
   timeZone: string | null;
   weekStart: WeekStart | null;
   startDashboard: StartDashboard | null;
@@ -37,12 +55,14 @@ export interface Preferences {
   showTips: boolean;
   /** The tips already shown, oldest first; each tip appears once. */
   seenTips: string[];
-  defaults: { language: string; theme: string };
+  defaults: { language: string; theme: string; themeLight: string; themeDark: string };
 }
 
 export interface PreferencesPatch {
   language?: Language | null;
   theme?: Theme | null;
+  themeLight?: LightVariant | null;
+  themeDark?: DarkVariant | null;
   timeZone?: string | null;
   weekStart?: WeekStart | null;
   startDashboard?: { orgId: string; dashboardId: string } | null;
@@ -64,6 +84,8 @@ function normalize(value: Preferences): Preferences {
   return {
     language: oneOf(LANGUAGES, value.language),
     theme: oneOf(THEMES, value.theme),
+    themeLight: oneOf(LIGHT_VARIANTS, value.themeLight),
+    themeDark: oneOf(DARK_VARIANTS, value.themeDark),
     timeZone: typeof value.timeZone === "string" ? value.timeZone : null,
     weekStart: oneOf(WEEK_STARTS, value.weekStart),
     startDashboard:
@@ -80,6 +102,8 @@ function normalize(value: Preferences): Preferences {
     defaults: {
       language: String(value.defaults.language ?? ""),
       theme: String(value.defaults.theme ?? ""),
+      themeLight: String(value.defaults.themeLight ?? ""),
+      themeDark: String(value.defaults.themeDark ?? ""),
     },
   };
 }
@@ -115,9 +139,10 @@ export function preferencesQuery(userId: string) {
   });
 }
 /**
- * Applies what the preferences decide in the browser. Language and theme: the account's
- * preference; where there is none, an explicit choice made in this browser before signing in
- * (`choice`, until it is adopted), else the server's default (docs/api/shell.md).
+ * Applies what the preferences decide in the browser. Language, theme and its variants: the
+ * account's preference; where there is none, for language and mode an explicit choice made in this
+ * browser before signing in (`choice`, until it is adopted), else the server's default
+ * (docs/api/shell.md).
  */
 export function applyPreferences(preferences: Preferences, choice: LocalChoice = {}): void {
   const language =
@@ -130,6 +155,14 @@ export function applyPreferences(preferences: Preferences, choice: LocalChoice =
   const theme = preferences.theme ?? choice.theme ?? oneOf(THEMES, preferences.defaults.theme);
   if (theme !== null && theme !== getTheme()) {
     setTheme(theme);
+  }
+  const light = preferences.themeLight ?? oneOf(LIGHT_VARIANTS, preferences.defaults.themeLight);
+  if (light !== null && light !== getLightVariant()) {
+    setLightVariant(light);
+  }
+  const dark = preferences.themeDark ?? oneOf(DARK_VARIANTS, preferences.defaults.themeDark);
+  if (dark !== null && dark !== getDarkVariant()) {
+    setDarkVariant(dark);
   }
   setTimeZone(preferences.timeZone);
   setWeekStart(preferences.weekStart);
@@ -210,6 +243,12 @@ export function usePreferenceChange(
       }
       if (patch.theme !== undefined && patch.theme !== null) {
         setTheme(patch.theme);
+      }
+      if (patch.themeLight !== undefined && patch.themeLight !== null) {
+        setLightVariant(patch.themeLight);
+      }
+      if (patch.themeDark !== undefined && patch.themeDark !== null) {
+        setDarkVariant(patch.themeDark);
       }
       // A fetch on its way would answer with the value before this change.
       await queryClient.cancelQueries({ queryKey: key });

@@ -18,9 +18,14 @@ export interface Branding {
   logo: { contentType: string; sha256: string } | null;
   signIn: SignInTexts;
   defaultTheme: string;
+  /** The default light and dark variant of the theme (tokens.css, data-light and data-dark). */
+  defaultThemeLight: string;
+  defaultThemeDark: string;
   accent: unknown;
   density: unknown;
   fontSize: unknown;
+  /** Whether the app shows the built-in handbook (`appearance.handbook`); on for older servers. */
+  handbook: boolean;
 }
 
 export interface SignInTexts {
@@ -80,9 +85,12 @@ export async function fetchBranding(): Promise<Branding> {
       lockMinutes: count(signIn.lockMinutes),
     },
     defaultTheme: text(value.defaultTheme, "system"),
+    defaultThemeLight: text(value.defaultThemeLight, "light"),
+    defaultThemeDark: text(value.defaultThemeDark, "dark"),
     accent: value.accent,
     density: value.density,
     fontSize: value.fontSize,
+    handbook: value.handbook !== false,
   };
 }
 
@@ -138,11 +146,15 @@ export function useBrandingSync(): Branding | undefined {
     if (branding.data !== undefined) {
       applyBranding(branding.data);
       setLook(lookFrom(branding.data));
-      // Before sign-in there are no account preferences: the server's default theme stands in
-      // for a visitor who chose none in this browser. The language stays the browser's own,
-      // which says more about an unknown visitor; after sign-in the server's default applies
-      // to accounts without a language of their own.
-      applyDefaultTheme(branding.data.defaultTheme);
+      // Before sign-in there are no account preferences: the server's default theme and its
+      // variants stand in for a visitor who chose none in this browser. The language stays the
+      // browser's own, which says more about an unknown visitor; after sign-in the server's
+      // default applies to accounts without a language of their own.
+      applyDefaultTheme(
+        branding.data.defaultTheme,
+        branding.data.defaultThemeLight,
+        branding.data.defaultThemeDark,
+      );
     }
   }, [branding.data]);
   return branding.data;

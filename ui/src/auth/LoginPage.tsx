@@ -25,6 +25,7 @@ import { type ErrorCode, isApiError } from "../api/client";
 import type { LoginSearch } from "../app/baseRoutes";
 import { useBrandingSync } from "../appearance/api";
 import { LimitedMarkdown } from "../appearance/LimitedMarkdown";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason } from "../features/datasources/reasons";
 import { fetchPrompt, isPrompt, type Prompt } from "../features/security/api";
@@ -591,7 +592,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
                   aria-disabled={leaving === null ? undefined : true}
                   onClick={(event) => startSso(event, provider)}
                 >
-                  {going ? <span className="access__spinner" aria-hidden="true" /> : null}
+                  {going ? <Icon name="refresh" className="icon--busy" /> : null}
                   {going
                     ? t("access.sso.leaving", { provider: provider.name })
                     : t("access.sso.button", { provider: provider.name })}
@@ -690,7 +691,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               }
               aria-disabled={busy || waiting}
             >
-              {busy ? <span className="access__spinner" aria-hidden="true" /> : null}
+              {busy ? <Icon name="refresh" className="icon--busy" /> : null}
               {waiting && !addressLocked ? <span className="access__wait">{submit}</span> : submit}
             </button>
           </>

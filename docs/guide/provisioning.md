@@ -27,7 +27,7 @@ it with the file's state and locks it again.
 
 In the interface a managed dashboard, data source, alert rule or role carries the badge **Managed
 by files** for people with `provisioning:read`; it opens the set, the file and the last apply,
-and holds the unlock. **Administration > Provisioning** lists the sets, the managed resources,
+and holds the unlock. [**Administration > Provisioning**](app:/admin/provisioning) lists the sets, the managed resources,
 the applies from the audit log and where the server differs from the files.
 
 ## The folder

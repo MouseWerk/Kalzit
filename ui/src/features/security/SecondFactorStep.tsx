@@ -233,7 +233,7 @@ export function LinkPasswordStep({
           className="button button--primary button--block access__submit"
           aria-disabled={busy}
         >
-          {busy ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {busy ? <Icon name="refresh" className="icon--busy" /> : null}
           {t("security.linkPassword.submit")}
         </button>
       </form>

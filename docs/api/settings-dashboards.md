@@ -130,17 +130,20 @@ Server settings:
 | `usage.enabled` | `true` | `true`, `false`; counts dashboard views and panel and data source queries for the usage insights (docs/api/usage.md), never per person; off counts nothing new and keeps what was counted |
 | `usage.retention_days` | `90` | whole number 1 to 90; usage buckets older than this are deleted every hour |
 | `appearance.default_language` | `"de"` | `"de"`, `"en"` |
-| `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"` |
+| `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"`; the mode |
+| `appearance.default_theme_light` | `"light"` | `"light"`, `"paper"`, `"calcite"`; the light variant for System and Light |
+| `appearance.default_theme_dark` | `"dark"` | `"dark"`, `"graphite"`, `"night"`; the dark variant for System and Dark |
 | `sessions.lifetime_hours` | `720` | read-only (configuration) |
 | `sessions.idle_timeout_hours` | `168` | read-only (configuration) |
 | `dashboards.version_retention` | `100` | whole number 0 to 100000; 0 keeps every version |
 | `appearance.product_name` | `"Kalzit"` | text of 1 to 40 characters, one line |
-| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the darkest light surface (`--bg-surface`, luminance 0.87896) and the lightest dark surface (`--bg-raised`, luminance 0.01181) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
+| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"` (shown as Gray), or `#rrggbb` with at least 3:1 against the darkest light surface of every variant (`--bg-surface` of Paper, luminance 0.84929) and the lightest dark surface of every variant (`--bg-raised` of Night, luminance 0.01386) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
 | `appearance.density` | `"balanced"` | `"compact"`, `"balanced"`, `"comfortable"` |
 | `appearance.font_size` | `14` | `13`, `14`, `15`, `16` (body text in pixels) |
 | `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
 | `appearance.time_zone` | `"browser"` | `"browser"` or an IANA name |
 | `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
+| `appearance.handbook` | `true` | boolean: whether the app shows the built-in handbook (Help > Handbook and the links into it); off, the Help menu keeps only the keyboard shortcuts |
 | `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
@@ -447,13 +450,15 @@ database's clock.
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
 null, signIn: {welcome, notice, organization, serverName, productLine, maxFailures, lockMinutes},
-defaultTheme, accent, density, fontSize}` with the server's values. `organization` and
+defaultTheme, defaultThemeLight, defaultThemeDark, accent, density, fontSize, handbook}` with the
+server's values; `handbook` is `appearance.handbook`. `organization` and
 `serverName` (`signin.organization`, `signin.server_name`, empty unless an administrator sets
 them) make the line above the form; `productLine` says whether the pages before sign-in show
 one line about the product while no notice is set: `signin.product_line`, and always `false` on
 a server with its own product name or logo; `maxFailures` and `lockMinutes` are
 `security.login_max_failures` and `security.login_window_secs` in minutes, for the texts about
-the lockout. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
+the lockout. The sign-in page applies `defaultTheme`, `defaultThemeLight` and `defaultThemeDark` where the visitor
+chose none of them in this browser;
 the language stays the browser's until sign-in.
 
 ### `GET /branding/logo`
@@ -789,8 +794,22 @@ interface DashboardSummary {
   createdAt: number;
   updatedAt: number;
   updatedBy: string | null;
+  updatedByName: string | null;   // current name of who saved last; null once the account is removed
   deletedAt: number | null;
   access: ResourceAccess;
+  tags: string[];
+  // In lists only:
+  starred?: boolean;              // the caller starred it
+  openedAt?: number;              // when the caller last opened it; absent when never (or no
+                                  // longer among their recently opened dashboards)
+  layout?: DashboardLayout;       // with `layout=true`
+}
+interface DashboardLayout {
+  // Panels and row bands on the 24-column grid, top to bottom (by y, then x), at most 24.
+  // Panels outside rows keep their place; each row follows as a band { w: 24, h: 1,
+  // type: "row" }, with its panels below it unless the row is stored collapsed.
+  items: { x: number; y: number; w: number; h: number; type: string }[];
+  more: boolean;                  // the dashboard holds more than `items`
 }
 interface Dashboard extends DashboardSummary {
   model: DashboardModel;          // migrated to the current schemaVersion
@@ -812,11 +831,46 @@ line breaks (`422 validation` field `message`).
 
 ### `GET /orgs/{orgId}/dashboards`
 
-Permission `dashboards:read`. `Page<DashboardSummary>` ordered by title (language order, see "List order"),
-then id. Query: `folderId` (only that folder; `404 not_found` if not visible), `q` (part of the
-title, any case), `trashed=true` (the trash instead), `team` (a team context, `docs/api/access.md`),
-`limit`, `cursor`. Dashboards the caller does not see are left out. Summaries carry
+Permission `dashboards:read`. `Page<DashboardSummary>` ordered by `sort`. Query: `folderId` (only
+that folder; `404 not_found` if not visible), `q` (part of the title, of a tag or of the name of a
+folder the caller sees that holds the dashboard directly, any case; at most 200 matching folders
+count), `tag` (only dashboards with this tag, any case), `trashed=true` (the trash instead),
+`team` (a team context, `docs/api/access.md`), `starred=true` (only the caller's starred ones),
+`opened=true` (only those in the caller's recently opened list), `layout=true` (each summary
+carries `layout`; `limit` then at most 50, else `422 validation` field `limit`), `sort`, `limit`,
+`cursor`. Dashboards the caller does not see are left out. Summaries carry
 `ownerTeam: { id, name } | null` and `teamOnly: boolean`.
+
+`sort`: `title` (default; language order, see "List order", then id), `updated` (newest change
+first, then id) or `opened` (what the caller opened last first, then what they never opened by
+newest change, then id). Only the caller's own opens count. A cursor belongs to its sort.
+With `opened`, pages can shift when the caller opens dashboards between two pages: an opened
+dashboard moves to the front, so later pages may skip or repeat it.
+
+The layout holds positions and panel types only: no titles, queries, options or data. A stored
+model the server cannot read leaves `layout` out for that dashboard.
+
+### `GET /orgs/{orgId}/dashboards/counts`
+
+Permission `dashboards:read`. Query: `team` (as for the list). Counts what the list shows outside
+the trash, by its own visibility rules:
+
+```ts
+interface DashboardCounts {
+  total: number;                                    // every dashboard the list would show
+  folders: { folderId: string | null; count: number }[];  // per folder the caller sees (null: the
+                                                    // top level); folders without any, and hidden
+                                                    // folders, are left out
+  starred: number;                                  // of those, starred by the caller
+  opened: number;                                   // of those, in the caller's recently opened list
+  tags: { tag: string; count: number }[];           // tags of those dashboards, any case as one
+                                                    // (one spelling in use), most used first, at
+                                                    // most 100
+}
+```
+
+A dashboard reached through a grant inside a folder hidden from the caller counts in `total`, but
+its folder is not named.
 
 ### `POST /orgs/{orgId}/dashboards`
 

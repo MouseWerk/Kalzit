@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
+import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
@@ -85,7 +86,7 @@ export function ConfirmEmailPage() {
             if (!confirm.isPending) confirm.mutate();
           }}
         >
-          {confirm.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {confirm.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {t("access.confirm.confirm")}
         </button>
       </>

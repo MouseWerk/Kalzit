@@ -3,6 +3,7 @@
 // page waits for. Their keys are part of `MessageKey` like all others; i18n.ts merges an area
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
+import type enHandbook from "./en/handbook.json";
 import type enProvisioning from "./en/provisioning.json";
 import type enReports from "./en/reports.json";
 import type enServerAdmin from "./en/serverAdmin.json";
@@ -14,7 +15,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enReports &
   typeof enTraces &
   typeof enServerAdmin &
-  typeof enApps;
+  typeof enApps &
+  typeof enHandbook;
 
 export const DEFERRED_AREAS = [
   "sharing",
@@ -25,6 +27,8 @@ export const DEFERRED_AREAS = [
   // The server sections of 0.7.5 (CORS, self-registration with the visitor's pages, backups).
   "serverAdmin",
   "apps",
+  // The built-in handbook: its page, the search and the article's parts (src/handbook).
+  "handbook",
 ] as const;
 export type DeferredArea = (typeof DEFERRED_AREAS)[number];
 
@@ -57,5 +61,9 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   apps: {
     de: () => import("./de/apps.json").then(pick),
     en: () => import("./en/apps.json").then(pick),
+  },
+  handbook: {
+    de: () => import("./de/handbook.json").then(pick),
+    en: () => import("./en/handbook.json").then(pick),
   },
 };

@@ -15,13 +15,15 @@ pub struct Script {
     pub implicit_tls: bool,
     /// Offers STARTTLS on the plain connection.
     pub starttls: bool,
-    /// The sign-in mechanism offered after TLS.
+    /// The sign-in mechanism offered after TLS (and before it with `plain_auth`).
     pub auth: &'static str,
     pub reject_auth: bool,
     pub reject_sender: bool,
     pub reject_recipient: bool,
     /// Sends a line right behind the answer to STARTTLS, before TLS.
     pub inject_after_starttls: bool,
+    /// Offers the sign-in on the plain connection too, like a relay without TLS.
+    pub plain_auth: bool,
 }
 
 impl Default for Script {
@@ -34,6 +36,7 @@ impl Default for Script {
             reject_sender: false,
             reject_recipient: false,
             inject_after_starttls: false,
+            plain_auth: false,
         }
     }
 }
@@ -163,7 +166,8 @@ async fn serve(
             if script.starttls && !secure {
                 out.push_str("250-STARTTLS\r\n");
             }
-            if secure {
+            // A server with TLS asks for the sign-in only over it; a plain relay offers it as is.
+            if secure || script.plain_auth {
                 out.push_str(&format!("250-AUTH {}\r\n", script.auth));
             }
             out.push_str("250 8BITMIME\r\n");

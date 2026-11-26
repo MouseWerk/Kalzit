@@ -431,9 +431,9 @@ describe("Verwaltung > Sicherungen", () => {
     ).toBeTruthy();
     expect(screen.getByRole("switch", { name: "Encrypt backups" })).toHaveProperty("checked", true);
     expect(screen.getByText(/The secrets key is never in a backup/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "How to restore" }).getAttribute("href")).toMatch(
-      /docs\/guide\/backup\.md$/,
-    );
+    expect(
+      screen.getByRole("link", { name: "In the handbook: Restoring" }).getAttribute("href"),
+    ).toBe("/handbook/backup#restore-from-a-kalzit-backup");
     await user.click(screen.getByRole("button", { name: "Back up now" }));
     expect(await screen.findByText("Backup stored.")).toBeTruthy();
   });
