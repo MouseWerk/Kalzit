@@ -2,7 +2,7 @@ import data from "./lucide.json";
 
 /**
  * The icons a style rule can put on a node: a subset of Lucide (https://lucide.dev, ISC; the
- * icons derived from Feather MIT, see LICENSE next to this file), about 300 of them, each as one
+ * icons derived from Feather MIT, see LICENSE next to this file), 360 of them, each as one
  * stroked path on a 24 by 24 grid. `scripts/graph-icons.mjs` writes the data from the names in
  * names.txt. The set stands in until the product has icons of its own.
  */

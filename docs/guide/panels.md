@@ -390,27 +390,33 @@ selected nodes, or around the best connected node when nothing is selected), **C
 **Coordinates** (two number properties or a `point` property) and **Timeline** (nodes by a time
 property, one lane per label or one for all). Circular and grid order the nodes by label, name or
 number of edges. All layouts run in a web worker, show progress with **Cancel**, and are
-deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently: forces start from another position, and radial arranges around the nodes selected now; the other layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and nodes a layout has no place for (no value, no time) stand in a strip with their number and the reason. The guide lines are a view aid: they are not part of an exported image. Times are read as Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time but no zone as time in your browser's zone. A result too large for the
-hierarchy offers **Close groups**. Pinned nodes stay in place, and changing the layout releases
-them. In the panel editor the choice is stored with the panel.
+deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently:
+forces start from another position, and radial arranges around the nodes selected now; the other
+layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and
+nodes a layout has no place for (no value, no time) stand in a strip with their number and the
+reason. The guide lines are a view aid: they are not part of an exported image. Times are read as
+Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time
+but no zone as time in your browser's zone. A result too large for the hierarchy offers
+**Close groups**. Pinned nodes stay in place, and changing the layout releases them. In the panel
+editor the choice is stored with the panel.
 
 ![Explorer mode: a customer's orders loaded as a step in the Steps line](../screenshots/graph-explorer-dark.png)
 
-A **Hierarchy** lays out at most 10,000 drawn nodes (closed groups count as one node); a larger result offers **Show as a network**. Edges
-that close a cycle are noted. By default it uses Kalzit's own layered layout. Under **Layout** you
-can pick **ELK layered** (the Eclipse Layout Kernel) instead, with its **Direction** (top to
-bottom, left to right, bottom to top, right to left), **Node spacing** and **Layer spacing** in px
-and the **Edge routing** (orthogonal or polyline; edges are still drawn straight, the routing sets
-how much room ELK keeps for them). ELK loads only when a panel uses it, so the first drawing takes
-a moment longer and says "Loading ELK and arranging the graph"; the same result always gets the
-same layout. If ELK cannot run, the panel shows Kalzit's layout and says so. ELK runs in a web
-worker; a browser without workers arranges at most 300 nodes with ELK and shows Kalzit's layout
-for larger graphs. **Paths** shows the first path open and the others folded with their
-chain of nodes; each edge shows its type, direction and properties, each node its labels and first
-two properties; at most 50 paths, with a note when there are more, and **Show as table**.
-Browsers without WebGL 2 show every graph as a table; **Show as table** is also available on
-demand. Keyboard: Tab into the drawing, arrow keys move to the nearest node, Enter loads
-neighbours or opens a group, Escape clears the selection.
+A **Hierarchy** lays out at most 10,000 drawn nodes (closed groups count as one node); a larger
+result offers **Show as a network**. Edges that close a cycle are noted. By default it uses
+Kalzit's own layered layout. Under **Layout** you can pick **ELK layered** (the Eclipse Layout
+Kernel) instead, with its **Direction** (top to bottom, left to right, bottom to top, right to
+left), **Node spacing** and **Layer spacing** in px and the **Edge routing** (orthogonal or
+polyline; edges are still drawn straight, the routing sets how much room ELK keeps for them). ELK
+loads only when a panel uses it, so the first drawing takes a moment longer and says "Loading ELK
+and arranging the graph"; the same result always gets the same layout. If ELK cannot run, the panel
+shows Kalzit's layout and says so. ELK runs in a web worker; a browser without workers arranges at
+most 300 nodes with ELK and shows Kalzit's layout for larger graphs. **Paths** shows the first path
+open and the others folded with their chain of nodes; each edge shows its type, direction and
+properties, each node its labels and first two properties; at most 50 paths, with a note when there
+are more, and **Show as table**. Browsers without WebGL 2 show every graph as a table; **Show as
+table** is also available on demand. Keyboard: Tab into the drawing, arrow keys move to the nearest
+node, Enter loads neighbours or opens a group, Escape clears the selection.
 
 | | |
 |---|---|

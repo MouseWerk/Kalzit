@@ -130,25 +130,28 @@ export function timelineLayout(request: LayoutRequest): TimelineLayout {
     (a, b) => laneOf(a) - laneOf(b) || (times[a] as number) - (times[b] as number) || a - b,
   );
 
+  // Pinned nodes keep their place, so they take no row: their time still sets the axis.
+  const rowed = timed.filter((node) => !isFixed(request, node));
+
   const rowHeight = 2 * largestSize(sizes) + NODE_GAP;
   const lanes: TimelineLayout["lanes"] = [];
   const guides: LayoutGuide[] = [];
   let top = 0;
   let at = 0;
-  while (at < timed.length) {
-    const lane = laneOf(timed[at] as number);
+  while (at < rowed.length) {
+    const lane = laneOf(rowed[at] as number);
     const rows = new Rows();
     const start = at;
     const rowOf: number[] = [];
-    while (at < timed.length && laneOf(timed[at] as number) === lane) {
-      const node = timed[at] as number;
+    while (at < rowed.length && laneOf(rowed[at] as number) === lane) {
+      const node = rowed[at] as number;
       const x = xOf(node);
       const size = sizes[node] ?? 0;
       rowOf.push(rows.take(x - size - NODE_GAP, x + size));
       at++;
     }
     for (let i = start; i < at; i++) {
-      const node = timed[i] as number;
+      const node = rowed[i] as number;
       positions[2 * node] = xOf(node);
       positions[2 * node + 1] = -(top + ((rowOf[i - start] as number) + 0.5) * rowHeight);
     }
