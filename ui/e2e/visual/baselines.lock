@@ -2,4 +2,4 @@
 # compares against (e2e/visual/baselines.ts, docs/process.md "Visual comparison"). A baseline
 # change is a pull request there and a new commit here.
 repo=https://github.com/MouseWerk/kalzit-visual.git
-commit=2999fa3585bb984c6fdd21ff7353eaac924a1879
+commit=ead7645f31f378af02db441111ebb11ae0320a5b
