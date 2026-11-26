@@ -52,20 +52,15 @@ const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
 };
 
 /**
- * Steps after a sweep page reached its state. The CORS check's result is scrolled into view by
- * the page, which left the window at a position that differed by a pixel from run to run; here
- * the window is scrolled to a whole-pixel position worked out from the layout: the result's top
- * a fixed distance below the window's top.
+ * Steps after a sweep page reached its state. The page scrolls the CORS check's result into view;
+ * scrolled, the sticky sidebar and settings list were drawn a pixel apart from run to run at
+ * 1280 px (also with whole-pixel scroll positions short of the page's end; the cause is not
+ * found). The picture shows the page from its top instead: the result is in view at 2560 and
+ * 3440 px, where nothing scrolls.
  */
 const AFTER: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "cors in use": async (page) => {
-    await page.evaluate(() => {
-      const result = document.querySelector(".s75-code");
-      if (result !== null) {
-        const top = result.getBoundingClientRect().top + window.scrollY;
-        window.scrollTo(0, Math.max(0, Math.round(top) - 240));
-      }
-    });
+    await page.evaluate(() => window.scrollTo(0, 0));
   },
 };
 
