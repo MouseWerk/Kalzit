@@ -316,6 +316,20 @@ async fn plan_apply_prune_and_export_round_trip() {
     let roles = t.ok(&Who::Owner, Method::GET, "/roles", None).await;
     assert!(!roles["items"].as_array().unwrap().iter().any(|r| r["name"] == "Prüfer"));
 
+    // A pruned data source goes to the trash with the retention in force then (`purgeAt`).
+    let only_role: BTreeMap<String, String> =
+        files.iter().filter(|(path, _)| path.starts_with("roles/")).map(|(p, c)| (p.clone(), c.clone())).collect();
+    let applied = t.apply(&admin, &only_role, json!({ "prune": true })).await.body;
+    assert!(actions(&applied["plan"]).contains(&("lager".into(), "delete".into(), false)), "{applied}");
+    let (deleted_at, trash_days): (Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT deleted_at, trash_days FROM datasources WHERE id = $1")
+            .bind(&source)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert!(deleted_at.is_some(), "pruned into the trash");
+    assert_eq!(trash_days, Some(30));
+
     // Every apply is audited, with each change.
     let audit = t.ok(&Who::Owner, Method::GET, "/audit?limit=200", None).await;
     let names: Vec<&str> = audit["items"].as_array().unwrap().iter().filter_map(|e| e["action"].as_str()).collect();

@@ -521,6 +521,47 @@ async fn changing_the_retention_never_shortens_the_trash(mut t: TestApp) {
     assert!(deleted >= early_deleted + 40 * DAY, "{deleted}");
 }
 
+/// A source deleted before the retention was stored keeps the 30 days of that time, also under a
+/// lower setting; a bulk deletion stores the retention in force like a single one.
+async fn old_and_bulk_deleted_sources_keep_their_retention(t: TestApp) {
+    const DAY: i64 = 24 * 3600 * 1000;
+    let old = t.source("Alt").await;
+    t.trash(&old).await;
+    sqlx::query("UPDATE datasources SET trash_days = NULL WHERE id = $1")
+        .bind(&old)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let (deleted_at,): (i64,) = sqlx::query_as("SELECT deleted_at FROM datasources WHERE id = $1")
+        .bind(&old)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(2)).await.status, StatusCode::OK);
+    assert_eq!(purge_at(&t, &old).await, deleted_at + 30 * DAY);
+
+    let (a, b) = (t.source("Stapel A").await, t.source("Stapel B").await);
+    let r = t.post("/datasources/bulk", json!({ "action": "delete", "ids": [a, b] }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    for id in [&a, &b] {
+        let (kept,): (Option<i64>,) = sqlx::query_as("SELECT trash_days FROM datasources WHERE id = $1")
+            .bind(id)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        assert_eq!(kept, Some(2), "{id}");
+    }
+    // A bulk restore clears it again.
+    let r = t.post("/datasources/bulk", json!({ "action": "restore", "ids": [a] }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (kept,): (Option<i64>,) = sqlx::query_as("SELECT trash_days FROM datasources WHERE id = $1")
+        .bind(&a)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, None);
+}
+
 /// The retention and a restore at the same time: one wins, never both, and a restored source
 /// keeps its secrets.
 async fn the_retention_and_a_restore_end_in_one_state(t: TestApp) {
@@ -580,4 +621,5 @@ on_both_databases! {
     the_retention_and_a_restore_end_in_one_state;
     the_trash_retention_is_a_setting;
     changing_the_retention_never_shortens_the_trash;
+    old_and_bulk_deleted_sources_keep_their_retention;
 }
