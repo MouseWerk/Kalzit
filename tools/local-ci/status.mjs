@@ -26,7 +26,7 @@ const JOBS = {
     ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['plugins', ['server']], ['audit', ['audit']],
     ['update-rights', ['server']], ['postgres', ['server']], ['ldap', ['server']], ['datasources', ['server']],
     ['datasources-sql-kv', ['server']], ['datasources-more', ['server']], ['acme', ['server']], ['e2e', ['e2e']],
-    ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
+    ['visual', ['e2e']], ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
   ],
 }
 // The jobs of the fast gate (stage.txt `gate`), with the areas that switch them on there where

@@ -19,6 +19,8 @@
     "test": "vitest run",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "e2e:sweep": "playwright test -c e2e/sweep.config.ts",
+    "visual": "node e2e/visual/baselines.ts fetch && playwright test -c e2e/visual.config.ts",
+    "visual:update": "node e2e/visual/baselines.ts checkout && playwright test -c e2e/visual.config.ts --update-snapshots=changed",
     "screenshots": "playwright test -c e2e/screenshots.config.ts",
     "gallery": "playwright test -c e2e/gallery.config.ts"
   },
@@ -46,6 +48,8 @@
     "@axe-core/playwright": "4.14.0",
     "@babel/core": "7.29.7",
     "@biomejs/biome": "2.6.8",
+    "@fontsource-variable/noto-sans": "5.2.10",
+    "@fontsource-variable/noto-sans-mono": "5.2.10",
     "@playwright/test": "1.65.1",
     "@rolldown/plugin-babel": "0.3.1",
     "@testing-library/dom": "10.4.2",
