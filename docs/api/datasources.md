@@ -2595,6 +2595,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
 | `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
 | `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
+| `steps.pattern` | `pattern` | a step's name or row pattern is no regular expression of the shared subset (settings-dashboards.md) |
+| `steps.filter_value` | `field`, `value` | a filter rows condition's value cannot be compared with the field's type |
+| `steps.stack_types` | `field`, `first`, `other` | stack tables: one field name has two types in the tables |
+| `steps.result_rows` | `max` | the step would make more than `max` rows |
 | `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
 | `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
