@@ -308,6 +308,32 @@ pub enum VariableType {
     Constant,
     Textbox,
     Interval,
+    /// A data source of `datasourceKind`; panel targets with `datasourceId` `$name` run on it.
+    /// `current` is the default source, which reading the dashboard authorizes; any other pick
+    /// needs the viewer's own `datasources:query` on it.
+    Datasource,
+    /// Ad hoc filters ("Freie Filter"): `current` is a list of `{key, operator, value}` that the
+    /// server builds into every target of `datasourceId`.
+    Adhoc,
+    /// On or off: sends `onValue` or `offValue`, both the dashboard's own (checked) values.
+    Switch,
+}
+
+/// The variable name of a target's `datasourceId` of the form `$name`.
+pub fn source_variable(datasource_id: &str) -> Option<&str> {
+    datasource_id.strip_prefix('$')
+}
+
+/// The filters an ad hoc variable holds in `current` (`None` when it is no list of filters).
+pub fn adhoc_current(v: &Variable) -> Option<Vec<crate::shapes::AdhocFilter>> {
+    if v.kind != VariableType::Adhoc {
+        return None;
+    }
+    match &v.current {
+        None | Some(Value::Null) => Some(Vec::new()),
+        Some(Value::Object(m)) if m.contains_key("value") => serde_json::from_value(m["value"].clone()).ok(),
+        Some(other) => serde_json::from_value(other.clone()).ok(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -338,7 +364,80 @@ pub struct Variable {
     /// and this is the explicit, visible projection to a list of values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values_from: Option<ValuesFrom>,
+    /// "All" is offered first (custom and query variables). Picked, it sends the list of every
+    /// value, or `allValue` when set (`variables::ALL`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_all: bool,
+    /// What "All" sends instead of the list: this one value, as one parameter (needs
+    /// `includeAll`). Being the dashboard's own, it counts as a checked value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_value: Option<String>,
+    /// Query variables: only options whose value matches stay; the named groups `text` and
+    /// `value` (or a single unnamed group) take the shown name and the value apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regex: Option<String>,
+    /// Query variables: the order of the options; absent keeps the query's order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<VariableSort>,
+    /// Query variables: when the options are read again; absent reads them on every new range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<VariableRefresh>,
+    /// Query variables: fixed options listed after the query's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub static_options: Vec<StaticOption>,
+    /// Values outside the options may be typed in (custom and query variables). A custom
+    /// variable's typed value is then a free value: bound, never an identifier or a pattern.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_custom: bool,
+    /// Data source variables: the kind of the sources offered (`postgres`, `prometheus`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datasource_kind: Option<String>,
+    /// Switches: the value sent when on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_value: Option<String>,
+    /// Switches: the value sent when off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_value: Option<String>,
 }
+
+/// The order of a query variable's options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableSort {
+    /// By shown name, A to Z (code points).
+    Alphabetical,
+    AlphabeticalDesc,
+    /// By value as a number, smallest first; values that are no numbers follow in their order.
+    Numerical,
+    NumericalDesc,
+    /// By shown name, ignoring upper and lower case.
+    CaseInsensitive,
+    CaseInsensitiveDesc,
+}
+
+/// When the bar reads a query variable's options again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableRefresh {
+    /// When the dashboard opens (and on "Refresh").
+    Load,
+    /// Also whenever the time range changes.
+    TimeRange,
+}
+
+/// A fixed option of a query variable, shown as `label` (or the value).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StaticOption {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Longest custom value for "All", regex and fixed option.
+pub const MAX_VARIABLE_TEXT_CHARS: usize = 1000;
+/// Fixed options of one query variable.
+pub const MAX_STATIC_OPTIONS: usize = 100;
 
 /// Where a query variable's options come from in a result that is not a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -480,21 +579,45 @@ impl DashboardModel {
         let targets = self
             .panels
             .iter()
-            .flat_map(|p| p.targets.iter().map(|t| (t.datasource_id.as_str(), p.target_key(&p.id, t))));
+            .flat_map(|p| p.targets.iter().map(|t| (self.default_source(&t.datasource_id), p.target_key(&p.id, t))));
         let variables = self.variables.iter().filter_map(|v| {
             v.datasource_id.as_deref().map(|id| (id, v.query.as_ref().map_or_else(String::new, |q| q.to_string())))
         });
         let annotations = self.annotations.iter().map(|a| (a.datasource_id.as_str(), a.query.to_string()));
-        targets.chain(variables).chain(annotations).collect()
+        // A data source variable's default counts even while no target uses it: the bar offers
+        // it to everyone, and a target may come later.
+        let defaults = self.source_defaults().map(|(name, id)| (id, format!("datasource variable {name}")));
+        targets.chain(variables).chain(annotations).chain(defaults).collect()
     }
 
-    /// Every data source the stored queries use: panel targets, query variables and annotation
-    /// queries.
+    /// Every data source the stored queries use: panel targets, query and ad hoc variables,
+    /// annotation queries and the defaults of data source variables.
     pub fn datasource_ids(&self) -> BTreeSet<&str> {
-        let targets = self.panels.iter().flat_map(|p| p.targets.iter().map(|t| t.datasource_id.as_str()));
+        let targets = self.panels.iter().flat_map(|p| p.targets.iter().map(|t| self.default_source(&t.datasource_id)));
         let variables = self.variables.iter().filter_map(|v| v.datasource_id.as_deref());
         let annotations = self.annotations.iter().map(|a| a.datasource_id.as_str());
-        targets.chain(variables).chain(annotations).collect()
+        let defaults = self.source_defaults().map(|(_, id)| id);
+        targets.chain(variables).chain(annotations).chain(defaults).collect()
+    }
+
+    /// Each data source variable's name and default source id.
+    fn source_defaults(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.variables
+            .iter()
+            .filter(|v| v.kind == VariableType::Datasource)
+            .filter_map(|v| Some((v.name.as_str(), v.current.as_ref()?.as_str()?)))
+    }
+
+    /// The data source a target's `datasourceId` stands for when nobody picks another: the id
+    /// itself, or for `$name` the default (`current`) of that data source variable. The saved
+    /// default is what saving checked (`stored_queries`), so reading the dashboard authorizes it.
+    pub fn default_source<'a>(&'a self, datasource_id: &'a str) -> &'a str {
+        let Some(name) = source_variable(datasource_id) else { return datasource_id };
+        self.variables
+            .iter()
+            .find(|v| v.name == name && v.kind == VariableType::Datasource)
+            .and_then(|v| v.current.as_ref()?.as_str())
+            .unwrap_or(datasource_id)
     }
 
     /// The library panels the dashboard shows.
@@ -624,6 +747,138 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The rules of one variable, at `at` (`model.variables[0]`); the name's uniqueness is the
+/// model's to check.
+pub fn validate_variable(at: &str, v: &Variable) -> Result<(), String> {
+    if v.name.chars().count() > MAX_ID_CHARS || !is_identifier(&v.name) {
+        return Err(format!("{at}.name must be a name of letters, digits and _ (up to {MAX_ID_CHARS})"));
+    }
+    if let Some(label) = &v.label {
+        check_text(&format!("{at}.label"), label, 0, MAX_TITLE_CHARS)?;
+    }
+    match (v.kind, &v.datasource_id) {
+        (VariableType::Query | VariableType::Adhoc, Some(id)) => {
+            check_id(&format!("{at}.datasourceId"), id)?;
+            if source_variable(id).is_some() {
+                return Err(format!("{at}.datasourceId must name a data source, not a variable"));
+            }
+        }
+        (VariableType::Query, None) => return Err(format!("{at}.datasourceId is required for a query variable")),
+        (VariableType::Adhoc, None) => return Err(format!("{at}.datasourceId is required for ad hoc filters")),
+        (_, Some(_)) => return Err(format!("{at}.datasourceId belongs only to query variables and ad hoc filters")),
+        (_, None) => {}
+    }
+    match (v.kind, &v.datasource_kind) {
+        (VariableType::Datasource, Some(kind)) => {
+            check_id(&format!("{at}.datasourceKind"), kind)?;
+            if !kind.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+                return Err(format!("{at}.datasourceKind must be a data source kind such as postgres"));
+            }
+            // The default source, which reading the dashboard authorizes (as its stored queries).
+            match v.current.as_ref().and_then(Value::as_str) {
+                Some(id) if source_variable(id).is_none() => check_id(&format!("{at}.current"), id)?,
+                _ => return Err(format!("{at}.current must be the id of the default data source")),
+            }
+        }
+        (VariableType::Datasource, None) => {
+            return Err(format!("{at}.datasourceKind is required for a data source variable"));
+        }
+        (_, Some(_)) => return Err(format!("{at}.datasourceKind belongs only to data source variables")),
+        (_, None) => {}
+    }
+    match (v.kind, &v.on_value, &v.off_value) {
+        (VariableType::Switch, Some(on), Some(off)) => {
+            check_text(&format!("{at}.onValue"), on, 0, MAX_VARIABLE_TEXT_CHARS)?;
+            check_text(&format!("{at}.offValue"), off, 0, MAX_VARIABLE_TEXT_CHARS)?;
+            if on == off {
+                return Err(format!("{at}.onValue and offValue must differ"));
+            }
+            if let Some(current) = &v.current
+                && current.as_str().is_none_or(|c| c != on && c != off)
+            {
+                return Err(format!("{at}.current must be onValue or offValue"));
+            }
+        }
+        (VariableType::Switch, _, _) => return Err(format!("{at}.onValue and offValue are required for a switch")),
+        (_, None, None) => {}
+        _ => return Err(format!("{at}.onValue and offValue belong only to switches")),
+    }
+    if v.kind == VariableType::Adhoc {
+        if v.current.as_ref().is_some_and(|c| !c.is_null()) && adhoc_current(v).is_none() {
+            return Err(format!("{at}.current must be a list of {{key, operator, value}} filters"));
+        }
+        if let Some(filters) = adhoc_current(v) {
+            crate::shapes::check_filters(&filters).map_err(|e| format!("{at}.current: {e}"))?;
+        }
+    }
+    if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
+        return Err(format!("{at}.multi is only for custom and query variables"));
+    }
+    if v.all_by_default && !v.multi {
+        return Err(format!("{at}.allByDefault needs multi"));
+    }
+    if let Some(from) = &v.values_from {
+        if v.kind != VariableType::Query {
+            return Err(format!("{at}.valuesFrom is only for query variables"));
+        }
+        for (name, text) in [("label", &from.label), ("value", &from.value), ("text", &from.text)] {
+            if let Some(text) = text {
+                check_text(&format!("{at}.valuesFrom.{name}"), text, 0, MAX_VALUES_FROM_CHARS)?;
+            }
+        }
+        if from.from == ValuesSource::Documents {
+            if from.label.as_deref().is_some_and(|l| !l.is_empty()) {
+                return Err(format!("{at}.valuesFrom.label is only for nodes and edges"));
+            }
+            if from.value.as_deref().is_none_or(str::is_empty) {
+                return Err(format!("{at}.valuesFrom.value is required for documents (a field path)"));
+            }
+        }
+    }
+    let choice = matches!(v.kind, VariableType::Custom | VariableType::Query);
+    if v.include_all && !choice {
+        return Err(format!("{at}.includeAll is only for custom and query variables"));
+    }
+    if v.allow_custom && !choice {
+        return Err(format!("{at}.allowCustom is only for custom and query variables"));
+    }
+    if let Some(all) = &v.all_value {
+        if !v.include_all {
+            return Err(format!("{at}.allValue needs includeAll"));
+        }
+        check_text(&format!("{at}.allValue"), all, 1, MAX_VARIABLE_TEXT_CHARS)?;
+    }
+    if v.regex.is_some() && !matches!(v.kind, VariableType::Query | VariableType::Datasource) {
+        return Err(format!("{at}.regex is only for query and data source variables"));
+    }
+    let query_only =
+        [("sort", v.sort.is_some()), ("refresh", v.refresh.is_some()), ("staticOptions", !v.static_options.is_empty())];
+    if v.kind != VariableType::Query
+        && let Some((name, _)) = query_only.iter().find(|(_, set)| *set)
+    {
+        return Err(format!("{at}.{name} is only for query variables"));
+    }
+    if let Some(regex) = &v.regex {
+        check_text(&format!("{at}.regex"), regex, 1, MAX_VARIABLE_TEXT_CHARS)?;
+        super::variables::OptionRegex::parse(regex).map_err(|e| format!("{at}.regex: {e}"))?;
+    }
+    if v.static_options.len() > MAX_STATIC_OPTIONS {
+        return Err(format!("{at}.staticOptions takes at most {MAX_STATIC_OPTIONS} entries"));
+    }
+    let mut seen = BTreeSet::new();
+    for (j, o) in v.static_options.iter().enumerate() {
+        // An empty value would be an option that sends nothing; a label without one has no use.
+        check_text(&format!("{at}.staticOptions[{j}].value"), &o.value, 1, MAX_VARIABLE_TEXT_CHARS)?;
+        if let Some(label) = &o.label {
+            check_text(&format!("{at}.staticOptions[{j}].label"), label, 0, MAX_TITLE_CHARS)?;
+        }
+        if !seen.insert(o.value.as_str()) {
+            return Err(format!("{at}.staticOptions[{j}].value {:?} is listed twice", o.value));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate(model: &DashboardModel) -> Result<(), String> {
     if model.schema_version != SCHEMA_VERSION {
         return Err(format!("model.schemaVersion must be {SCHEMA_VERSION}"));
@@ -646,45 +901,17 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
     let mut names = BTreeSet::new();
     for (i, v) in model.variables.iter().enumerate() {
         let at = format!("model.variables[{i}]");
-        if v.name.chars().count() > MAX_ID_CHARS || !is_identifier(&v.name) {
-            return Err(format!("{at}.name must be a name of letters, digits and _ (up to {MAX_ID_CHARS})"));
-        }
         if !names.insert(v.name.as_str()) {
             return Err(format!("{at}.name {} is used twice", v.name));
         }
-        if let Some(label) = &v.label {
-            check_text(&format!("{at}.label"), label, 0, MAX_TITLE_CHARS)?;
-        }
-        match (v.kind, &v.datasource_id) {
-            (VariableType::Query, Some(id)) => check_id(&format!("{at}.datasourceId"), id)?,
-            (VariableType::Query, None) => return Err(format!("{at}.datasourceId is required for a query variable")),
-            (_, Some(_)) => return Err(format!("{at}.datasourceId belongs only to query variables")),
-            (_, None) => {}
-        }
-        if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
-            return Err(format!("{at}.multi is only for custom and query variables"));
-        }
-        if v.all_by_default && !v.multi {
-            return Err(format!("{at}.allByDefault needs multi"));
-        }
-        if let Some(from) = &v.values_from {
-            if v.kind != VariableType::Query {
-                return Err(format!("{at}.valuesFrom is only for query variables"));
-            }
-            for (name, text) in [("label", &from.label), ("value", &from.value), ("text", &from.text)] {
-                if let Some(text) = text {
-                    check_text(&format!("{at}.valuesFrom.{name}"), text, 0, MAX_VALUES_FROM_CHARS)?;
-                }
-            }
-            if from.from == ValuesSource::Documents {
-                if from.label.as_deref().is_some_and(|l| !l.is_empty()) {
-                    return Err(format!("{at}.valuesFrom.label is only for nodes and edges"));
-                }
-                if from.value.as_deref().is_none_or(str::is_empty) {
-                    return Err(format!("{at}.valuesFrom.value is required for documents (a field path)"));
-                }
-            }
-        }
+        validate_variable(&at, v)?;
+    }
+    let saved_filters: usize = model.variables.iter().map(|v| adhoc_current(v).map_or(0, |f| f.len())).sum();
+    if saved_filters > crate::shapes::MAX_ADHOC_FILTERS {
+        return Err(format!(
+            "model.variables: the ad hoc filters hold at most {} filters together",
+            crate::shapes::MAX_ADHOC_FILTERS
+        ));
     }
     // What a repeat may name: a variable offering several values at once.
     let repeatable = |at: &str, name: &str| -> Result<(), String> {
@@ -827,6 +1054,13 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
                 return Err(format!("{at}.refId {} is used twice in this panel", t.ref_id));
             }
             check_id(&format!("{at}.datasourceId"), &t.datasource_id)?;
+            // `$name` picks the source through a data source variable of this dashboard.
+            if let Some(name) = source_variable(&t.datasource_id) {
+                let ok = model.variables.iter().any(|v| v.name == name && v.kind == VariableType::Datasource);
+                if !ok {
+                    return Err(format!("{at}.datasourceId ${name} is not a data source variable of this dashboard"));
+                }
+            }
         }
         // Steps work on the frames of this panel's own queries.
         crate::analysis::check_steps(&p.transformations, &ref_ids, &format!("{at}.transformations"))?;
@@ -1207,6 +1441,79 @@ mod tests {
         model
     }
 
+    fn new_kinds() -> Value {
+        let mut m = sample();
+        m["variables"] = json!([
+            { "name": "quelle", "type": "datasource", "datasourceKind": "postgres", "current": "ds-9",
+              "regex": "/^Shop/" },
+            { "name": "filter", "type": "adhoc", "datasourceId": "ds-1",
+              "current": [{ "key": "level", "operator": "=", "value": "error" }] },
+            { "name": "nur_fehler", "type": "switch", "onValue": "true", "offValue": "false", "current": "false" }
+        ]);
+        m["panels"][0]["targets"][1]["datasourceId"] = json!("$quelle");
+        m
+    }
+
+    /// A target on `$name` counts with the variable's saved default wherever saving checks the
+    /// sources (`stored_queries`, `datasource_ids`), so saving needs the right to query it.
+    #[test]
+    fn data_source_variables_stand_for_their_default_when_saving() {
+        let model = parse(new_kinds()).unwrap();
+        assert_eq!(model.default_source("$quelle"), "ds-9");
+        assert_eq!(model.default_source("ds-1"), "ds-1");
+        assert_eq!(model.datasource_ids().into_iter().collect::<Vec<_>>(), ["ds-1", "ds-9"]);
+        assert!(model.stored_queries().iter().any(|(id, _)| *id == "ds-9"));
+        assert!(model.stored_queries().iter().all(|(id, _)| !id.starts_with('$')));
+        assert_eq!(adhoc_current(&model.variables[1]).unwrap()[0].key, "level");
+        assert_eq!(parse(serde_json::to_value(&model).unwrap()).unwrap(), model, "round trip");
+    }
+
+    #[test]
+    fn new_variable_kinds_are_checked() {
+        let cases: Vec<(Vec<&str>, Value, &str)> = vec![
+            (vec!["panels", "0", "targets", "1", "datasourceId"], json!("$fehlt"), "not a data source variable"),
+            (vec!["panels", "0", "targets", "1", "datasourceId"], json!("$filter"), "not a data source variable"),
+            (vec!["variables", "0", "datasourceKind"], Value::Null, "datasourceKind is required"),
+            (vec!["variables", "0", "datasourceKind"], json!("a b"), "must be a data source kind"),
+            (vec!["variables", "0", "current"], Value::Null, "id of the default data source"),
+            (vec!["variables", "0", "current"], json!("$quelle"), "id of the default data source"),
+            (vec!["variables", "0", "multi"], json!(true), "multi is only"),
+            (vec!["variables", "0", "datasourceId"], json!("ds-1"), "belongs only to query variables"),
+            (vec!["variables", "1", "datasourceId"], Value::Null, "required for ad hoc filters"),
+            (vec!["variables", "1", "datasourceId"], json!("$quelle"), "not a variable"),
+            (vec!["variables", "1", "current"], json!("level=error"), "list of {key, operator, value}"),
+            (vec!["variables", "1", "current"], json!([{ "key": "", "operator": "=", "value": "x" }]), "filter key"),
+            (vec!["variables", "1", "current"], json!([{ "key": "a", "operator": "~", "value": "x" }]), "list of"),
+            (vec!["variables", "1", "datasourceKind"], json!("loki"), "only to data source variables"),
+            (vec!["variables", "2", "onValue"], Value::Null, "are required for a switch"),
+            (vec!["variables", "2", "onValue"], json!("false"), "must differ"),
+            (vec!["variables", "2", "current"], json!("vielleicht"), "onValue or offValue"),
+            (vec!["variables", "1", "onValue"], json!("x"), "belong only to switches"),
+        ];
+        for (path, value, expected) in cases {
+            let mut m = new_kinds();
+            if value.is_null() {
+                let (key, parent) = path.split_last().unwrap();
+                let pointer: String = parent.iter().map(|p| format!("/{p}")).collect();
+                m.pointer_mut(&pointer).unwrap().as_object_mut().unwrap().remove(*key);
+            } else {
+                m = with(m, &path, value);
+            }
+            let err = parse(m).unwrap_err();
+            assert!(err.contains(expected), "{path:?}: {err}");
+        }
+        // At most 20 saved filters on a dashboard, across its ad hoc variables.
+        let mut m = new_kinds();
+        let many: Vec<Value> =
+            (0..11).map(|i| json!({ "key": format!("k{i}"), "operator": "=", "value": "v" })).collect();
+        m["variables"][1]["current"] = json!(many);
+        m["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "name": "zwei", "type": "adhoc", "datasourceId": "ds-2", "current": many }));
+        assert!(parse(m).unwrap_err().contains("at most 20 filters"));
+    }
+
     #[test]
     fn a_valid_model_round_trips_with_defaults_filled_in() {
         let model = parse(sample()).unwrap();
@@ -1264,6 +1571,59 @@ b" }),
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");
         }
+    }
+
+    #[test]
+    fn variable_options_belong_to_their_kinds() {
+        let mut m = sample();
+        m["variables"][0]["includeAll"] = json!(true);
+        m["variables"][0]["allValue"] = json!(".*");
+        m["variables"][0]["regex"] = json!("/(?<text>.+)-prod/i");
+        m["variables"][0]["sort"] = json!("numericalDesc");
+        m["variables"][0]["refresh"] = json!("load");
+        m["variables"][0]["staticOptions"] = json!([{ "value": "_int", "label": "intern" }]);
+        m["variables"][1]["includeAll"] = json!(true);
+        m["variables"][1]["allowCustom"] = json!(true);
+        let model = parse(m).unwrap();
+        let back = serde_json::to_value(&model).unwrap();
+        assert_eq!(back["variables"][0]["sort"], "numericalDesc");
+        assert_eq!(back["variables"][0]["staticOptions"][0]["label"], "intern");
+        assert_eq!(parse(back).unwrap(), model);
+        // Unset options stay out of the stored model.
+        let plain = serde_json::to_value(parse(sample()).unwrap()).unwrap();
+        assert!(plain["variables"][1].get("includeAll").is_none());
+        assert!(plain["variables"][1].get("staticOptions").is_none());
+
+        for (path, value, expect) in [
+            (vec!["variables", "1", "allValue"], json!("x"), "allValue needs includeAll"),
+            (vec!["variables", "1", "regex"], json!("a"), "regex is only for query and data source variables"),
+            (vec!["variables", "1", "sort"], json!("alphabetical"), "sort is only for query variables"),
+            (vec!["variables", "1", "refresh"], json!("load"), "refresh is only for query variables"),
+            (vec!["variables", "1", "staticOptions"], json!([{ "value": "a" }]), "staticOptions is only"),
+            (vec!["variables", "0", "regex"], json!("(a"), "variables[0].regex"),
+            (vec!["variables", "0", "regex"], json!(""), "variables[0].regex"),
+            (vec!["variables", "0", "sort"], json!("natural"), "unknown variant"),
+            (vec!["variables", "0", "refresh"], json!("never"), "unknown variant"),
+            (vec!["variables", "0", "staticOptions"], json!([{ "value": "a" }, { "value": "a" }]), "listed twice"),
+            (vec!["variables", "0", "staticOptions"], json!([{ "value": "a", "extra": 1 }]), "unknown field"),
+            (
+                vec!["variables", "0", "staticOptions"],
+                json!([{ "value": "", "label": "leer" }]),
+                "staticOptions[0].value needs 1 to",
+            ),
+        ] {
+            let err = parse(with(sample(), &path, value)).unwrap_err();
+            assert!(err.contains(expect), "{path:?}: {err}");
+        }
+        let textbox = json!({ "name": "t", "type": "textbox", "includeAll": true });
+        let err = parse(with(sample(), &["variables"], json!([textbox]))).unwrap_err();
+        assert!(err.contains("includeAll is only"), "{err}");
+        let constant = json!({ "name": "t", "type": "constant", "allowCustom": true });
+        let err = parse(with(sample(), &["variables"], json!([constant]))).unwrap_err();
+        assert!(err.contains("allowCustom is only"), "{err}");
+        let many: Vec<Value> = (0..=MAX_STATIC_OPTIONS).map(|i| json!({ "value": format!("v{i}") })).collect();
+        let err = parse(with(sample(), &["variables", "0", "staticOptions"], json!(many))).unwrap_err();
+        assert!(err.contains("at most"), "{err}");
     }
 
     #[test]

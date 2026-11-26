@@ -366,6 +366,91 @@ on_both_databases! {
     a_page_of_more_panels_than_slots_waits_for_them,
     only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
+    a_shared_all_reads_the_values_when_it_runs,
+    a_shared_all_needs_query_rights_on_the_options_source,
+    shares_hold_on_to_the_sources_their_values_pick,
+}
+
+/// A link or snapshot whose values pick another source of a data source variable than its default
+/// holds on to that source: the creator's right to query it is checked when the share is made
+/// and whenever it is served, and losing it suspends the share.
+async fn shares_hold_on_to_the_sources_their_values_pick(t: TestApp) {
+    let sql = t.sql_source().await;
+    let path = t.sources.path().join("orders.db");
+    let body =
+        json!({ "name": "Bestellungen Staging", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+    let other = t.post("~/datasources", body, &t.owner).await.ok()["id"].as_str().unwrap().to_string();
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Quellen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "quelle", "type": "datasource", "datasourceKind": "sqlite", "current": sql },
+                       { "name": "filter", "type": "adhoc", "datasourceId": sql,
+                         "current": [ { "key": "region", "operator": "!=", "value": "Ostgeheim" } ] } ],
+        "panels": [ { "id": "p1", "type": "table", "title": "Bestellungen", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                      "targets": [ { "refId": "A", "datasourceId": "$quelle",
+                                     "query": { "sql": "SELECT region FROM orders WHERE $__filter" } } ] } ]
+    });
+    let dashboard = t.dashboard(model).await;
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Teilen", "description": "", "permissions": ["dashboards:read", "dashboards:public"] }),
+            &t.owner,
+        )
+        .await;
+    let role_id = role.ok()["id"].as_str().unwrap().to_string();
+    let (creator_id, creator) = t.member("Clara", &role_id).await;
+    let grant = |source: &str| {
+        json!({ "subjectType": "user", "subjectId": creator_id, "resourceType": "datasource",
+                "resourceId": source, "level": "query" })
+    };
+    let g = t.post("~/grants", grant(&sql), &t.owner).await;
+    assert!(g.status.is_success(), "{}", g.body);
+    let picks = json!({ "variables": { "quelle": other } });
+
+    // Picking a source the creator may not query is refused when the share is made.
+    let r = t.link(&dashboard, picks.clone(), &creator).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let mut snapshot = json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true });
+    snapshot["variables"] = picks["variables"].clone();
+    let path = format!("~/dashboards/{dashboard}/snapshots");
+    assert_eq!(t.post(&path, snapshot.clone(), &creator).await.status, StatusCode::FORBIDDEN);
+
+    // With the right, both are made and hold on to the picked source.
+    let g = t.post("~/grants", grant(&other), &t.owner).await;
+    assert!(g.status.is_success(), "{}", g.body);
+    let other_grant = g.ok()["id"].as_str().unwrap().to_string();
+    let created = t.link(&dashboard, picks, &creator).await;
+    let token = created.ok()["token"].as_str().unwrap().to_string();
+    let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    assert_eq!(t.visit(&query, Some(range(T0 - HOUR, T0))).await.status, StatusCode::OK);
+    // Visitors see neither the picked source's id nor the filters' keys and values: a data source
+    // variable shows no value, ad hoc filters only how many there are.
+    let page = t.visit(&format!("/dashboards/{token}"), None).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    let text = page.body.to_string();
+    assert!(!text.contains(&other) && !text.contains(&sql), "{text}");
+    assert!(!text.contains("Ostgeheim") && !text.contains("\"region\""), "{text}");
+    let variables = page.body["dashboard"]["variables"].as_array().unwrap();
+    assert_eq!(variables[1]["value"], 1, "{text}");
+    let made = t.post(&path, snapshot, &creator).await;
+    let snapshot_id = made.ok()["snapshot"]["id"].as_str().unwrap().to_string();
+    let (kept,): (String,) = sqlx::query_as("SELECT datasource_ids FROM snapshots WHERE id = $1")
+        .bind(&snapshot_id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    let kept: Vec<String> = serde_json::from_str(&kept).unwrap();
+    assert!(kept.contains(&other), "{kept:?}");
+
+    // Losing the right on the picked source alone suspends both, though the default stays.
+    let r = t.send(Method::DELETE, &t.path(&format!("~/grants/{other_grant}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    assert_eq!(t.link_status(&link_id).await, ("suspended".to_string(), json!("creatorRights")));
+    assert_eq!(t.visit(&query, Some(range(T0 - HOUR, T0))).await.status, StatusCode::NOT_FOUND);
+    let snapshot = t.get(&format!("~/snapshots/{snapshot_id}"), &t.owner).await;
+    assert_eq!(snapshot.ok()["snapshot"]["suspendedReason"], "creatorRights", "{}", snapshot.body);
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -1453,4 +1538,143 @@ async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
     }
     // With the queue empty again a request gets its slot.
     drop(t.state.sharing.public_run(&t.org).await.unwrap());
+}
+
+/// A query variable at "All" without a custom value, shared without values: the link keeps the
+/// marker and every run reads the variable's options anew as the creator, with its order, so the
+/// list is never frozen at creation. A failing options query is an error, never an empty list.
+async fn a_shared_all_reads_the_values_when_it_runs(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let panel = |id: &str, query: &str| {
+        json!({ "id": id, "type": "table", "title": id, "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": query } } ] })
+    };
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Alle", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "region", "type": "query", "datasourceId": sql, "query": { "sql": "SELECT region FROM orders" },
+              "multi": true, "includeAll": true, "current": "$__all", "sort": "alphabeticalDesc" },
+            { "name": "kaputt", "type": "query", "datasourceId": sql, "query": { "sql": "SELECT region FROM fehlt" },
+              "multi": true, "includeAll": true, "current": "$__all" }
+        ],
+        "panels": [
+            panel("p1", "SELECT region, amount FROM orders WHERE region IN ($region) ORDER BY region"),
+            panel("p2", "SELECT COUNT(*) AS n FROM orders WHERE region IN ($kaputt)")
+        ]
+    });
+    let dashboard = t.dashboard(model).await;
+
+    let created = t.link(&dashboard, json!({}), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(created.body["link"]["variables"], json!({ "region": "$__all", "kaputt": "$__all" }));
+    let token = created.body["token"].as_str().unwrap().to_string();
+    let rows = |r: &Reply| r.ok()["results"]["A"]["result"]["frame"]["fields"][1]["values"].clone();
+    let first = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(rows(&first), json!(["120", "80"]), "{}", first.body);
+
+    // A new value appears in the source: the next run reads it, the link did not freeze the list.
+    t.change_orders("INSERT INTO orders VALUES ('West', 5)").await;
+    let later = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - 2 * HOUR, T0))).await;
+    assert_eq!(rows(&later), json!(["120", "80", "5"]), "{}", later.body);
+
+    // The options query of the other variable fails: no answer with an empty list.
+    // Visitors get the one neutral answer: not the variable, not the source's error.
+    let broken = t.visit(&format!("/dashboards/{token}/panels/p2/query"), Some(range(T0 - HOUR, T0))).await;
+    assert_eq!((broken.status, broken.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"), "{}", broken.body);
+    for leak in ["kaputt", "fehlt", "no such table", "detail", "all_options_failed"] {
+        assert!(!broken.body.to_string().contains(leak), "{leak} in {}", broken.body);
+    }
+
+    // Signed in, the panel route fills in a sent "All" the same way and names the variable when
+    // its options fail.
+    let path = format!("~/dashboards/{dashboard}/panels/p2/query");
+    let body = json!({ "timeRange": { "from": T0 - HOUR, "to": T0 }, "variables": { "kaputt": "$__all" } });
+    let failed = t.post(&path, body, &t.owner).await;
+    assert_eq!(failed.reason(), "variables.all_options_failed", "{}", failed.body);
+    assert_eq!(failed.body["error"]["params"]["name"], "kaputt");
+    let path = format!("~/dashboards/{dashboard}/panels/p1/query");
+    // Another range: the query cache keeps the answers of the first visit for a while, as for
+    // the dashboard itself.
+    let body = json!({ "timeRange": { "from": T0 - 3 * HOUR, "to": T0 }, "variables": { "region": ["$__all"] } });
+    assert_eq!(rows(&t.post(&path, body, &t.owner).await), json!(["120", "80", "5"]));
+
+    // The preview of an unsaved variable: "All" of another one needs the saved dashboard.
+    let variable = json!({ "name": "menge", "type": "query", "datasourceId": sql,
+                            "query": { "sql": "SELECT amount FROM orders WHERE region IN ($region)" } });
+    let preview = |extra: Value| {
+        let mut body = json!({ "variable": variable, "timeRange": { "from": T0 - 4 * HOUR, "to": T0 },
+                               "variables": { "region": "$__all" } });
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        body
+    };
+    let unresolved = t.post("~/query/variable-options", preview(json!({})), &t.owner).await;
+    assert_eq!(unresolved.reason(), "variables.all_unresolved", "{}", unresolved.body);
+    let filled = t.post("~/query/variable-options", preview(json!({ "dashboardId": dashboard })), &t.owner).await;
+    assert_eq!(filled.ok()["options"].as_array().unwrap().len(), 3, "{}", filled.body);
+}
+
+/// The options query of a shared "All" is one of the link's sources: its creator must be able to
+/// query it, at creation and on every run; losing that suspends the link before anything runs.
+async fn a_shared_all_needs_query_rights_on_the_options_source(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let orders = t.sql_source().await;
+    let path = t.sources.path().join("regionen.db");
+    let pool = sqlx::SqlitePool::connect(&kalzit::config::sqlite_url(&path)).await.unwrap();
+    sqlx::raw_sql("CREATE TABLE regionen (region TEXT); INSERT INTO regionen VALUES ('Nord'), ('Süd');")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let body = json!({ "name": "Regionen", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+    let regions = t.post("~/datasources", body, &t.owner).await.ok()["id"].as_str().unwrap().to_string();
+    let dashboard = t
+        .dashboard(json!({
+            "schemaVersion": SCHEMA_VERSION, "title": "Regionen", "timeRange": { "from": "now-6h", "to": "now" },
+            "variables": [
+                { "name": "region", "type": "query", "datasourceId": regions,
+                  "query": { "sql": "SELECT region FROM regionen" }, "multi": true, "includeAll": true,
+                  "current": "$__all" }
+            ],
+            "panels": [
+                { "id": "p1", "type": "table", "title": "Bestellungen", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "targets": [ { "refId": "A", "datasourceId": orders,
+                                 "query": { "sql": "SELECT region, amount FROM orders WHERE region IN ($region) ORDER BY region" } } ] }
+            ]
+        }))
+        .await;
+    // A creator who may share and read, with query rights only through grants.
+    let (creator_id, creator) = t.member("Clara", "viewer").await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Teilen mit Grants", "description": "", "permissions": ["dashboards:read", "dashboards:public"] }),
+            &t.owner,
+        )
+        .await;
+    t.set_role(&creator_id, role.ok()["id"].as_str().unwrap()).await;
+    let grant = |source: &str| {
+        json!({ "subjectType": "user", "subjectId": creator_id, "resourceType": "datasource",
+                "resourceId": source, "level": "query" })
+    };
+    t.post("~/grants", grant(&orders), &t.owner).await.ok();
+    // Query on the panel's source alone is not enough for the link.
+    let refused = t.link(&dashboard, json!({}), &creator).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    let options_grant = t.post("~/grants", grant(&regions), &t.owner).await.ok()["id"].as_str().unwrap().to_string();
+    let created = t.link(&dashboard, json!({}), &creator).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let token = created.body["token"].as_str().unwrap().to_string();
+    let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    let ran = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(ran.ok()["results"]["A"]["result"]["frame"]["fields"][1]["values"], json!(["120", "80"]));
+
+    // The grant on the options source goes: the link is suspended and nothing runs.
+    let gone = t.send(Method::DELETE, &t.path(&format!("~/grants/{options_grant}")), None, Some(&t.owner)).await;
+    assert!(gone.status.is_success(), "{}", gone.body);
+    let (status, reason) = t.link_status(&link_id).await;
+    assert_eq!((status.as_str(), reason), ("suspended", json!("creatorRights")));
+    let closed = t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await;
+    assert_eq!((closed.status, closed.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"), "{}", closed.body);
 }

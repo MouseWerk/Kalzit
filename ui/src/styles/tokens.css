@@ -499,6 +499,9 @@
   :root {
     --size-label: 6rem;
     --size-card-min: 9rem;
+    /* The smallest width of a choice in the variable bar (150 px), so a shorter value ("All")
+       does not move the variables after it. */
+    --size-variable-chip: 9.375rem;
     --size-sidebar-min: 12rem;
     --size-field: 14rem;
     --size-column: 16rem;

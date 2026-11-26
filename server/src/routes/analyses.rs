@@ -1339,7 +1339,9 @@ async fn run(
     let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
-    Ok(super::query::answer(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    Ok(super::query::answer(
+        super::query::run_stored_panel(&state, &ctx, &model, panel, req, super::query::AllRights::Reader).await?,
+    ))
 }
 
 /// The field distribution of one of the analysis's stored queries (`refId`) over its whole
@@ -1360,7 +1362,8 @@ async fn distribution(
     crate::datasources::check_range(req.time_range)?;
     crate::datasources::check_interval(req.interval_ms)?;
     let spec = crate::datasources::distribution::DistributionSpec::new(&req.path, req.top, req.bins)?;
-    let run = super::query::stored_items(&model, panel, &req.variables, None, &Default::default())?;
+    let run =
+        super::query::stored_items(&state, &ctx, &model, panel, &req.variables, None, &Default::default()).await?;
     let d = super::query::stored_distribution(&state, &ctx, run, &req.ref_id, req.time_range, req.interval_ms, &spec)
         .await?;
     Ok(Json(d))

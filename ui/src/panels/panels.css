@@ -255,6 +255,10 @@
     color: var(--border);
   }
 
+  .ts__probe--line {
+    color: var(--border-strong);
+  }
+
   /*
    * Forced colors (Windows high contrast) leave the canvas alone, so the probes hand it system
    * colors: series in text, link and selection colors in turn, the axis in the text color and
@@ -301,6 +305,20 @@
     fill: var(--text-muted);
     font-size: var(--font-size-xs);
     dominant-baseline: middle;
+  }
+
+  /* A value axis in the colour of its first series (axis option "Wie die Serie"). */
+  .ts__axis--series .ts__label {
+    fill: var(--series-color);
+  }
+
+  .ts__axis-line {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .ts__axis--series .ts__axis-line {
+    stroke: var(--series-color);
   }
 
   .ts__line {
@@ -392,6 +410,25 @@
 
   .ts__tooltip-time {
     color: var(--text-muted);
+  }
+
+  /* The rows scroll below the time, which stays at the top; sizes from the tooltip options. */
+  .ts__tooltip-rows {
+    display: grid;
+    gap: var(--space-1);
+    max-width: var(--tooltip-max-width, none);
+    max-height: var(--tooltip-max-height, 50vh);
+    overflow: auto;
+  }
+
+  .ts__tooltip-note {
+    color: var(--text-muted);
+  }
+
+  /* A line under the chart, such as the points a log axis leaves out. */
+  .ts__note {
+    flex: none;
+    padding-block-start: var(--space-1);
   }
 
   .ts__tooltip-row {

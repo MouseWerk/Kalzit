@@ -164,7 +164,48 @@ variable** in the dashboard settings or the Add menu. Kinds:
   repeated values count among them, so let the query return each value once (`RETURN DISTINCT`
   in Cypher, a `$group` stage in MongoDB) when there are more records.
 
-Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. The
+  Below the query: a **Regex** keeps only matching values (named groups `text` and `value` take
+  the shown name and the value apart, as in `/(?<text>.+)-prod/`), **Sort** orders them (A to Z,
+  Z to A, by number, or ignoring case), **Refresh** reads them **On load** or **On new time
+  range**, and **Fixed extra values** (`name = value`, separated by commas) follow the query's.
+  The **Preview of the values** shows the list as the bar will, with the shown name left and the
+  value right, and says how many values the regex left out.
+
+  On a Prometheus source, **What to query** offers helpers instead of a typed query: **Label
+  values** (a label, optionally only from a metric and a label filter such as `env="$env"`),
+  **Label names**, **Metrics** (optionally only names matching a regex) and **Query result** (one
+  line per series of a PromQL query). The **Query behind it** shows the helper as other tools
+  write it, such as `label_values(up{env="$env"}, job)`. **Own query** goes back to typed PromQL.
+- **Data source**: switches the source of every panel query whose data source is `$name`. Pick
+  the **Kind of data source**, the **Data source on opening** and, optionally, a regex the
+  source names must match. The filter bar lists each person only the sources they may query;
+  everyone without a pick sees the default.
+- **Ad hoc filters**: chips of field, comparison and value in the filter bar, which narrow every
+  stored query of the chosen data source. **Add filter** opens a small editor; a click on a
+  chip's field, comparison or value changes only that part, and each chip has its own remove
+  button. Viewers may set filters too: they only narrow what the dashboard shows. Prometheus and
+  Loki compare labels (`=`, `≠`, matches, does not match), Elasticsearch and OpenSearch take every
+  comparison, SQL queries take `=`, `≠`, `<` and `>` where the query writes `$__filter` in its
+  `WHERE` clause. A dashboard has at most 20 filters. When a panel runs on another source than
+  the filters belong to (through a data source variable), it says “Ad hoc filters do not apply
+  here”. Public pages show only how many filters are set.
+- **Switch**: on or off in the filter bar, sending its **Value when on** or **Value when off**.
+
+The **Dependencies** tab next to the list of variables shows which variable needs which (the
+load order from left to right), where each is used (panels, rows, links, annotations, other
+variables), and what is unused, in a cycle, or used but not defined. An unused variable can be
+removed there, a missing one created.
+
+Options: a **Label**, **Allow several values**, **Allow typed values** (the bar then takes a value
+outside the list), and a **Value when the dashboard opens**. Fixed values and values from a query
+can **Offer “All”**: it stands first in the list and the dashboard opens with it unless you untick
+**Open with “All”**. “All” sends every value as a list, so write `IN ($region)` in SQL and
+`=~"$region"` in PromQL; with a **Custom value for “All”** (such as `.*` or `%`) exactly that one
+value goes to the source instead, also as a parameter. Above 1,000 values only the custom value
+works. Panels and links that use a variable from a query at “All” wait until its values are
+there, and show the error of its query when it fails. Share links and reports keep
+“All” as it is and read the values each time they run. Choices in the filter bar keep a minimum width, so a shorter value does not move the
+variables after it. The
 arrow buttons under a variable move it up or down (the filter bar shows them in this order), and
 **Duplicate** adds a copy right below it under a free name. Names
 use letters, digits and underscores. Queries use a variable as `$name` (MongoDB pipelines write
