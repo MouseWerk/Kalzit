@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import {
   CALC_GROUP_ORDER,
   CALC_GROUPS,
@@ -94,6 +95,8 @@ export function LegendValuesField({
     setAskPercentile(false);
   };
   const onListKey = (event: KeyboardEvent<HTMLElement>) => {
+    // Enter and Escape that confirm or cancel an input method candidate stay with the input.
+    if (isComposingKey(event)) return;
     const inPercentile = event.target instanceof HTMLInputElement && event.target.type === "number";
     if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !inPercentile) {
       event.preventDefault();
@@ -274,7 +277,7 @@ export function LegendValuesField({
                 aria-invalid={percentInvalid}
                 onChange={(event) => setPercent(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") {
+                  if (event.key === "Enter" && !isComposingKey(event)) {
                     event.preventDefault();
                     event.stopPropagation();
                     addPercentile();

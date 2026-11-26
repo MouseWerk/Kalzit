@@ -106,8 +106,8 @@ function TimeSeriesPanel({
     const skipped = skippedPoints(chartData(series, styles).stacked.ys, plan.axes, plan.axisOf);
     return { ...plan, skipped };
   }, [series, styles, config.defaults]);
-  const left = axes.find((a) => a.key === "y");
-  const right = axes.find((a) => a.key === "y2");
+  const left = axes.find(({ key }) => key === "y");
+  const right = axes.find(({ key }) => key === "y2");
   const leftUnit = left?.unit;
   const leftDecimals = left?.decimals;
   const rightUnit = right?.unit;
