@@ -33,7 +33,9 @@ function totp(secret: Buffer, step: number): string {
 
 const step = () => Math.floor(Date.now() / 30_000);
 
-test("signs in with the code of an authenticator app after the password", async ({ page }) => {
+test("signs in with the code of an authenticator app after the password", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const owner = await Api.owner();
   const person = await owner.createMember(unique("Totp"), "viewer");
   await owner.dispose();

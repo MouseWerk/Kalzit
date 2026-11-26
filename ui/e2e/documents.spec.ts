@@ -30,9 +30,9 @@ const OST_PAID = 4;
 
 // In German, as the documents panels are written for German readers first: "über alle 9
 // Dokumente" is the line that tells the counts come from the whole result in the database.
-test("MongoDB in Explore: stages with a preview, the schema, the distribution over all documents and a filter as a visible stage", async ({
-  pageAs,
-}) => {
+test("MongoDB in Explore: stages with a preview, the schema, the distribution over all documents and a filter as a visible stage", {
+  tag: "@smoke",
+}, async ({ pageAs }) => {
   const hosts = serviceAddress("KALZIT_E2E_MONGODB");
   const name = unique("Bestellungen");
   const owner = await Api.owner();

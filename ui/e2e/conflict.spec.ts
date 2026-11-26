@@ -25,11 +25,9 @@ async function save(page: Page): Promise<void> {
   await dialog.getByRole("button", { name: t("dashboards.save.submit"), exact: true }).click();
 }
 
-test("two pages save the same dashboard: the second sees the conflict dialog", async ({
-  page,
-  context,
-  consoleGuard,
-}) => {
+test("two pages save the same dashboard: the second sees the conflict dialog", {
+  tag: "@smoke",
+}, async ({ page, context, consoleGuard }) => {
   // The second save is refused with 409, which the browser logs.
   consoleGuard.allow(/status of 409 .*\/dashboards\/[0-9a-f-]+$/);
   const owner = await Api.owner();
