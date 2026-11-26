@@ -21,9 +21,10 @@
 
   /*
    * Every box that scrolls (the page, panels, tables, menus, editors, dialogs) gets the same
-   * calm scrollbar: thin, from the scrollbar tokens. The box under the pointer shows its thumb
-   * stronger. Set per element rather than inherited, so a hovered page does not light up the
-   * scrollbars of the boxes inside it.
+   * calm scrollbar: thin, from the scrollbar tokens. Every box under the pointer, the one it
+   * points at and each box around it (:hover matches all of them), shows its thumb stronger.
+   * Set per element rather than inherited, so a hovered page does not light up the scrollbars
+   * of the boxes inside it that the pointer is not over.
    */
   * {
     scrollbar-width: var(--scrollbar-width);

@@ -6,6 +6,8 @@ import { startEditing } from "./support/ui";
 
 /** The sticky parts of a dashboard, by their place in the window. */
 interface Sample {
+  /** What scrolled: the main area next to the sidebar, or the document on a phone. */
+  scroller: "main" | "document";
   scrollY: number;
   bar: number;
   toolbar: number;
@@ -56,6 +58,7 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
       scroller.scrollTo(0, y);
       await painted();
       samples.push({
+        scroller: scroller === main ? "main" : "document",
         scrollY: scroller.scrollTop,
         bar: box(".top-bar").top,
         toolbar: box(".dash-toolbar").top,
@@ -69,15 +72,18 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
 }
 
 /**
- * Every sample within half a pixel of the first: the toolbar, rail and pane rest where they
- * stick. (A notice between the toolbar and the canvas, such as the trash's, scrolls away first
+ * Next to the sidebar (every window here is wider than a phone) the main area scrolls, and the
+ * top bar stays at the window's top. Every sample within half a pixel of the first: the toolbar,
+ * rail and pane rest where they stick. (A notice between the toolbar and the canvas, such as the trash's, scrolls away first
  * and the rail follows it until it is gone; that slide is by design and not checked here.)
  */
 function expectNoMovement(samples: Sample[]): void {
   const [rest] = samples;
   if (rest === undefined) throw new Error("no samples");
+  expect(Math.abs(rest.bar), "top bar at the window's top").toBeLessThanOrEqual(0.5);
   for (const sample of samples) {
     const at = `at scrollY ${sample.scrollY}`;
+    expect(sample.scroller, `what scrolled ${at}`).toBe("main");
     expect(sample.bar, `top bar ${at}`).toBeCloseTo(rest.bar, 0);
     // Right below the top bar from the start, not first a few pixels lower.
     expect(Math.abs(sample.toolbar - rest.toolbar), `toolbar ${at}`).toBeLessThanOrEqual(0.5);
