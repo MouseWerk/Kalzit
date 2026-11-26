@@ -41,6 +41,12 @@ const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
   "register: inbox": {
     masks: (page) => [page.getByRole("button", { name: /^Send again in \d+ s$/ })],
   },
+  // On this page alone the sidebar and the settings list were drawn at a sub-pixel offset in
+  // about every second run at 1280 px, scrolled or not, while the section beside them stayed the
+  // same (cause not found; both are sticky). They are masked here; every other screen shows them.
+  "cors in use": {
+    masks: (page) => [page.locator(".shell__sidebar"), page.locator(".settings-nav")],
+  },
   reports: {
     ready: async (page, _seed, language) => {
       await expect(
@@ -53,14 +59,18 @@ const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
 
 /**
  * Steps after a sweep page reached its state. The page scrolls the CORS check's result into view;
- * scrolled, the sticky sidebar and settings list were drawn a pixel apart from run to run at
- * 1280 px (also with whole-pixel scroll positions short of the page's end; the cause is not
- * found). The picture shows the page from its top instead: the result is in view at 2560 and
- * 3440 px, where nothing scrolls.
+ * here the window goes to a whole-pixel position worked out from the layout instead: the
+ * result's top a fixed distance below the window's top.
  */
 const AFTER: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "cors in use": async (page) => {
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.evaluate(() => {
+      const result = document.querySelector(".s75-code");
+      if (result !== null) {
+        const top = result.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo(0, Math.max(0, Math.round(top) - 240));
+      }
+    });
   },
 };
 
