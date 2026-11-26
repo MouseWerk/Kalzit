@@ -12,6 +12,7 @@ import {
 } from "./featuresApi";
 import {
   type AnnotationQueryModel,
+  holdOf,
   type PanelModel,
   type RowModel,
   storedQueryVariables,
@@ -111,6 +112,8 @@ interface Input {
   /** The saved dashboard: only its annotation queries can run through the server. */
   saved: { annotations?: AnnotationQueryModel[] | undefined; variables: readonly VariableModel[] };
   values: VariableValues;
+  /** Query variables at "All" whose values are not there yet: queries that use one wait. */
+  held?: Readonly<Record<string, string | null>> | undefined;
   run: number;
 }
 
@@ -194,7 +197,15 @@ function combineAnswers(results: UseQueryResult<QueryResponse>[]) {
  * the answers stay the same, so a dashboard edit that leaves them alone (moving a panel) does not
  * hand every panel new marks and draw it again.
  */
-export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, values, run }: Input) {
+export function useDashboardAnnotations({
+  orgId,
+  dashboardId,
+  ranges,
+  saved,
+  values,
+  held,
+  run,
+}: Input) {
   // The ranges as text, and read back from it: the same ranges give the same list.
   const rangeKey = distinctRanges(ranges)
     .map((r) => `${r.from}:${r.to}`)
@@ -244,6 +255,7 @@ export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, val
       ],
       queryFn: ({ signal }: { signal: AbortSignal }) =>
         runAnnotationQuery(orgId, dashboardId, query.id, { timeRange: range, variables }, signal),
+      enabled: holdOf(query.query, held) === null,
       staleTime: Number.POSITIVE_INFINITY,
       ...BUSY_RETRY,
     })),

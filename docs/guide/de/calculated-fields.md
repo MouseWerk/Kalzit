@@ -13,7 +13,11 @@ und Server führen dieselben Schritte mit denselben Regeln aus, daher stimmt ein
 
 Im Panel-Editor (Reiter **Schritte**) und in Explore (**Schritte und Aktionen**):
 
-1. Wähle die **Art des Schritts** und drücke **Schritt hinzufügen**.
+1. Drücke **Schritt hinzufügen**: Der Katalog zeigt die Schritte für die Datenform des Ergebnisses
+   in sechs Gruppen (Felder, Zeilen, Zusammenführen, Umformen, Rechnen, Darstellung), die zuletzt
+   genutzten Schritte und rechts eine Vorschau des Schritts unter dem Zeiger auf den ersten Zeilen
+   deines Ergebnisses. Suche nach Name, Beschreibung oder einem gängigen Fachwort (rename, merge,
+   top); die Pfeiltasten gehen durch die Liste, Eingabe fügt hinzu.
 2. Fülle seine Felder aus. Die meisten Schritte nennen zuerst die **Abfrage** (die Kennung der
    Abfrage, etwa A), deren Ergebnis sie lesen.
 3. Mit **Vorschau** nach jedem Schritt siehst du seine Tabelle (die ersten Zeilen), mit **Ergebnis
@@ -67,6 +71,31 @@ verwenden die Zeitzone, die das Dashboard zeigt (die des Dashboards, sonst deine
 beginnt am dort eingestellten ersten Wochentag; `weekday` bleibt 1 (Montag) bis 7 (Sonntag). Ein
 Fehler nennt die Stelle (`unexpected input at 4`).
 
+## Tabellen ordnen
+
+Diese Schritte ändern die Form einer Tabelle ohne neue Rechnung; jeder ändert nur, was er sagt.
+
+- **Felder ordnen und umbenennen**: Reihenfolge, ausblenden, was niemand braucht, und lesbare
+  Namen. Namen, die kein Feld hat, werden übergangen; ein Feld, das später in der Abfrage
+  dazukommt, erscheint am Ende und ist sichtbar. Ein neuer Name, den ein anderes Feld trägt,
+  stoppt den Schritt.
+- **Felder nach Name filtern**: Felder behalten (oder weglassen), deren Namen du wählst oder auf
+  die ein regulärer Ausdruck irgendwo im Namen passt (`^cpu`).
+- **Typ umwandeln**: Text in eine Zahl, eine Zeit oder einen Wahrheitswert, Zahlen oder Zeiten in
+  Text, an der Stelle des Felds. Zeiten werden als ISO 8601 gelesen (`2026-01-31T08:15`) oder nach
+  einem Format mit `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS` (`DD.MM.YYYY HH:mm`), in UTC, wenn
+  der Text keinen Versatz nennt. Werte, die sich nicht lesen lassen, bleiben leer.
+- **Zeilen filtern**: die Zeilen behalten oder weglassen, die alle Bedingungen (oder eine davon)
+  erfüllen: gleich, größer als, zwischen, enthält, passt auf ein Muster, ist leer. Ein leerer
+  Wert ist keinem Wert gleich, „ungleich“ behält ihn also.
+- **Begrenzen**: nur die ersten oder letzten N Zeilen.
+- **Untereinander stellen**: die Zeilen mehrerer Abfragen untereinander; Felder mit gleichem
+  Namen werden ein Feld, fehlt einer Tabelle ein Feld, bleibt es dort leer.
+- **Serien zu Zeilen**: jedes Zahlenfeld neben dem ersten Zeitfeld seiner Tabelle als lange
+  Tabelle mit `time`, `metric` (Name und Labels des Felds) und `value`, nach Zeit geordnet.
+- **Reduzieren**: jede Serie (jedes Zahlenfeld) auf einen Wert je Berechnung, etwa den letzten
+  Wert oder die Summe: eine Zeile je Serie oder eine Zeile mit einem Feld je Serie und Berechnung.
+
 ## Abfragen verknüpfen
 
 Ordnet die Zeilen einer **Rechten Abfrage** denen einer **Linken Abfrage** zu, **Verknüpfen über**
@@ -93,9 +122,9 @@ nächstgelegenen Rängen, wie es PERCENTILE.INC in Excel tut.
 Beispiel: Für `betrag` = 10, 20, 30,5 und einen leeren Wert ist die Anzahl 3, die Summe 60,5, der
 Mittelwert 20,17, der Median 20, das Minimum 10, das Maximum 30,5 und das 90. Perzentil 28,4.
 
-## Trend, gleitender Durchschnitt, Korrelation
+## Trendlinie, gleitender Durchschnitt, Korrelation
 
-- **Trend**: die Regressionsgerade (kleinste Quadrate) eines Felds **Über** das Zeitfeld (sonst
+- **Trendlinie** (hieß vor dem Panel „Trend“ selbst Trend): die Regressionsgerade (kleinste Quadrate) eines Felds **Über** das Zeitfeld (sonst
   die Zeilennummer). Wähle **Trendlinie als neues Feld** oder **Steigung pro Tag und
   Bestimmtheitsmaß R²** (dazu der Achsenabschnitt und die Anzahl der Punkte).
 - **Gleitender Durchschnitt**: der nachlaufende Mittelwert über ein **Fenster in Zeilen** (1 bis
@@ -119,6 +148,10 @@ Veränderung 100 %.
   `sum(betrag)`, wenn du sie nicht benennst.
 - **Pivotieren**: eine Zeile je Wert aus **Zeilen aus**, ein Feld je Wert aus **Spalten aus**
   (höchstens 500), gefüllt aus **Werte aus** mit einer Rechnung.
+- **Sortieren**: die Zeilen nach bis zu fünf Feldern geordnet, jedes **Aufsteigend** oder
+  **Absteigend**; Zeilen mit gleichen Werten behalten ihre Reihenfolge, leere Zellen kommen
+  zuletzt. Zahlen, Zeiten, Text (nach Zeichencode) und Wahr/Falsch lassen sich sortieren,
+  JSON-Felder nicht.
 
 ## Dokumente als Tabelle
 

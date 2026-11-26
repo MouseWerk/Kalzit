@@ -9,11 +9,13 @@ import { Icon } from "../../components/Icon";
 import { Page, PageActions } from "../../components/Page";
 import { TextField } from "../../components/TextField";
 import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { showErrorToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { Dialog } from "../dashboards/ui/Dialog";
 import { errorCodeMessage, errorMessage } from "../dashboards/ui/errors";
 import {
+  checkHealth,
   createDatasource,
   DATASOURCES_KEY,
   type Datasource,
@@ -23,6 +25,7 @@ import {
   type HealthWarning,
   kindsQuery,
   type SettingSpec,
+  setDefaultDatasource,
   testDatasource,
 } from "./api";
 import {
@@ -179,7 +182,21 @@ function NewDataSource({ orgId }: { orgId: string }) {
           secrets: {},
         };
   const create = useMutation({
-    mutationFn: (output: FormOutput) => createSource(output),
+    mutationFn: async (output: FormOutput) => {
+      const created = await createSource(output);
+      // A passing test of exactly what is saved is tested again on the stored source, so the
+      // server keeps it as the source's latest test (the list shows it, not "Not tested").
+      const tested = test.data?.ok === true && sameTarget(test.variables, output);
+      await Promise.all([
+        output.isDefault === true
+          ? setDefaultDatasource(orgId, created.id, true).catch((error: unknown) =>
+              showErrorToast(errorMessage(t, error)),
+            )
+          : null,
+        tested ? checkHealth(orgId, created.id).catch(() => undefined) : null,
+      ]);
+      return created;
+    },
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
       await navigate({
@@ -330,6 +347,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
                 .filter(Boolean)
                 .join(" · ")}
               onSubmit={(output) => create.mutate(output)}
+              offerDefault
               // This page is for members who may add sources, which is what testing takes.
               onTest={(output) => test.mutate(output)}
               onEdited={test.reset}
@@ -584,9 +602,23 @@ export interface FormOutput {
   name: string;
   settings?: Record<string, unknown>;
   secrets: Record<string, string | null>;
+  /** Whether the source is to be the organization's default; absent unless changed in the form. */
+  isDefault?: boolean;
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Whether a form's test checked what is saved now: the same settings and secrets (the name and
+ * the default do not change where the source connects).
+ */
+export function sameTarget(tested: FormOutput | undefined, saved: FormOutput): boolean {
+  return (
+    tested !== undefined &&
+    sameJson(tested.settings, saved.settings) &&
+    sameJson(tested.secrets, saved.secrets)
+  );
+}
 
 type SecretState = { mode: "keep" } | { mode: "remove" } | { mode: "set"; value: string };
 
@@ -620,6 +652,8 @@ interface SettingsFormProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Told after every edit of a field, so a test result of what was entered before can go. */
   onEdited?: () => void;
+  /** Offers "Default data source" (who may change the source); its value goes into the output. */
+  offerDefault?: boolean;
 }
 
 /**
@@ -661,6 +695,7 @@ export function SettingsForm({
   prefill,
   onDirtyChange,
   onEdited,
+  offerDefault = false,
 }: SettingsFormProps) {
   const { t } = useI18n();
   const plain = kind.settings.filter((spec) => !spec.secret);
@@ -668,6 +703,11 @@ export function SettingsForm({
   // What the fields start with: the stored source, or the one a new source is copied from.
   const seed = initial ?? prefill;
   const [name, setName] = useState(seed?.name ?? "");
+  // Not copied by Duplicate: an organization has one default.
+  const [isDefault, setIsDefault] = useState(initial?.isDefault === true);
+  // Sent only once changed here, so a save never undoes a default set elsewhere meanwhile.
+  const [defaultTouched, setDefaultTouched] = useState(false);
+  const defaultId = useId();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(plain.map((spec) => [spec.name, initialValue(spec, seed)])),
   );
@@ -828,6 +868,11 @@ export function SettingsForm({
     if (settings !== undefined) {
       output.settings = settings;
     }
+    if (offerDefault) {
+      if (defaultTouched) {
+        output.isDefault = isDefault;
+      }
+    }
     return output;
   }
 
@@ -907,6 +952,27 @@ export function SettingsForm({
           required
           disabled={readOnly}
         />
+        {offerDefault && !readOnly ? (
+          <div className="field">
+            <label className="checkbox" htmlFor={defaultId}>
+              <input
+                id={defaultId}
+                type="checkbox"
+                checked={isDefault}
+                aria-describedby={`${defaultId}-hint`}
+                onChange={(event) => {
+                  setIsDefault(event.currentTarget.checked);
+                  setDefaultTouched(true);
+                  setDirty(true);
+                }}
+              />
+              {t("datasources.default.field")}
+            </label>
+            <p id={`${defaultId}-hint`} className="field__hint">
+              {t("datasources.default.hint")}
+            </p>
+          </div>
+        ) : null}
       </div>
       {/* Per section, each in the kind's own order, so a password follows its user name. */}
       {groups.map(({ section, specs }) => {

@@ -22,6 +22,7 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | POST | `/orgs/{orgId}/query` | member; `datasources:query` on each query's source |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query` | member; `dashboards:read` on the dashboard |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` | member; `dashboards:read` on the dashboard |
+| POST | `/orgs/{orgId}/query/variable-options` | member; `datasources:query` on the variable's source |
 
 "On the source" means the org-wide permission of the member's roles, or a grant on that data
 source (`query` gives read and query, `edit` adds write, `admin` adds permissions; see the grants
@@ -208,6 +209,7 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 ```
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
+`isDefault` is true for the organization's [default data source](#default-data-source).
 
 Live items the caller may read (`read`) also carry the list's columns. Nothing here opens a
 connection; the page's reads take a fixed number of queries whatever its size.
@@ -284,12 +286,14 @@ refers to it. No connection test runs here.
 ```
 
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
+`isDefault` says whether it is the organization's [default data source](#default-data-source).
 `lastTest` (omitted until a test ran) is the last Test connection of the stored source, for
 everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?: ..., "message":
 ... }], "testedAt": 1800000000000, "latencyMs": 12, "failingSince"?: 1799990000000 }`.
 `latencyMs` is how long the test took (absent for tests kept before 0.6.0); `failingSince`, only
 on a failed test, is when the first of the failed tests since the last passing one ran. Each test
-replaces it; a change of settings or secrets drops it (a rename keeps it). It holds no secrets:
+replaces it; a change of settings or secrets drops it (a rename keeps it), and a test that ran on
+the settings before a change saved meanwhile is not kept. It holds no secrets:
 warnings are scrubbed like every answer.
 
 ### Access
@@ -374,6 +378,20 @@ target change. When the patch changes a `target` field,
 every secret that is stored must be in the same patch, either with its value again or with `null`.
 Otherwise the answer is `422 validation` with `field` naming the secret, so a stored password is
 never sent to a new host without being entered again.
+
+### Default data source
+
+`PUT /orgs/{orgId}/datasources/{datasourceId}/default` with `{ "default": true }` makes the
+source the organization's default data source and answers it; the source that was the default
+stops being it. `{ "default": false }` takes it away, so the organization has none. It needs
+`write` on the source (see [Access](#access)); a source in the trash answers `404`. Explore and
+new panels start with the default when no source is chosen, and a Grafana import maps
+Grafana's default source (`default`) to it unless the request maps it. An organization has at
+most one default; moving it to the trash takes it away, and restoring does not bring it back.
+The change is audited as `datasource.updated` with `changed: ["default"]` and, when it replaced
+another source, `replaced` (that source's id). It is an organization setting outside provisioning
+files, so it may also be set on a source a set manages. The Grafana import maps `default` only
+when the importer may query the default source.
 
 ### Delete and restore
 
@@ -832,6 +850,31 @@ limit), so `[$__interval]` covers one step;
 `$__range`, `$__timeFrom`, `$__timeTo` (Unix seconds). Variables are allowed only inside quoted
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
+
+#### Prometheus helpers
+
+For query variables a Prometheus query may instead be a helper, answered as a one-column table
+(`string`) from the read-only label and query endpoints:
+
+| Query | Asks | Column |
+|---|---|---|
+| `{"helper": "labelValues", "label": "job", "metric"?: "up", "filter"?: "env=\"$env\""}` | `GET api/v1/label/<label>/values` with `match[]` | `value` |
+| `{"helper": "labelNames", "metric"?: "up", "filter"?: "..."}` | `GET api/v1/labels` with `match[]` | `label` |
+| `{"helper": "metrics", "regex"?: "node_.*"}` | `GET api/v1/label/__name__/values` with `match[]={__name__=~"<regex>"}` | `metric` |
+| `{"helper": "queryResult", "expr": "topk(5, up)"}` | `GET api/v1/query` at `timeRange.to` | `result` |
+
+The label endpoints are asked for the dashboard's range (`start`, `end`). `match[]` is the
+selector `metric{filter}` (just `metric` without a filter), left out when neither is given. `label`
+must be a label name (`prometheus.helper_label`), `metric` a metric name
+(`prometheus.helper_metric`); `filter` is a list of label matchers and may hold no brackets,
+braces, parentheses, `#` or `or` outside its strings (`prometheus.helper_filter`). Variables and macros
+work as in `expr`, only inside quoted strings; the regex of `metrics` is escaped into its string,
+so variables in it match literally. Ad hoc filters narrow every helper: they join the selector
+(`{key="value"}` alone when there is none) or every selector of `expr`. `queryResult` answers one
+line per series and sample, as `name{labels} value timestamp-ms` (scalars `value timestamp-ms`).
+`executedQuery` shows the helper in the notation of other tools, with variables filled in:
+`label_values(up{env="prod"}, job)`, `label_names(up)`, `metrics(node_.*)` (the regex as sent),
+`query_result(topk(5, up))`. Any other field is `query.invalid_form`.
 
 ### ClickHouse: `{"sql": "..."}`
 
@@ -1966,6 +2009,30 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 - Only `constant` and `custom` variables may be used as identifiers (`${x:identifier}`), since only
   their values are checked against the dashboard's own list; any other variable used that way
   answers `query_rejected` for that target. Identifiers must also be in the source's schema.
+- `switch`: the value must be its `onValue` or `offValue`; both are the dashboard's own, so they
+  count as checked (identifiers, patterns).
+- `datasource`: the value is the id of a data source of the variable's `datasourceKind`. Panel
+  targets with `datasourceId` `$name` run on it. Unpicked, or picked as the saved default
+  (`current`), they run on the default, which reading the dashboard authorizes like any stored
+  query (saving checked `datasources:query` on it). Any other source needs the caller's own
+  `datasources:query` on it (role or grant), must be of the variable's kind, not in the trash,
+  and pass the variable's `regex` on its name: otherwise `403 forbidden`
+  (`variables.datasource_forbidden`, also for unknown ids) or `422 validation`
+  (`variables.datasource_kind`), and nothing runs. Share links, snapshots and reports check a
+  pick against their creator's rights in the same way, when they are made and when they run; a
+  public link or snapshot keeps the sources its values pick, and a creator who may no longer
+  query one of them suspends it. A public link and a report are also suspended when a picked
+  source went to the trash, changed its kind or no longer passes the variable's regex
+  (`reports.creator_no_source` for reports). An internal snapshot and a report carry results of
+  a picked source to the people they reach; they run with their creator's rights, as an export
+  does. `$__all` is no value of a data source variable (`variables.value_type`).
+  Saving needs `datasources:query` on every data source variable's default, also while no
+  target uses the variable. Public pages and public snapshots show no value for a data source
+  variable and, for ad hoc filters, only their number. Only panel targets take `$name`; query
+  variables, annotations, ad hoc variables, library panels and saved analyses name a source.
+- `adhoc`: the value is a list of `{ "key": ..., "operator": ..., "value": ... }` ("Ad hoc
+  filters" below); without one, the saved `current` applies. Viewers may set them: they only
+  narrow the stored queries of the variable's `datasourceId`.
 - Graph sources take the same values: Cypher as Bolt parameters (a dynamic label or type only
   from `constant` and `custom` variables), GSQL as typed REST++ parameters of the declared
   parameters. So a click on a MongoDB document that sets `$customerId` reaches a Cypher panel as
@@ -1973,6 +2040,47 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 
 Breaking a rule answers `422 validation` with `field: variables`. The same rules hold for
 Prometheus label matchers.
+
+### Ad hoc filters
+
+A query item (free or stored) may carry `filters`: at most 20 of `{ "key", "operator", "value" }`
+with `operator` one of `=`, `!=`, `=~`, `!~`, `<`, `>`, a key of 1 to 200 characters without
+control characters and a value of at most 1,000 characters (`query.filters_invalid`). A
+dashboard's ad hoc variables give their filters to every target whose (resolved) source is the
+variable's `datasourceId`, and only to those. The source builds them into the query itself; a
+kind that cannot answers `query.filters_unsupported` instead of running unfiltered.
+
+- Prometheus and Loki: every selector gets the filters as label matchers (`key="value"`). In
+  PromQL that is every vector selector, with or without braces; function and aggregation names,
+  keywords, label lists after `by`, `without`, `on`, `ignoring`, `group_left` and `group_right`,
+  durations, numbers, strings and comments stay as they are. In LogQL it is every stream
+  selector. Keys must be label names (`query.filter_key`), values are escaped into a
+  double-quoted string, `<` and `>` are refused (`query.filter_operator`), and a query without
+  any selector answers `query.filter_no_selector`, and a selector with a `#` comment inside its
+  braces `query.filter_comment`, and a selector whose matchers are joined with `or` (Prometheus 3)
+  `query.filter_or`. The query as sent shows in `executedQuery`.
+- Elasticsearch and OpenSearch: each filter is a clause of the search's `bool` query next to the
+  query itself: `=` a `match_phrase` (`!=` under `must_not`), `=~` a `regexp` with `flags: NONE`, only its plain operators (`!~` under
+  `must_not`), `<` and `>` a `range`. A Lucene query stays one `query_string` clause, so its
+  default `OR` cannot reach past the filters. Keys with `*` or `?` are refused.
+- SQL kinds (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, BigQuery,
+  Snowflake, Databricks): only where the query writes `$__filter`, which becomes
+  `(key = ? AND ...)`, or `1=1` without filters. Keys must be tables or columns of the source's
+  schema (`sql.filter_key`) and are quoted for the engine, values are bound as what the column
+  holds by its type in the schema: a whole number, a number, true or false, a date or time
+  (RFC 3339, `2026-01-01 10:00:00` or `2026-01-01`, UTC), else text; a value that is no such
+  value answers `sql.filter_value`. A name whose columns differ in type across tables, and
+  every SQLite column (its types are only affinities), take the value as typed: a number where
+  it is one, else text. `!=` is written `<>`. `=~` and `!~` are refused
+  (`sql.filter_operator`). A typed query without `$__filter` answers `sql.filter_missing` while
+  the dashboard has filters for its source.
+
+Filters are part of the query cache key and of a `cursor`'s binding. A target on a data source
+variable whose pick is another source than the one the filters belong to runs without them, and
+its answer carries the notice `query.filters_not_applied` (also in live updates and exported files; a report says so at the panel, an AI summary is told and its `meta` has `filtersNotApplied`). Field distributions of a target with
+filters answer `query.filters_unsupported`. AI summaries and the AI chat refuse a query whose
+filter names a field excluded from AI (`ai.query_names_excluded_field`), as they refuse a query
+that names one.
 
 ### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
 
@@ -1987,7 +2095,14 @@ is not a single read-only `SELECT`.
 
 Body `VariableOptionsRequest`: `{ "timeRange": {...}, "variables": {...} }` (no other fields). The
 variable's own name in `variables` is refused (`422 validation`, `field: variables`); a variable
-that is not of type `query` is `422 validation`.
+that is not of type `query` or `datasource` is `422 validation`.
+
+A `datasource` variable lists the sources of its `datasourceKind` that the caller may query
+(role or grant) and whose names its `regex` matches, by name, plus its saved default wherever it
+stands; `value` is the id, `label` the name (for the default, the id again when the caller may
+neither read nor query that source), `unmatched` counts names the regex left out.
+Trashed sources are left out. The preview route lists the same for a variable being edited,
+except that its `current` is listed only when the caller may query it.
 
 ```json
 { "options": [{ "value": "AT", "label": "Österreich" }], "truncated": false }
@@ -2022,6 +2137,32 @@ that is not of type `query` is `422 validation`.
   (`RETURN DISTINCT`, a `$group` stage) when a source has more records than that.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
+- After the options are read from the result, the variable's own options apply, in this order
+  (docs/api/dashboard-features.md):
+  - `regex` keeps the options whose value matches (`/pattern/flags` with the flags `i`, `m`, `s`,
+    or the bare pattern). The named groups `text` and `value` take the shown name and the value
+    apart; with neither, a single unnamed group is both; without groups the option stays as it
+    is. Extracted values stay distinct. `unmatched` counts the values left out (absent when
+    none). The engine runs in time linear in the text and has no lookaround or backreferences;
+    a pattern may compile to at most 1 MiB.
+  - `sort` orders by shown name (`alphabetical`, `caseInsensitive`, and their `Desc` forms, by
+    code points or ignoring case) or by value as a number (`numerical`, `numericalDesc`; values
+    that are no numbers follow in their order). Equal entries keep the query's order.
+  - `staticOptions` follow, each unless the query gave its value already.
+
+### Variable preview: `POST /orgs/{orgId}/query/variable-options`
+
+The options a variable being edited would offer, for the settings page and an unsaved dashboard.
+Body `VariablePreviewRequest`: `{ "variable": {...}, "timeRange": {...}, "variables": {...} }`.
+`variable` is a variable as the dashboard model holds it, checked by the model's rules (`422
+validation`, `field: variable`, reason `variables.invalid`), of type `query` (`variables.not_a_query`).
+Its query runs as a free query: `datasources:query` on its source (role or grant), `404 not_found`
+for a source the caller cannot see, `403 forbidden` without the right; `variables` are the other
+variables' values, unchecked, as for a free query. Another variable at "All" (`$__all`) among them
+is filled in from the saved dashboard that the optional `dashboardId` names, as the options route
+does (the caller must be able to read it); one it cannot fill in is refused
+(`variables.all_unresolved`), so the marker never reaches the query. The answer and its errors are those of the
+options route above.
 
 ## Query cache
 
@@ -2361,7 +2502,19 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
 | `sql.identifier_variable_not_allowed` | `name` | `${x:identifier}` with a variable other than constant or custom (dashboard routes) |
 | `sql.identifier_unknown` | `name` | an identifier value that is not a table or column of the source |
-| `sql.identifier_needs_schema` | | identifier variables without the source's schema |
+| `sql.identifier_needs_schema` | | identifier variables or ad hoc filters without the source's schema |
+| `sql.filter_missing` | | the query has ad hoc filters but no `$__filter` |
+| `sql.filter_key` | `key` | an ad hoc filter's key that is not a table or column of the source |
+| `sql.filter_operator` | `operator` | an ad hoc filter with `=~` or `!~` on a SQL source |
+| `query.filters_unsupported` | `kind` | ad hoc filters for a kind that cannot apply them |
+| `query.filters_invalid` | `detail` | `422 validation` (`field: queries`): more than 20 filters, an empty or overlong key, an overlong value |
+| `query.filter_key` | `key` | an ad hoc filter's key that is no label name (Prometheus, Loki) or field name (Elasticsearch: no wildcards) |
+| `query.filter_operator` | `operator` | `<` or `>` on Prometheus or Loki labels |
+| `query.filter_no_selector` | | a PromQL or LogQL query without a selector the filters could narrow |
+| `query.unbalanced` | | unbalanced brackets in a PromQL or LogQL query with ad hoc filters |
+| `query.filter_comment` | | a PromQL or LogQL selector with a `#` comment inside its braces, while ad hoc filters apply |
+| `query.filter_or` | | a PromQL or LogQL selector whose matchers are joined with `or`, while ad hoc filters apply |
+| `sql.filter_value` | `key`, `expected` | an ad hoc filter's value that is not what its column holds (a whole number, a number, true or false, a date or time) |
 | `promql.unclosed_quote` | | an unclosed quote in PromQL |
 | `promql.macro_unknown` | `name` | an unknown `$__` macro |
 | `promql.variable_outside_string` | `name` | a variable outside a quoted label value |
@@ -2567,9 +2720,19 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.constant` | `name` | a value was sent for a constant |
 | `variables.not_an_option` | `name`, `value` | a custom variable's value outside its options |
 | `variables.value_type` | `name` | not a value or a list of values |
+| `variables.list_too_long` | `name`, `max` | a list of more than `max` values (1,000); give "All" a custom value |
+| `variables.all_options_failed` | `name`, `detail` | a shared, saved or sent "All" (`$__all`) of a query variable without a custom value needed its options query, and that failed; the code is the query's (`datasource_error`, `query_timeout`, ...), `detail` its message (no `field`) |
+| `variables.all_unresolved` | `name` | the preview got "All" (`$__all`) for a variable that the saved dashboard named by `dashboardId` cannot fill in (none named, or not a saved variable offering "All") |
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
+| `variables.invalid` | `detail` | the preview's `variable` breaks the model's rules (`field: variable`) |
+| `variables.regex_invalid` | `detail` | the variable's regex does not compile (`field: regex`) |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table and has no `valuesFrom` for its shape, or answers a table and has one (no `field`) |
+| `variables.filters_invalid` | `name` | an ad hoc variable's value is not a list of `{key, operator, value}` within the bounds |
+| `variables.filters_too_many` | `max` | the ad hoc variables hold more than `max` filters together (20) |
+| `variables.datasource_forbidden` | `name` | `403 forbidden`: a data source picked other than the default that the caller may not query (or that does not exist) |
+| `variables.datasource_kind` | `name` | a picked data source of another kind than the variable's, or whose name its regex leaves out |
+| `variables.datasource_missing` | `name` | a target on `$name` whose data source variable has no source |
 
 ### Field distributions
 
@@ -2595,6 +2758,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
 | `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
 | `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
+| `steps.pattern` | `pattern` | a step's name or row pattern is no regular expression of the shared subset (settings-dashboards.md) |
+| `steps.filter_value` | `field`, `value` | a filter rows condition's value cannot be compared with the field's type |
+| `steps.stack_types` | `field`, `first`, `other` | stack tables: one field name has two types in the tables |
+| `steps.result_rows` | `max` | the step would make more than `max` rows |
 | `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
 | `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
@@ -2691,6 +2858,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
 | `prometheus.result_type` | `type` | an unexpected result type |
+| `prometheus.helper_label` | `name` | a helper's `label` is no label name |
+| `prometheus.helper_metric` | `name` | a helper's `metric` is no metric name |
+| `prometheus.helper_filter` | | a helper's `filter` holds brackets, braces, parentheses, `#` or `or` outside its strings |
 | `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
 | `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
@@ -2815,6 +2985,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.fill_row_limit` | `rows` | notice: filling the gaps would take more than `rows` rows, so none were filled |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `query.filters_not_applied` | | notice: the target runs on a source picked through a data source variable, and the dashboard's ad hoc filters belong to the variable's default source, so they did not narrow it |
 | `bigquery.bytes_estimate` | `bytes` | notice: BigQuery's dry run estimated that the query reads `bytes` bytes |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
 | `graphite.no_series` | | notice: no series matched the target |

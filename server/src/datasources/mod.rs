@@ -108,6 +108,12 @@ pub trait DataSourcePlugin: Send + Sync {
     fn capabilities(&self) -> &'static [Capability] {
         &[]
     }
+    /// Whether the kind builds ad hoc filters (`SourceQuery::filters`) into its queries: keys
+    /// checked, values escaped or bound, operators it cannot express refused. Kinds that cannot
+    /// never receive filters (`execute` refuses the query instead).
+    fn adhoc_filters(&self) -> bool {
+        false
+    }
     /// How the values of one field path are spread over the whole result of `req`, computed in
     /// the source (`distribution::run`). Kinds that cannot answer `distribution.unsupported`; the
     /// sets of those that can say so with `DocumentSet::distributable`.
@@ -341,6 +347,27 @@ pub struct TableColumn {
 }
 
 impl SourceSchema {
+    /// The type name of each column name, lowercased, for binding ad hoc filter values
+    /// (`sql::Context::column_types`). A name whose columns differ in type across tables has an
+    /// empty type: its values are bound as text.
+    pub fn column_types(&self) -> std::collections::BTreeMap<String, String> {
+        let mut types: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        if let SourceSchema::Tables { tables } = self {
+            for c in tables.iter().flat_map(|t| &t.columns) {
+                let ty = c.data_type.to_ascii_lowercase();
+                types
+                    .entry(c.name.clone())
+                    .and_modify(|seen| {
+                        if *seen != ty {
+                            seen.clear();
+                        }
+                    })
+                    .or_insert(ty);
+            }
+        }
+        types
+    }
+
     /// Every name an identifier variable may take: tables (plain and schema-qualified) and
     /// columns.
     pub fn identifiers(&self) -> std::collections::BTreeSet<String> {
@@ -463,6 +490,9 @@ pub struct SourceQuery {
     pub limits: Limits,
     /// Continues a `DocumentSet` from its `nextCursor`; frame sources ignore it.
     pub cursor: Option<String>,
+    /// Ad hoc filters to build into the query (`QueryItem::filters`). Only kinds that declare
+    /// `DataSourcePlugin::adhoc_filters` receive any; `execute` refuses them for the others.
+    pub filters: Vec<crate::shapes::AdhocFilter>,
 }
 
 impl SourceQuery {
@@ -1684,6 +1714,12 @@ pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
                 .with_field("queries")
                 .because("query.ref_id"));
         }
+        crate::shapes::check_filters(&item.filters).map_err(|e| {
+            ApiError::validation(format!("queries: {e}"))
+                .with_field("queries")
+                .because("query.filters_invalid")
+                .param("detail", e)
+        })?;
     }
     Ok(())
 }
@@ -1947,8 +1983,16 @@ async fn run_one(
     }
     // The caller's cursor is opened before the cache or the source sees it, and the next page's
     // position is sealed for this caller on the way out, whether it came from the cache or not.
-    let binding =
-        cursor::Binding::new(&ctx.org_id, &ctx.user.id, &ds.id, &item.query, &item.steps, run.range, run.variables);
+    let binding = cursor::Binding::new(
+        &ctx.org_id,
+        &ctx.user.id,
+        &ds.id,
+        &item.query,
+        &item.steps,
+        &item.filters,
+        run.range,
+        run.variables,
+    );
     let mut item = item;
     let mut run = run;
     let mut cache = cache;
@@ -2015,6 +2059,7 @@ async fn run_cached(
             shapes: kind.plugin.shapes(),
             query: cache::canonical(&item.query),
             steps: item.steps.iter().map(cache::canonical).collect(),
+            filters: &item.filters,
             cursor: item.cursor.as_deref(),
             range,
             interval_ms: run.interval_ms,
@@ -2093,6 +2138,15 @@ async fn execute(
     let Run { range, interval_ms, max_data_points, variables, identifier_variables } = run;
     let timeout = limits.timeout;
     let started = Instant::now();
+    // Ad hoc filters only reach a kind that builds them into its queries; for any other, running
+    // the query without them would show more than the filters say.
+    if !item.filters.is_empty() && !kind.plugin.adhoc_filters() {
+        return outcome_error(
+            "query_rejected",
+            Detail::new("query.filters_unsupported", "this data source cannot apply ad hoc filters")
+                .with("kind", &ds.kind),
+        );
+    }
     // The valid graph steps; the first may run in the source.
     let (steps, invalid) = valid_steps(&item);
     let first = steps.iter().find(|s| !s.disabled);
@@ -2112,6 +2166,7 @@ async fn execute(
             identifier_variables: identifier_variables.cloned(),
             limits: Limits { timeout: time.unwrap_or(limits.timeout), ..limits.clone() },
             cursor: item.cursor.clone(),
+            filters: item.filters.clone(),
         };
         // The source gets half the time for a graph step, so the query as written still has time.
         let result = with_pushdown(
@@ -2259,6 +2314,7 @@ pub async fn watch_item(
             identifier_variables: identifier_variables.cloned(),
             limits,
             cursor: None,
+            filters: item.filters.clone(),
         };
         let feed = kind.plugin.watch(&conn, req, resume).await;
         Ok::<_, SourceError>((conn, feed))
@@ -2415,7 +2471,7 @@ pub async fn check_on_save(
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let report = run_health(state, user_id, ds).await?;
-    store_last_test(&state.db, &ds.id, &report, state.clock.now_ms()).await;
+    store_last_test(&state.db, &ds.id, ds.updated_at, &report, state.clock.now_ms()).await;
     Ok(report)
 }
 
@@ -2452,13 +2508,16 @@ impl LastTest {
     }
 }
 
-/// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
-/// source may have been deleted meanwhile), so it is logged, not answered.
-async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
+/// Keeps a test's outcome for the data source page, only while the source is still the version
+/// the test ran on (`tested_version`, its `updated_at`): a change saved during a running test is
+/// not marked as tested. A failure to write only loses the note (the source may have been deleted
+/// meanwhile), so it is logged, not answered.
+async fn store_last_test(db: &AnyPool, datasource_id: &str, tested_version: i64, report: &HealthReport, at: i64) {
     let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
     let stored = sqlx::query(
         "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at, latency_ms, failing_since) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+         SELECT $1, $2, $3, $4, $5, $6 \
+         WHERE EXISTS (SELECT 1 FROM datasources WHERE id = $1 AND updated_at = $7) \
          ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
          tested_at = excluded.tested_at, latency_ms = excluded.latency_ms, \
          failing_since = CASE WHEN excluded.ok = 0 \
@@ -2471,6 +2530,7 @@ async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthRepor
     .bind(i64::try_from(report.latency_ms).unwrap_or(i64::MAX))
     // A first failure starts the run; a failure after failures keeps its start (the CASE above).
     .bind((!report.ok).then_some(at))
+    .bind(tested_version)
     .execute(db)
     .await;
     if let Err(e) = stored {
@@ -2801,6 +2861,7 @@ mod tests {
                 serde_json::json!({ "id": "b", "type": "topDegree", "frame": "A", "n": 0 }),
                 serde_json::json!({ "id": "c", "type": "countLabels", "frame": "A" }),
             ],
+            filters: Vec::new(),
         };
         let (steps, invalid) = valid_steps(&item);
         assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"]);

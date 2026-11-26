@@ -21,7 +21,10 @@ import { tablePanel } from "./table";
 import { textPanel } from "./text";
 import { timeseriesPanel } from "./timeseries";
 import { tracePanel } from "./trace";
+import { trendPanel } from "./trend";
 import type { AnyPanelPlugin } from "./types";
+import { xyPanel } from "./xy";
+import { looksLikeTrend, looksLikeXY } from "./xy/suggest";
 
 /**
  * Every panel type, in the order the picker offers them when several accept a shape, each with
@@ -36,6 +39,8 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   tablePanel,
   pieChartPanel,
   histogramPanel,
+  xyPanel,
+  trendPanel,
   heatmapPanel,
   stateTimelinePanel,
   statusHistoryPanel,
@@ -133,8 +138,9 @@ export function isTraceList(frame: Frame): boolean {
 
 /**
  * The panel that fits a set of results best: traces in the trace panel, for graphs the network (the path panel when every
- * graph is made of paths), for frames a time series when there is time, else a table; documents
- * open in the document explorer.
+ * graph is made of paths), for frames a time series when there is time; a frame of numbers only
+ * a Trend when its first number field ascends, else an XY chart; else a table; documents open in
+ * the document explorer.
  */
 export function suggestPanel(results: readonly QueryResult[]): string {
   if (results.some((r) => r.shape === "trace" || (r.shape === "frame" && isTraceList(r.frame)))) {
@@ -147,6 +153,12 @@ export function suggestPanel(results: readonly QueryResult[]): string {
   const frames = results.flatMap((r) => (r.shape === "frame" ? [r.frame] : []));
   if (frames.some((f) => timeField(f) !== undefined && valueFields(f).length > 0)) {
     return timeseriesPanel.type;
+  }
+  if (frames.length > 0 && frames.every(looksLikeTrend)) {
+    return trendPanel.type;
+  }
+  if (frames.length > 0 && frames.every(looksLikeXY)) {
+    return xyPanel.type;
   }
   if (frames.length === 0 && results.some((r) => r.shape === "documents")) {
     return documentsPanel.type;

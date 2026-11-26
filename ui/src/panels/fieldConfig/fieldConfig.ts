@@ -14,6 +14,7 @@ import {
   MAX_UNIT_CHARS,
 } from "./units";
 import "../viz.css";
+import { AXIS_KEYS, type AxisOptions, parseAxisOptions } from "./axisOptions";
 import { GRAPH_STYLE_KEYS, type GraphStyleOptions, parseGraphStyle } from "./graphStyle";
 import { compilePattern } from "./pattern";
 
@@ -108,8 +109,11 @@ export type ValueMapping =
   | { type: "range"; from: number | null; to: number | null; text?: string; tone?: Tone }
   | { type: "regex"; pattern: string; text?: string; tone?: Tone };
 
-/** Field options; the graph style keys only matter to the time series (`graphStyle.ts`). */
-export interface FieldOptions extends GraphStyleOptions {
+/**
+ * Field options; the graph style keys only matter to the time series (`graphStyle.ts`), the axis
+ * keys to charts with a value axis (`axisOptions.ts`).
+ */
+export interface FieldOptions extends GraphStyleOptions, AxisOptions {
   /** A catalog unit id (`bytes`, `currency:EUR`) or `suffix:<text>`. */
   unit?: string;
   decimals?: number;
@@ -168,6 +172,7 @@ export const OPTION_KEYS = [
   "link",
   "width",
   ...GRAPH_STYLE_KEYS,
+  ...AXIS_KEYS,
 ] as const satisfies readonly (keyof FieldOptions)[];
 
 export interface FieldConfig {
@@ -269,7 +274,7 @@ export function parseFieldOptions(value: unknown): FieldOptions {
   if (!isRecord(value)) {
     return {};
   }
-  const options: FieldOptions = parseGraphStyle(value);
+  const options: FieldOptions = { ...parseGraphStyle(value), ...parseAxisOptions(value) };
   const unit = text(value.unit, LIMITS.unitChars + CUSTOM_PREFIX.length);
   if (unit !== undefined && unit !== "") options.unit = unit;
   const decimals = finite(value.decimals);
