@@ -73,6 +73,7 @@ UI, with `message` as the English fallback.
 | `reports.creator_gone` | | suspended: the creator is no active member any more |
 | `reports.creator_no_permission` | | suspended: the creator lost `reports:write` |
 | `reports.creator_no_dashboard` | | suspended: the creator cannot read the dashboard, or it is in the trash |
+| `reports.creator_no_source` | | suspended: the creator may no longer query a data source the report's values pick for a data source variable, or it is in the trash or of another kind |
 | `reports.creator_no_export` | | suspended: the creator lost `data:export`, which CSV files need |
 | `reports.dashboard_unavailable` | | run failed: the dashboard is gone |
 | `reports.panel_link_missing` | | run failed: a panel's library panel or saved analysis is gone |

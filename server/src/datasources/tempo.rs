@@ -394,6 +394,7 @@ mod tests {
                 budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
             },
             cursor: None,
+            filters: Vec::new(),
         };
         plan(&req)
     }

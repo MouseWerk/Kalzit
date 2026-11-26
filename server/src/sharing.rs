@@ -198,10 +198,19 @@ pub struct ShownRights {
 }
 
 impl ShownRights {
-    pub fn of(state: &AppState, ctx: &OrgCtx, panel: &model::Panel) -> Self {
+    /// `chosen`: the sources the share's values pick for its data source variables
+    /// (`query::chosen_sources`), so a change of a picked source starts a new answer too.
+    pub fn of(
+        state: &AppState,
+        ctx: &OrgCtx,
+        model: &model::DashboardModel,
+        panel: &model::Panel,
+        chosen: &BTreeMap<String, String>,
+    ) -> Self {
         let rights = ctx.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
         let cache = state.datasources.query_cache();
-        let sources: BTreeSet<&str> = panel.targets.iter().map(|t| t.datasource_id.as_str()).collect();
+        let sources: BTreeSet<&str> =
+            panel.targets.iter().map(|t| target_source(model, &t.datasource_id, chosen)).collect();
         let stamps = sources.into_iter().map(|id| cache.stamp(&ctx.org_id, id)).collect();
         Self { rights: format!("{}:{rights}", ctx.user.id), stamps }
     }
@@ -1355,8 +1364,33 @@ fn map_node_properties(layers: &[MapPointsLayer], properties: &BTreeMap<String, 
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
-pub fn panel_sources(panels: &[SharedPanel]) -> BTreeSet<String> {
-    panels.iter().flat_map(|p| p.panel.targets.iter().map(|t| t.datasource_id.clone())).collect()
+/// A target of a data source variable (`$name`) counts with the source the share's values pick
+/// (`chosen`, from `query::chosen_sources`), else the variable's saved default; every data
+/// source variable's pick counts too, so a creator who loses the right to query it suspends the
+/// share.
+pub fn panel_sources(
+    model: &model::DashboardModel,
+    panels: &[SharedPanel],
+    chosen: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
+    panels
+        .iter()
+        .flat_map(|p| p.panel.targets.iter().map(|t| target_source(model, &t.datasource_id, chosen).to_string()))
+        .chain(chosen.values().cloned())
+        .collect()
+}
+
+/// The source a target runs on with the share's picks: a `$name` through `chosen`, else as the
+/// model says (`DashboardModel::default_source`).
+pub fn target_source<'a>(
+    model: &'a model::DashboardModel,
+    datasource_id: &'a str,
+    chosen: &'a BTreeMap<String, String>,
+) -> &'a str {
+    match model::source_variable(datasource_id).and_then(|name| chosen.get(name)) {
+        Some(id) => id,
+        None => model.default_source(datasource_id),
+    }
 }
 
 /// Whether the creator may still query every one of `sources`.
@@ -1433,13 +1467,7 @@ pub fn default_variables(model: &DashboardModel) -> BTreeMap<String, Value> {
         .variables
         .iter()
         .filter(|v| v.kind != VariableType::Constant)
-        .filter_map(|v| {
-            let value = match &v.current {
-                Some(Value::Object(m)) => m.get("value").cloned(),
-                other => other.clone(),
-            }?;
-            (!value.is_null()).then(|| (v.name.clone(), value))
-        })
+        .filter_map(|v| crate::dashboards::variables::saved_value(v).map(|value| (v.name.clone(), value)))
         .collect()
 }
 
@@ -1492,6 +1520,24 @@ pub struct PublicDashboard {
     pub panels: Vec<PublicPanel>,
 }
 
+/// What a public page shows of a variable's value: the value itself, except that a data source
+/// variable shows none (no source ids) and ad hoc filters only how many there are (no keys or
+/// values), so the header can say "2 Filter".
+fn public_value(v: &model::Variable, given: Option<&Value>) -> Option<Value> {
+    match v.kind {
+        VariableType::Datasource => None,
+        VariableType::Adhoc => {
+            let count = match given {
+                Some(Value::Array(items)) => items.len(),
+                Some(_) => 0,
+                None => model::adhoc_current(v).map_or(0, |f| f.len()),
+            };
+            Some(Value::from(count))
+        }
+        _ => given.cloned(),
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1504,7 +1550,8 @@ pub struct PublicVariable {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub label: Option<String>,
-    /// The fixed value (a list for several values); absent when there is none.
+    /// The fixed value (a list for several values); absent when there is none and for data source
+    /// variables; for ad hoc filters only their number.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "unknown"))]
     pub value: Option<Value>,
@@ -1613,7 +1660,7 @@ pub fn public_dashboard(
                 name: v.name.clone(),
                 kind: enum_text(&v.kind).unwrap_or_default(),
                 label: v.label.clone(),
-                value: variables.get(&v.name).cloned(),
+                value: public_value(v, variables.get(&v.name)),
             })
             .collect(),
         rows: model

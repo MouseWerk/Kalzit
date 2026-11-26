@@ -445,6 +445,7 @@ pub(crate) mod test_support {
                 budget: ResponseBudget::new(1 << 20),
             },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

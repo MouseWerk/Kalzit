@@ -207,7 +207,17 @@ cursor?: string, limit?: number,
  * all of this query, in order. The first runs in the database when the source can, the others
  * on the server; the answer is the result after them, with `steps` saying where each ran.
  */
-steps?: unknown[], };
+steps?: unknown[], 
+/**
+ * Ad hoc filters (a dashboard's "Freie Filter") that narrow this query. The source builds
+ * them into the query itself, keys checked and values escaped or bound; a source that cannot
+ * answers `query.filters_unsupported` (docs/api/datasources.md, "Ad hoc filters").
+ */
+filters?: AdhocFilter[], };
+
+export type AdhocFilter = { key: string, operator: FilterOperator, value: string, };
+
+export type FilterOperator = "=" | "!=" | "=~" | "!~" | "<" | ">";
 
 export type PanelQueryRequest = { timeRange: TimeRange, 
 /**
@@ -262,7 +272,22 @@ options: Array<VariableOption>,
 /**
  * True when the list was cut at the option limit or the query's row limit.
  */
-truncated: boolean, };
+truncated: boolean, 
+/**
+ * How many values the variable's regex left out; absent when none (or no regex).
+ */
+unmatched?: number, };
+
+export type VariablePreviewRequest = { variable: unknown, timeRange: TimeRange, 
+/**
+ * The other variables' values, as for a free query.
+ */
+variables: Record<string, unknown>, 
+/**
+ * The saved dashboard the variable belongs to: another variable at "All" (`$__all`) among
+ * `variables` is filled in from its saved definition, as the options route does.
+ */
+dashboardId?: string, };
 
 export type TimeRange = { from: number, to: number, };
 
@@ -574,7 +599,8 @@ export type PublicVariable = { name: string,
  */
 type: string, label?: string, 
 /**
- * The fixed value (a list for several values); absent when there is none.
+ * The fixed value (a list for several values); absent when there is none and for data source
+ * variables; for ad hoc filters only their number.
  */
 value?: unknown, };
 

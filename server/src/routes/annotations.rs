@@ -445,6 +445,7 @@ async fn run_annotation_query(
         cursor: None,
         limit: None,
         steps: Vec::new(),
+        filters: Vec::new(),
     };
     let response =
         run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;

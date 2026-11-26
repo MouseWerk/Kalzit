@@ -98,6 +98,8 @@ struct Words {
     dashboard: &'static str,
     range: &'static str,
     variables: &'static str,
+    /// A variable at "All" (`$__all`), as the dashboard's bar names it.
+    all: &'static str,
     generated: &'static str,
     not_shown: &'static str,
     no_data: &'static str,
@@ -111,6 +113,8 @@ struct Words {
     document: &'static str,
     not_drawn: &'static str,
     shape_mismatch: &'static str,
+    /// A pick of another data source left the dashboard's ad hoc filters behind.
+    filters_not_applied: &'static str,
 }
 
 const DE: Words = Words {
@@ -119,6 +123,7 @@ const DE: Words = Words {
     dashboard: "Dashboard",
     range: "Zeitraum",
     variables: "Variablen",
+    all: "Alle",
     generated: "Erstellt",
     not_shown: "Nicht dargestellt",
     no_data: "Keine Daten im Zeitraum.",
@@ -132,6 +137,7 @@ const DE: Words = Words {
     document: "Dokument",
     not_drawn: "Dieser Panel-Typ wird im PDF noch nicht gezeichnet; die Werte als Tabelle:",
     shape_mismatch: "Das Panel zeigt eine andere Ergebnisform als die Abfrage liefert",
+    filters_not_applied: "Die Freien Filter gelten für eine andere Datenquelle und engen dieses Panel nicht ein.",
 };
 
 const EN: Words = Words {
@@ -140,6 +146,7 @@ const EN: Words = Words {
     dashboard: "Dashboard",
     range: "Time range",
     variables: "Variables",
+    all: "All",
     generated: "Generated",
     not_shown: "Not shown",
     no_data: "No data in the time range.",
@@ -153,6 +160,7 @@ const EN: Words = Words {
     document: "Document",
     not_drawn: "This panel type is not drawn in PDF files yet; its values as a table:",
     shape_mismatch: "The panel shows another result shape than the query returns",
+    filters_not_applied: "The ad hoc filters belong to another data source and do not narrow this panel.",
 };
 
 fn words(lang: ReportLanguage) -> &'static Words {
@@ -1010,6 +1018,7 @@ pub fn render_until(
             .variables
             .iter()
             .map(|(k, v)| match v {
+                v if crate::dashboards::variables::is_all(v) => format!("{k} = {}", w.all),
                 Value::String(s) => format!("{k} = {s}"),
                 Value::Array(items) => {
                     let parts: Vec<String> =
@@ -1115,6 +1124,11 @@ fn draw_card(
     let by = y + CARD_PAD + CARD_HEAD;
     let bw = w - 2.0 * CARD_PAD;
     let bh = h - CARD_HEAD - 2.0 * CARD_PAD;
+    // Said at the card's foot: the panel ran on a picked source without the dashboard's filters.
+    if matches!(&panel.content, Content::Results(r) if r.filters_not_applied) {
+        let fitted = pen.fonts.fit(words.filters_not_applied, bw, 7.5, Weight::Regular);
+        pen.text(bx, y + h - 4.0, 7.5, Weight::Regular, MUTED, &fitted);
+    }
     match body {
         Body::Lines { series, more } => {
             draw_lines(pen, series, *more, bx, by, bw, bh, zone, lang, words, panel.unit.as_deref())

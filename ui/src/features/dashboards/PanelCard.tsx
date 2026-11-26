@@ -29,6 +29,7 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig, shownFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry";
+import { inline } from "../../panels/text/markdown";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
@@ -62,7 +63,10 @@ import { linkHref } from "./links";
 import {
   clampGrid,
   type GridPos,
+  type Hold,
+  holdOf,
   type PanelModel,
+  panelUses,
   storedQueryVariables,
   type VariableValues,
   variableTexts,
@@ -73,6 +77,7 @@ import { queryLimits } from "./queryLimits";
 import {
   documentsOf,
   errorsOf,
+  filtersNotApplied,
   graphsOf,
   isTruncated,
   otherShapes,
@@ -241,7 +246,9 @@ export function PanelCard({
     },
     [observe],
   );
-  const live = usePanelLive({ ...query, panel }, inView);
+  // A query variable at "All" this panel uses has no values yet: it waits, or says why not.
+  const hold = holdOf(panelUses(panel), query.held);
+  const live = usePanelLive({ ...query, panel }, inView && hold === null);
   // Paused by the person: the panel keeps its last result and says so.
   const liveText =
     query.live?.paused === true
@@ -262,6 +269,7 @@ export function PanelCard({
     .filter((part) => part !== null)
     .join(", ");
   const links = (panel.links ?? []).flatMap((link) => {
+    if (holdOf(link.url, query.held) !== null) return [];
     const href = linkHref(link.url, view?.values ?? query.variables);
     return href === null ? [] : [{ ...link, href }];
   });
@@ -493,6 +501,28 @@ export function PanelCard({
   }, [imaging, title, imageFailed]);
   const outcomes = paged.outcomes;
   const noData = results.data === undefined;
+  // Its own element, so a panel that does not wait keeps the same body while nothing it shows
+  // changes (moving another panel draws only that one again).
+  const body = (
+    <PanelBody
+      panel={panel}
+      title={title}
+      range={range}
+      pending={firstLoad(results)}
+      error={results.error}
+      outcomes={outcomes}
+      revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+      more={paged.more}
+      variables={variableTexts(query.variables)}
+      kindOf={kindOf}
+      onRetry={retry}
+      fetching={results.isFetching}
+      distribution={panelDistribution(
+        { ...query, panel, manual: query.manual ?? query.run },
+        kindOf,
+      )}
+    />
+  );
   // Every action of the panel, in one menu: its links first, then viewing, then editing.
   const menuItems: PanelMenuItem[] = [
     ...links.map((link) => ({
@@ -704,7 +734,11 @@ export function PanelCard({
             </span>
           )}
           {panel.description === undefined ? null : (
-            <PanelDescription title={title} description={panel.description} />
+            <PanelDescription
+              title={title}
+              description={panel.description}
+              variables={variableTexts(query.variables)}
+            />
           )}
           <PanelAlertBadge rules={panelRules} title={title} />
           {limitText === null ? null : (
@@ -748,6 +782,12 @@ export function PanelCard({
             />
           </div>
         </header>
+        {filtersNotApplied(outcomes) ? (
+          <p className="panel-card__filters-note" title={t("dashboards.filters.notAppliedLong")}>
+            <Icon name="filter" size="small" />
+            <span>{t("dashboards.filters.notApplied")}</span>
+          </p>
+        ) : null}
         <div className="panel-card__body">
           <PanelAlertMarksContext value={alertMarks}>
             <PanelAnnotationsContext.Provider value={annotations}>
@@ -760,24 +800,7 @@ export function PanelCard({
                   (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
                 }
               >
-                <PanelBody
-                  panel={panel}
-                  title={title}
-                  range={range}
-                  pending={firstLoad(results)}
-                  error={results.error}
-                  outcomes={outcomes}
-                  revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
-                  more={paged.more}
-                  variables={variableTexts(query.variables)}
-                  kindOf={kindOf}
-                  onRetry={retry}
-                  fetching={results.isFetching}
-                  distribution={panelDistribution(
-                    { ...query, panel, manual: query.manual ?? query.run },
-                    kindOf,
-                  )}
-                />
+                {hold === null ? body : <PanelHold hold={hold} />}
               </PanelViewHost>
             </PanelAnnotationsContext.Provider>
           </PanelAlertMarksContext>
@@ -864,6 +887,27 @@ function placeAt(element: HTMLElement | null, grid: GridPos) {
   element.style.setProperty("--row", String(grid.y + 1));
   element.style.setProperty("--w", String(grid.w));
   element.style.setProperty("--h", String(grid.h));
+}
+
+/**
+ * A panel that waits for the values of a query variable at "All": loading, or the error of the
+ * variable's options query, instead of a run with an empty list.
+ */
+function PanelHold({ hold }: { hold: Hold }) {
+  const { t } = useI18n();
+  if (hold.error === null) {
+    return (
+      <p className="panel-empty" role="status">
+        {t("dashboards.variables.waiting", { name: hold.name })}
+      </p>
+    );
+  }
+  return (
+    <div className="panel-error" role="alert">
+      <Icon name="alert" />
+      <span>{t("dashboards.variables.allFailed", { name: hold.name, detail: hold.error })}</span>
+    </div>
+  );
 }
 
 /**
@@ -1334,7 +1378,19 @@ function pluginSeries(
  * toggled by a tap or click (touch screens have no hover). Screen readers get it once, through
  * `aria-describedby`; the text is plain, never markup.
  */
-function PanelDescription({ title, description }: { title: string; description: string }) {
+/**
+ * The panel's description behind the info sign in its header: inline Markdown (links, emphasis,
+ * code) line by line, with dashboard variables such as $host filled in as text.
+ */
+function PanelDescription({
+  title,
+  description,
+  variables,
+}: {
+  title: string;
+  description: string;
+  variables: Readonly<Record<string, string>>;
+}) {
   const { t } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -1358,7 +1414,11 @@ function PanelDescription({ title, description }: { title: string; description: 
         <Icon name="info" />
       </button>
       <span className="panel-card__about-text" id={id} role="tooltip">
-        {description}
+        {description.split("\n").flatMap((line, index) => [
+          // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one text, in order
+          ...(index === 0 ? [] : [<br key={`br${index}`} />]),
+          ...inline(line, `l${index}`, variables),
+        ])}
       </span>
     </span>
   );
