@@ -89,3 +89,77 @@ test("a viewer loads more documents of a dashboard's stored query, and only with
     expect(body.results.A?.error?.reason).toBe("query.cursor_invalid");
   });
 });
+
+test("load more continues a saved analysis and the panel editor's preview", async ({ pageAs }) => {
+  const path = join(filesDir(), `${unique("events").replace(/[^\w-]+/g, "-")}.ndjson`);
+  const lines = Array.from({ length: 3 }, (_, i) => JSON.stringify({ event: i + 1 }));
+  writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
+  const owner = await Api.owner();
+  let analysisId: string;
+  let dashboardId: string;
+  let viewer: { email: string; password: string };
+  let editor: { email: string; password: string };
+  try {
+    // Two documents per page, so the three lines take two pages.
+    const sourceId = await owner.createSource(unique("Ereignisse"), "file", {
+      path,
+      format: "ndjson",
+      maxRows: 2,
+    });
+    analysisId = await owner.createAnalysis({
+      schemaVersion: 1,
+      title: unique("Ereignisse"),
+      timeRange: null,
+      targets: [{ refId: "A", datasourceId: sourceId, query: {} }],
+      steps: [],
+      visualization: { type: "documents", options: {} },
+    });
+    dashboardId = await owner.createDashboard({
+      schemaVersion: 1,
+      title: unique("Ereignisse"),
+      timeRange: { from: "now-1h", to: "now" },
+      panels: [
+        {
+          id: "p1",
+          type: "documents",
+          title: "Events",
+          grid: { x: 0, y: 0, w: 12, h: 10 },
+          targets: [{ refId: "A", datasourceId: sourceId, query: {} }],
+        },
+      ],
+    });
+    viewer = await owner.createMember(unique("Vera Viewer"), "viewer");
+    editor = await owner.createMember(unique("Edda Editor"), "editor");
+  } finally {
+    await owner.dispose();
+  }
+  const count = (n: number) => t("documents.summary.countMany", { count: n });
+  const loadMore = t("documents.more.load");
+
+  await test.step("a viewer pages a saved analysis through its own route", async () => {
+    const page = await pageAs(viewer.email, viewer.password);
+    await page.goto(`/explore/saved/${analysisId}`, { timeout: STEP_MS });
+    const result = page.getByRole("region", { name: t("explore.result"), exact: true });
+    await expect(result).toContainText(count(2), { timeout: STEP_MS });
+    await expect(result).toContainText(t("documents.summary.more"), { timeout: STEP_MS });
+    const answer = page.waitForResponse((r) => r.url().includes(`/analyses/${analysisId}/query`));
+    await result.getByRole("button", { name: loadMore, exact: true }).click({ timeout: STEP_MS });
+    const request = (await answer).request().postDataJSON() as { cursors?: Record<string, string> };
+    expect(request.cursors?.A ?? "").not.toBe("");
+    await expect(result).toContainText(count(3), { timeout: STEP_MS });
+    await expect(result.getByRole("button", { name: loadMore, exact: true })).toHaveCount(0);
+  });
+
+  await test.step("an editor pages the panel editor's preview", async () => {
+    const page = await pageAs(editor.email, editor.password);
+    await page.goto(`/dashboards/${dashboardId}/panels/p1/edit`, { timeout: STEP_MS });
+    const preview = page.getByRole("region", { name: t("dashboards.editor.preview"), exact: true });
+    await expect(preview).toContainText(count(2), { timeout: STEP_MS });
+    const answer = page.waitForResponse((r) => r.url().includes("/panels/p1/query"));
+    await preview.getByRole("button", { name: loadMore, exact: true }).click({ timeout: STEP_MS });
+    const request = (await answer).request().postDataJSON() as { cursors?: Record<string, string> };
+    expect(request.cursors?.A ?? "").not.toBe("");
+    await expect(preview).toContainText(count(3), { timeout: STEP_MS });
+    await expect(preview.getByRole("button", { name: loadMore, exact: true })).toHaveCount(0);
+  });
+});

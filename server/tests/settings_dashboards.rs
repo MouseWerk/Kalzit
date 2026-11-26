@@ -286,6 +286,8 @@ on_both_databases! {
     datasource_edits_refuse_stale_writes: |_| {};
     dashboards_go_through_the_trash: |_| {};
     dashboard_lists_search_move_and_page: |_| {};
+    dashboard_lists_sort_filter_and_count_for_the_browser: |_| {};
+    dashboard_lists_sketch_the_layout_within_bounds: |_| {};
     old_versions_beyond_the_retention_are_dropped: |_| {};
     subtrees_with_hidden_content_stay_out_of_reach: |_| {};
     separate_trashes_restore_separately: |_| {};
@@ -307,6 +309,7 @@ on_both_databases! {
     moving_a_folder_to_the_top_level_needs_the_org_wide_right: |_| {};
     dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
     appearance_settings_reach_branding_and_organizations: |_| {};
+    an_accent_stored_before_the_theme_variants_stays: |_| {};
     the_logo_is_validated_stored_and_served_same_origin: |_| {};
     logo_changes_can_be_undone: |_| {};
     server_routes_refuse_organization_admins_and_org_writes_refuse_viewers: |_| {};
@@ -1518,6 +1521,162 @@ async fn dashboard_lists_search_move_and_page(t: TestApp) {
     assert_eq!(t.get("~/dashboards?limit=500", &t.owner).await.field(), "limit");
 }
 
+fn list_titles(r: &Reply) -> Vec<String> {
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.body["items"].as_array().unwrap().iter().map(|d| d["title"].as_str().unwrap().to_string()).collect()
+}
+
+/// The browser's list: search by title, tag or folder name, sorts by change and by the caller's
+/// own opens with stable pages, star and recent filters, and counts per folder, star, recent
+/// and tag that follow the list's visibility rules.
+async fn dashboard_lists_sort_filter_and_count_for_the_browser(t: TestApp) {
+    let vertrieb = id_of(t.post("~/folders", json!({ "name": "Vertrieb" }), &t.owner).await);
+    let geheim = id_of(t.post("~/folders", json!({ "name": "Geheim", "restricted": true }), &t.owner).await);
+    let mut tagged = model("Lager");
+    tagged["tags"] = json!(["Kennzahl", "Monat"]);
+    let lager = id_of(t.post("~/dashboards", json!({ "model": tagged }), &t.owner).await);
+    t.clock.advance_ms(1000);
+    let mut tagged = model("Umsatz");
+    tagged["tags"] = json!(["kennzahl"]);
+    let umsatz = id_of(t.post("~/dashboards", json!({ "model": tagged, "folderId": vertrieb }), &t.owner).await);
+    t.clock.advance_ms(1000);
+    let boni = id_of(t.post("~/dashboards", json!({ "model": model("Boni"), "folderId": geheim }), &t.owner).await);
+    t.clock.advance_ms(1000);
+    let kosten = id_of(t.post("~/dashboards", json!({ "model": model("Kosten") }), &t.owner).await);
+
+    // Search reaches tags and folder names too, any case.
+    assert_eq!(list_titles(&t.get("~/dashboards?q=KENNZ", &t.owner).await), ["Lager", "Umsatz"]);
+    assert_eq!(list_titles(&t.get("~/dashboards?q=vertr", &t.owner).await), ["Umsatz"]);
+    assert_eq!(list_titles(&t.get("~/dashboards?q=100%25", &t.owner).await), Vec::<String>::new());
+    // Who saved last is named.
+    let all = t.get("~/dashboards", &t.owner).await;
+    assert_eq!(all.body["items"][0]["updatedByName"], "Jörg Müller", "{}", all.body);
+    assert_eq!(all.body["items"][0]["starred"], false);
+    assert!(all.body["items"][0].get("layout").is_none(), "only on request");
+
+    // Newest change first, in stable pages.
+    let page = t.get("~/dashboards?sort=updated&limit=2", &t.owner).await;
+    assert_eq!(list_titles(&page), ["Kosten", "Boni"]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    let rest = t.get(&format!("~/dashboards?sort=updated&limit=2&cursor={cursor}"), &t.owner).await;
+    assert_eq!(list_titles(&rest), ["Umsatz", "Lager"]);
+    assert!(rest.body["nextCursor"].is_null());
+
+    // Opened ones first, the caller's own opens only, then the rest by change.
+    t.clock.advance_ms(1000);
+    assert_eq!(
+        t.post(&format!("~/dashboards/{lager}/views"), json!({}), &t.owner).await.status,
+        StatusCode::NO_CONTENT
+    );
+    t.clock.advance_ms(1000);
+    t.post(&format!("~/dashboards/{umsatz}/views"), json!({}), &t.owner).await;
+    let opened = t.get("~/dashboards?sort=opened", &t.owner).await;
+    assert_eq!(list_titles(&opened), ["Umsatz", "Lager", "Kosten", "Boni"]);
+    assert!(opened.body["items"][0]["openedAt"].is_i64());
+    assert!(opened.body["items"][2].get("openedAt").is_none());
+    let page = t.get("~/dashboards?sort=opened&limit=3", &t.owner).await;
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    assert_eq!(
+        list_titles(&t.get(&format!("~/dashboards?sort=opened&limit=3&cursor={cursor}"), &t.owner).await),
+        ["Boni"]
+    );
+    assert_eq!(list_titles(&t.get("~/dashboards?opened=true&sort=opened", &t.owner).await), ["Umsatz", "Lager"]);
+
+    // Stars: a filter and a flag per row.
+    assert_eq!(t.put(&format!("~/dashboards/{kosten}/star"), json!({}), &t.owner).await.status, StatusCode::NO_CONTENT);
+    t.put(&format!("~/dashboards/{boni}/star"), json!({}), &t.owner).await;
+    let starred = t.get("~/dashboards?starred=true", &t.owner).await;
+    assert_eq!(list_titles(&starred), ["Boni", "Kosten"]);
+    assert_eq!(starred.body["items"][0]["starred"], true);
+
+    let of = |r: &Reply, f: Value| {
+        r.body["folders"].as_array().unwrap().iter().find(|c| c["folderId"] == f).map(|c| c["count"].clone())
+    };
+    let counts = t.get("~/dashboards/counts", &t.owner).await;
+    assert_eq!(counts.status, StatusCode::OK, "{}", counts.body);
+    assert_eq!(counts.body["total"], 4);
+    assert_eq!(counts.body["starred"], 2);
+    assert_eq!(counts.body["opened"], 2);
+    assert_eq!(of(&counts, json!(vertrieb)), Some(json!(1)));
+    assert_eq!(of(&counts, json!(geheim)), Some(json!(1)));
+    assert_eq!(of(&counts, Value::Null), Some(json!(2)));
+    assert_eq!(counts.body["tags"][0]["count"], 2, "{}", counts.body);
+    assert_eq!(counts.body["tags"][0]["tag"].as_str().unwrap().to_lowercase(), "kennzahl");
+    assert_eq!(counts.body["tags"][1], json!({ "tag": "Monat", "count": 1 }));
+
+    // Someone else: their own stars and opens, and nothing of the restricted folder.
+    let emil = t.member("Emil", "viewer").await;
+    let counts = t.get("~/dashboards/counts", &emil).await;
+    assert_eq!(counts.body["total"], 3);
+    assert_eq!(counts.body["starred"], 0);
+    assert_eq!(counts.body["opened"], 0);
+    assert_eq!(of(&counts, json!(geheim)), None);
+    assert!(t.get("~/dashboards?starred=true", &emil).await.body["items"].as_array().unwrap().is_empty());
+    assert_eq!(
+        list_titles(&t.get("~/dashboards?q=gehe", &emil).await),
+        Vec::<String>::new(),
+        "hidden folder names find nothing"
+    );
+    // Granted the dashboard alone, Emil counts it in all, but its hidden folder stays unnamed.
+    t.grant("Emil", "dashboard", &boni, "view").await;
+    let counts = t.get("~/dashboards/counts", &emil).await;
+    assert_eq!(counts.body["total"], 4);
+    assert_eq!(of(&counts, json!(geheim)), None);
+    assert_eq!(of(&counts, Value::Null), Some(json!(2)));
+    assert_eq!(t.get("~/dashboards/counts?bogus=1", &emil).await.code(), "validation");
+    assert_eq!(t.get("~/dashboards?sort=bogus", &emil).await.code(), "validation");
+
+    // The trash leaves the counts.
+    assert_eq!(t.delete(&format!("~/dashboards/{lager}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let counts = t.get("~/dashboards/counts", &t.owner).await;
+    assert_eq!(counts.body["total"], 3);
+    assert_eq!(counts.body["opened"], 1);
+    assert_eq!(counts.body["tags"], json!([{ "tag": "kennzahl", "count": 1 }]));
+}
+
+/// `layout=true` adds where the panels sit, rows unfolded as the dashboard opens, capped per
+/// dashboard, on pages of at most 50; nothing of a panel's content leaves the server.
+async fn dashboard_lists_sketch_the_layout_within_bounds(t: TestApp) {
+    let mut full = model("Mit Reihen");
+    full["panels"][0]["title"] = json!("Geheimer Titel");
+    full["rows"] = json!([
+        { "id": "r1", "title": "Zu", "collapsed": true },
+        { "id": "r2", "title": "Offen" }
+    ]);
+    let text = |id: &str, row: &str, y: u64| json!({ "id": id, "type": "text", "rowId": row, "grid": { "x": 0, "y": y, "w": 6, "h": 4 } });
+    full["panels"].as_array_mut().unwrap().extend([text("p2", "r1", 0), text("p3", "r2", 0), text("p4", "r2", 4)]);
+    t.post("~/dashboards", json!({ "model": full }), &t.owner).await;
+    let mut many = model("Viele");
+    many["panels"] = Value::Array(
+        (0..30)
+            .map(|i| json!({ "id": format!("p{i}"), "type": "stat", "grid": { "x": 0, "y": i * 2, "w": 4, "h": 2 } }))
+            .collect(),
+    );
+    t.post("~/dashboards", json!({ "model": many }), &t.owner).await;
+    t.post("~/dashboards", json!({ "model": plain("Leer") }), &t.owner).await;
+
+    let list = t.get("~/dashboards?layout=true", &t.owner).await;
+    assert_eq!(list_titles(&list), ["Leer", "Mit Reihen", "Viele"]);
+    assert_eq!(list.body["items"][0]["layout"], json!({ "items": [], "more": false }));
+    assert_eq!(
+        list.body["items"][1]["layout"],
+        json!({ "more": false, "items": [
+            { "x": 0, "y": 0, "w": 12, "h": 8, "type": "timeseries" },
+            { "x": 0, "y": 8, "w": 24, "h": 1, "type": "row" },
+            { "x": 0, "y": 9, "w": 24, "h": 1, "type": "row" },
+            { "x": 0, "y": 10, "w": 6, "h": 4, "type": "text" },
+            { "x": 0, "y": 14, "w": 6, "h": 4, "type": "text" }
+        ] })
+    );
+    assert!(!list.body.to_string().contains("Geheimer Titel"), "no panel content in the list");
+    assert!(!list.body.to_string().contains("SELECT"), "no queries in the list");
+    let capped = &list.body["items"][2]["layout"];
+    assert_eq!(capped["items"].as_array().unwrap().len(), 24);
+    assert_eq!(capped["more"], true);
+    assert_eq!(t.get("~/dashboards?layout=true&limit=51", &t.owner).await.field(), "limit");
+    assert_eq!(list_titles(&t.get("~/dashboards?layout=true&limit=50", &t.owner).await).len(), 3);
+}
+
 fn id_of(r: Reply) -> String {
     assert!(r.status.is_success(), "{}", r.body);
     r.body["id"].as_str().unwrap().to_string()
@@ -1994,6 +2153,29 @@ async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {
     let numbers: Vec<i64> =
         versions.body["items"].as_array().unwrap().iter().map(|v| v["version"].as_i64().unwrap()).collect();
     assert_eq!(numbers, [4, 3]);
+}
+
+/// A custom accent saved under the Light and Dark rule, before the theme variants tightened the
+/// check for new colors: it stays in effect, may be saved again unchanged, and is no new choice.
+async fn an_accent_stored_before_the_theme_variants_stays(t: TestApp) {
+    let kept = "#8a8a8a";
+    let fresh = t.patch("/admin/settings/appearance.accent", json!({ "value": kept, "version": 0 }), &t.owner).await;
+    assert_eq!((fresh.code(), fresh.field()), ("validation", "value"), "{}", fresh.body);
+    // As an earlier version stored it, past today's check.
+    sqlx::query("INSERT INTO server_settings (key, value, version, updated_at) VALUES ('appearance.accent', $1, 1, 0)")
+        .bind(json!(kept).to_string())
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.clock.advance_ms(30_000);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!((public.status, &public.body["accent"]), (StatusCode::OK, &json!(kept)), "{}", public.body);
+    let again = t.patch("/admin/settings/appearance.accent", json!({ "value": kept, "version": 1 }), &t.owner).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    let other =
+        t.patch("/admin/settings/appearance.accent", json!({ "value": "#8b8b8b", "version": 2 }), &t.owner).await;
+    assert_eq!((other.code(), other.field()), ("validation", "value"), "{}", other.body);
+    assert_eq!(t.send(Method::GET, "/api/branding", None, None).await.body["accent"], json!(kept));
 }
 
 async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {

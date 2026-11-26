@@ -16,6 +16,8 @@ import {
   type TooltipAnchor,
   visibleBox,
 } from "../../lib/tooltipPlace";
+import { isMac } from "../../shortcuts/platform";
+import { shortcutSpoken } from "../../shortcuts/registry";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
@@ -37,8 +39,8 @@ export interface TimeSeriesChartProps {
   tooltip: TooltipMode;
   /** A value of series `index` as text, with its unit, decimals and mappings. */
   format: (index: number, value: number) => string;
-  /** A value axis tick as text. */
-  axisFormat: (value: number) => string;
+  /** A value axis tick as text; the axis' other ticks decide how many digits it takes. */
+  axisFormat: (value: number, ticks: readonly number[]) => string;
   /** Fixed ends of the value axis from the field options; open ends follow the data. */
   yRange?: { min?: number | undefined; max?: number | undefined };
 }
@@ -50,6 +52,9 @@ export const SERIES_COLORS = 8;
 export interface PlotArea {
   left: number;
   width: number;
+  /** The plot's top and height; annotations stand on its time axis where these are known. */
+  top?: number | undefined;
+  height?: number | undefined;
 }
 
 interface ChartShellProps {
@@ -261,7 +266,7 @@ export function ChartShell({
           onKeyDown={onKeyDown}
           onClick={(event) => {
             // Ctrl+click (Cmd+click on macOS) adds an annotation at that time.
-            if (onAdd !== undefined && (event.ctrlKey || event.metaKey)) {
+            if (onAdd !== undefined && (isMac() ? event.metaKey : event.ctrlKey)) {
               const rect = event.currentTarget.getBoundingClientRect();
               const x = Math.min(
                 Math.max(event.clientX - rect.left, plot.left),
@@ -297,7 +302,7 @@ export function ChartShell({
           </span>
           {onAdd === undefined ? null : (
             <span className="visually-hidden" id={annotateHintId}>
-              {t("annotations.addHint")}
+              {t("annotations.addHint", { click: shortcutSpoken("chart.annotateClick", language) })}
             </span>
           )}
           <span className="visually-hidden" role="status">

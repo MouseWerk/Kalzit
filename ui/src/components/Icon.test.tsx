@@ -1,8 +1,19 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ICON_NAMES, Icon, iconPath } from "./Icon";
+import {
+  FACET,
+  ICON_NAMES,
+  Icon,
+  type IconName,
+  iconFacet,
+  iconFills,
+  iconMotion,
+  iconPath,
+  iconSmallPath,
+  subpaths,
+} from "./Icon";
 
 /**
  * Keeps the icon set in one style (grid, size, centering, no duplicates) and its use accessible
@@ -189,21 +200,193 @@ describe("the icon set", () => {
     expect(duplicates).toEqual([]);
   });
 
-  it("renders one style: current color, round caps and joins, hidden from screen readers", () => {
+  it("keeps every lit facet and filled part inside its icon, every 12 px drawing on the grid", () => {
+    const stray = ICON_NAMES.flatMap((name) => {
+      const facet = iconFacet(name);
+      if (facet === undefined) return [];
+      const outer = box(iconPath(name));
+      const b = box(facet);
+      const inside =
+        b.x0 >= outer.x0 - 0.01 &&
+        b.x1 <= outer.x1 + 0.01 &&
+        b.y0 >= outer.y0 - 0.01 &&
+        b.y1 <= outer.y1 + 0.01;
+      return inside ? [] : [name];
+    });
+    expect(stray).toEqual([]);
+    const strayFills = ICON_NAMES.flatMap((name) =>
+      iconFills(name).flatMap((fill) => {
+        const b = box(fill);
+        return b.x0 >= 2.9 && b.y0 >= 2.9 && b.x1 <= 21.1 && b.y1 <= 21.1 ? [] : [name];
+      }),
+    );
+    expect(strayFills).toEqual([]);
+    const offGrid = ICON_NAMES.flatMap((name) => {
+      const small = iconSmallPath(name);
+      if (small === undefined) return [];
+      const b = box(small);
+      const ok =
+        b.x0 >= 2.9 &&
+        b.y0 >= 2.9 &&
+        b.x1 <= 21.1 &&
+        b.y1 <= 21.1 &&
+        Math.abs(b.cx - 12) <= 0.6 &&
+        Math.abs(b.cy - 12) <= 0.6;
+      return ok ? [] : [name];
+    });
+    expect(offGrid).toEqual([]);
+  });
+
+  it("keeps the facets for icons with a surface; controls stay pure line", () => {
+    const controls: IconName[] = ["plus", "minus", "close", "check", "chevron", "back", "more"];
+    expect(controls.filter((name) => iconFacet(name) !== undefined)).toEqual([]);
+  });
+
+  it("draws every icon as reviewed on board Icons.dc.html (outline, facet and 12 px drawing)", () => {
+    const drawings = Object.fromEntries(
+      ICON_NAMES.map((name) => [
+        name,
+        {
+          path: iconPath(name),
+          facet: iconFacet(name) ?? null,
+          fills: iconFills(name),
+          small: iconSmallPath(name) ?? null,
+        },
+      ]),
+    );
+    expect(drawings).toMatchSnapshot();
+  });
+
+  it("renders one style: current color, round caps, mitered joins, hidden from screen readers", () => {
     for (const name of ICON_NAMES) {
       const { container, unmount } = render(<Icon name={name} />);
       const svg = container.querySelector("svg");
       expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
       expect(svg?.getAttribute("stroke")).toBe("currentColor");
       expect(svg?.getAttribute("stroke-linecap")).toBe("round");
-      expect(svg?.getAttribute("stroke-linejoin")).toBe("round");
+      expect(svg?.getAttribute("stroke-linejoin")).toBe("miter");
+      // Sharp angles (star points, arrow tips) turn into bevels instead of spikes.
+      expect(svg?.getAttribute("stroke-miterlimit")).toBe("2");
       expect(svg?.getAttribute("aria-hidden")).toBe("true");
       expect(svg?.getAttribute("focusable")).toBe("false");
       for (const path of container.querySelectorAll("path")) {
         expect(path.getAttribute("fill") ?? "none").toMatch(/^(none|currentColor)$/);
       }
+      const facets = container.querySelectorAll(".icon__facet");
+      expect(facets.length).toBe(iconFacet(name) === undefined ? 0 : 1);
+      // The tint without the stylesheet; components.css sets it from --icon-facet-opacity.
+      for (const facet of facets) expect(facet.getAttribute("fill-opacity")).toBe("0.2");
       unmount();
     }
+  });
+});
+
+describe("icons in motion", () => {
+  it("moves whole pieces of the drawing: subpaths of the outline, the facet or filled parts", () => {
+    const stray = ICON_NAMES.flatMap((name) =>
+      (iconMotion(name)?.parts ?? []).flat().flatMap((piece) => {
+        if (piece === FACET) return iconFacet(name) === undefined ? [`${name}: no facet`] : [];
+        const whole = subpaths(iconPath(name)).includes(piece) || iconFills(name).includes(piece);
+        return whole ? [] : [`${name}: ${piece}`];
+      }),
+    );
+    expect(stray).toEqual([]);
+  });
+
+  it("gives the board's motions to its twelve icons, the star and every navigation entry", () => {
+    const motions = Object.fromEntries(
+      ICON_NAMES.flatMap((name) => {
+        const motion = iconMotion(name)?.motion;
+        return motion === undefined ? [] : [[name, motion]];
+      }),
+    );
+    expect(motions).toEqual({
+      dashboards: "lift",
+      explore: "turn",
+      bell: "ring",
+      settings: "slide",
+      search: "glint",
+      user: "nod",
+      network: "tilt",
+      dataSources: "drop",
+      plus: "quarter",
+      close: "quarter",
+      refresh: "spin",
+      check: "draw",
+      starFilled: "fill",
+      home: "lift",
+      file: "lift",
+      shieldCheck: "lift",
+      members: "nod",
+      ask: "tilt",
+    });
+  });
+
+  it("draws a moving icon as its still picture: the same outline, facet and fills", () => {
+    for (const name of ICON_NAMES) {
+      const { container, unmount } = render(<Icon name={name} />);
+      const svg = container.querySelector("svg");
+      const body = svg?.querySelector(":scope > g.icon__body");
+      expect(body, name).not.toBeNull();
+      const outline = [...container.querySelectorAll("path")]
+        .filter((path) => !path.classList.contains("icon__facet"))
+        .filter((path) => path.getAttribute("fill") !== "currentColor")
+        .map((path) => path.getAttribute("d") ?? "");
+      expect(subpaths(outline.join("")).sort(), name).toEqual(subpaths(iconPath(name)).sort());
+      const fills = [...container.querySelectorAll('path[fill="currentColor"]')]
+        .filter((path) => !path.classList.contains("icon__facet"))
+        .map((path) => path.getAttribute("d"));
+      expect(fills.sort(), name).toEqual([...iconFills(name)].sort());
+      const motion = iconMotion(name);
+      expect(svg?.getAttribute("data-motion") ?? undefined, name).toBe(motion?.motion);
+      expect(container.querySelectorAll(".icon__part").length, name).toBe(
+        motion === undefined ? 0 : (motion.parts?.length ?? 1),
+      );
+      unmount();
+    }
+  });
+
+  it("plays only on request and only where there is a motion; a 12 px drawing keeps its own", () => {
+    const { container, rerender } = render(<Icon name="check" />);
+    const svg = () => container.querySelector("svg");
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    // The check draws along its length.
+    expect(container.querySelector("path")?.getAttribute("pathLength")).toBe("1");
+    rerender(<Icon name="check" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    rerender(<Icon name="copy" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    rerender(<Icon name="close" size="small" />);
+    expect(svg()?.getAttribute("data-motion")).toBe("quarter");
+    expect(container.querySelector(".icon__part path")?.getAttribute("d")).toBe(
+      iconSmallPath("close"),
+    );
+  });
+
+  it("drops `play` when the motion has ended, so a re-render never replays it", () => {
+    const { container, rerender } = render(<Icon name="check" play />);
+    const svg = () => container.querySelector("svg");
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(container.querySelector(".icon__part") as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    rerender(<Icon name="check" play className="x" />);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    // Asked again (off, then on): it plays once more.
+    rerender(<Icon name="check" />);
+    rerender(<Icon name="check" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+  });
+
+  it("waits for every moving part before it drops `play`", () => {
+    const { container } = render(<Icon name="network" play />);
+    const svg = () => container.querySelector("svg");
+    const parts = [...container.querySelectorAll(".icon__part")];
+    expect(parts).toHaveLength(3);
+    fireEvent.animationEnd(parts[0] as Element);
+    fireEvent.animationEnd(parts[1] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(parts[2] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
   });
 });
 
@@ -239,7 +422,7 @@ const GLYPHS =
 const MARKER = /glyph-ok:/;
 
 /** Texts that may hold one: they name keys to press, not icons. */
-const CATALOG_ALLOWED: ReadonlySet<string> = new Set(["shell.palette.hint"]);
+const CATALOG_ALLOWED: ReadonlySet<string> = new Set<string>();
 
 /** The end of the JSX tag that starts at `start`: the first `>` outside braces. */
 function tagEnd(text: string, start: number): number {

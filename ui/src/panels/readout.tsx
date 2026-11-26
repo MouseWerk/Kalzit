@@ -10,6 +10,7 @@ import { FloatingTooltip, type FloatingTooltipHandle } from "../components/Float
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
 import { POINTER_GAP_PX, type TooltipAnchor, visibleBox } from "../lib/tooltipPlace";
+import { shortcutSpoken } from "../shortcuts/registry";
 import { Swatch } from "./fieldConfig/Legend";
 import type { TooltipMode } from "./fieldConfig/legendOptions";
 import "./panels.css";
@@ -164,7 +165,10 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
       }}
     >
       <span className="visually-hidden" id={hintId}>
-        {t("panels.readout.hint")}
+        {t("panels.readout.hint", {
+          ends: shortcutSpoken("chart.ends"),
+          close: shortcutSpoken("chart.readoutEnd"),
+        })}
       </span>
       <span className="visually-hidden" role="status">
         {spoken}

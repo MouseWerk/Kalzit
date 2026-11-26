@@ -601,6 +601,25 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
 
+## Administration overview
+
+`GET /api/orgs/{orgId}/admin/summary` (any member) gives the numbers on the administration's
+overview in one request. Each number is present only when the caller may open its section, by the
+permission that section's own list checks; the others are left out.
+
+| Field | Present with | Counts |
+| --- | --- | --- |
+| `members` | `users:read` | People in the organization (service accounts not counted) |
+| `teams` | `teams:read` | Teams of the organization |
+| `roles` | `roles:read` | The fixed roles and the organization's own |
+| `serviceAccounts` | `serviceaccounts:write` | Service accounts of the organization |
+| `users` | server administrator | People on the server |
+| `orgs` | server administrator | Organizations on the server |
+
+```json
+{ "members": 12, "teams": 3, "roles": 6, "serviceAccounts": 1 }
+```
+
 ## Service accounts
 
 Accounts for scripts and other systems (`server/src/routes/service_accounts.rs`,
@@ -780,8 +799,8 @@ new password, set by the user or an admin, revokes every device cookie of the ac
 new secrets key.
 
 A browser that is not the user's own need not become a known device. `POST /auth/login` takes
-`"forgetBrowser": true` next to `email` and `password` (the sign-in page's "This is not my
-browser"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
+`"forgetBrowser": true` next to `email` and `password` (the sign-in page's "Shared or borrowed
+computer"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
 `POST /auth/logout` keeps the device cookie by default, so the owner's own browser stays known;
 `POST /auth/logout?forgetBrowser=true` (or `=1`; the account menu's "Sign out and forget this
 browser") removes it too. The query is read leniently: other parameters or values never make

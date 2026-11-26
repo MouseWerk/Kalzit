@@ -14,3 +14,4 @@ node_modules/
 /.claude/
 /ui/e2e/.output/
 /deploy/docker/secrets/
+/ui/e2e/.visual-baselines/

@@ -287,12 +287,42 @@ describe("administration overview", () => {
     ).toEqual(["/settings/organization", "/admin/audit"]);
     const server = screen.getByRole("region", { name: "Server" });
     expect(within(server).getAllByRole("link")).toHaveLength(7);
+    // Server administrators see how many accounts and organizations the server has, with a
+    // spoken unit next to the bare number.
+    const users = within(server).getByRole("link", { name: /^Users/ });
+    await waitFor(() =>
+      expect(users.querySelector(".admin-row__count [aria-hidden]")?.textContent).toMatch(/^\d+$/),
+    );
+    expect(users.textContent).toMatch(/\d+ entries/);
+    expect(
+      within(server)
+        .getByRole("link", { name: /^Organizations/ })
+        .querySelector(".admin-row__count"),
+    ).not.toBeNull();
     // A server admin finds usage under Server, for every organization, not twice.
     expect(
       within(server)
         .getByRole("link", { name: /^Usage/ })
         .getAttribute("href"),
     ).toBe("/admin/usage");
+  });
+
+  it("shows how many entries a section holds, only where the member may open it", async () => {
+    await openAdmin("/admin", { permissions: ["users:read", "audit:read"], isServerAdmin: false });
+    const org = await screen.findByRole("region", { name: "Organization “Analytical Engines”" });
+    const members = within(org).getByRole("link", { name: /^Members/ });
+    await waitFor(() =>
+      expect(members.querySelector(".admin-row__count [aria-hidden]")?.textContent).toMatch(
+        /^\d+$/,
+      ),
+    );
+    // Audit has no number, and no server rows for a member who is no server admin.
+    expect(
+      within(org)
+        .getByRole("link", { name: /^Audit/ })
+        .querySelector(".admin-row__count"),
+    ).toBeNull();
+    expect(screen.queryByRole("region", { name: "Server" })).toBeNull();
   });
 
   it("lists usage in the organization for an organization admin", async () => {

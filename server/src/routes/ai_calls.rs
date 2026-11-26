@@ -277,12 +277,13 @@ async fn summarize_panel(
         .map_err(|e| ApiError::internal("ai", format!("stored steps of panel {panel_id}: {e}")))?;
     let hidden = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();
     let caller = caller(&ctx, &info, &prompts::SUMMARIZE);
+    let (interval_ms, max_data_points) = summary_limits(&run.limits, &body);
     let request = SummaryRun {
         title: Some(title),
         items: run.items,
         range: body.time_range,
-        interval_ms: body.interval_ms,
-        max_data_points: body.max_data_points,
+        interval_ms,
+        max_data_points,
         variables: run.variables,
         identifiers: Some(run.identifiers),
         language: body.language,
@@ -290,6 +291,12 @@ async fn summarize_panel(
         hidden,
     };
     summarize_run(&state, &ctx, &caller, request).await
+}
+
+/// The interval and data points a panel summary runs with: what the request asks, bounded by the
+/// panel's own query options as every run of the panel is (`query::PanelLimits`).
+fn summary_limits(limits: &super::query::PanelLimits, body: &PanelSummarizeBody) -> (Option<u64>, Option<u32>) {
+    limits.apply(body.time_range, body.interval_ms, body.max_data_points)
 }
 
 struct SummaryRun {
@@ -554,4 +561,36 @@ async fn respond(
     // Proxies such as nginx pass the events on as they come.
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::query::PanelLimits;
+
+    fn body(interval_ms: Option<u64>, max_data_points: Option<u32>) -> PanelSummarizeBody {
+        PanelSummarizeBody {
+            time_range: TimeRange { from: 0, to: 6 * 3_600_000 },
+            interval_ms,
+            max_data_points,
+            variables: BTreeMap::new(),
+            language: Language::default(),
+        }
+    }
+
+    #[test]
+    fn a_panel_summary_never_exceeds_the_panels_points_or_interval() {
+        let limits = PanelLimits { max_data_points: Some(100), min_interval_ms: Some(600_000), cache_ttl_ms: None };
+        // Asking for more points and a finer interval than the panel allows gets the panel's.
+        assert_eq!(summary_limits(&limits, &body(Some(1_000), Some(5_000))), (Some(600_000), Some(100)));
+        // Asking for nothing gets the panel's too.
+        assert_eq!(summary_limits(&limits, &body(None, None)), (Some(600_000), Some(100)));
+        // Less detail stays as asked.
+        assert_eq!(summary_limits(&limits, &body(Some(3_600_000), Some(10))), (Some(3_600_000), Some(10)));
+        // A panel without options leaves the request alone.
+        assert_eq!(
+            summary_limits(&PanelLimits::default(), &body(Some(1_000), Some(5_000))),
+            (Some(1_000), Some(5_000))
+        );
+    }
 }

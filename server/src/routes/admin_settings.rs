@@ -170,7 +170,9 @@ async fn patch(
     if let Some(reason) = locked_reason(def, &before) {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
     }
-    settings::validate(def, &body.value).map_err(|e| ApiError::validation(e).with_field("value"))?;
+    // The value in effect may be saved again as it is (an accent chosen under an earlier rule).
+    settings::validate_change(def, &body.value, &before.value)
+        .map_err(|e| ApiError::validation(e).with_field("value"))?;
     check_not_own(state, def.key, &body.value).await.map_err(|e| e.with_field("value"))?;
     check_org_change(state, user, info, headers, org_id, def.key, &body.value)
         .await
@@ -392,7 +394,7 @@ async fn preview(state: &AppState, org_id: Option<&str>, body: PreviewRequest) -
         let e = current(state, org_id, key).await?;
         let (status, message) = if let Some(reason) = locked_reason(def, &e) {
             (ImportStatus::Locked, Some(reason))
-        } else if let Err(reason) = settings::validate(def, value) {
+        } else if let Err(reason) = settings::validate_change(def, value, &e.value) {
             (ImportStatus::Invalid, Some(reason))
         } else if *value == e.value {
             (ImportStatus::Same, None)
@@ -478,7 +480,8 @@ async fn batch(
             .await?;
         match (&change.value, change.reset) {
             (Some(value), false) => {
-                settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
+                settings::validate_change(def, value, &before.value)
+                    .map_err(|e| ApiError::validation(e).with_field("changes"))?;
                 check_not_own(state, def.key, value).await.map_err(|e| e.with_field("changes"))?;
                 check_org_change(state, user, info, headers, org_id, def.key, value)
                     .await

@@ -80,12 +80,15 @@ export const SIGN_IN_ROW = "signin.page";
 /** Rows of the appearance section, in the order of the design: theme, accent, logo and name, ... */
 export const APPEARANCE_ROWS = [
   "appearance.default_theme",
+  "appearance.default_theme_light",
+  "appearance.default_theme_dark",
   "appearance.accent",
   LOGO_ROW,
   "appearance.product_name",
   "appearance.density",
   "appearance.font_size",
   "appearance.default_language",
+  "appearance.handbook",
   SIGN_IN_ROW,
   "signin.organization",
   "signin.server_name",
@@ -102,11 +105,14 @@ export const SECTIONS: readonly SectionDef[] = [
     keywords: "settings.section.appearance.keywords",
     keys: [
       "appearance.default_theme",
+      "appearance.default_theme_light",
+      "appearance.default_theme_dark",
       "appearance.accent",
       "appearance.product_name",
       "appearance.density",
       "appearance.font_size",
       "appearance.default_language",
+      "appearance.handbook",
       "signin.welcome",
       "signin.notice",
       "signin.organization",
@@ -255,6 +261,7 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.email.label",
     lead: "settings.section.email.lead",
     keywords: "settings.section.email.keywords",
+    keys: ["mail.mark_image"],
     visible: serverAdmin,
   },
   {

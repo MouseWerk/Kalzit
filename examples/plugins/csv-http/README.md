@@ -48,8 +48,9 @@ cargo run -p kalzit-plugin-tool --bin kalzit-plugin -- package \
   --out csv-http.kalzit-plugin.zip
 ```
 
-Ids under `dev.kalzit.` need Kalzit's own plugin key: the release workflow signs this example
-with it. To try your own build, change `id` in `kalzit-plugin.toml` to a name of your own (such
+The release packages contain the binary for `linux-x64`, `linux-arm64` and `windows-x64`; a
+build on your own machine covers its platform only (`--platform`). Ids under `dev.kalzit.`
+need Kalzit's own plugin key: the release workflow signs this example with it. To try your own build, change `id` in `kalzit-plugin.toml` to a name of your own (such
 as `dev.example.csv-http`) and in `src/main.rs` (`KIND`), sign it with your key, and add your
 public key on the server (Settings > Plugins). The plugin author guide
 (`docs/plugins/authoring.md`) has the whole way.

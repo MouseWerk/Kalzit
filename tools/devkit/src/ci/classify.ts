@@ -19,7 +19,11 @@ export interface JobInput {
   log?: string;
 }
 
-export type Category = "code" | "infra" | "cancelled" | "unknown";
+/**
+ * `follows`: a required check of ci.yml that only repeats the result of the matrix jobs it
+ * follows (`server (<os>)`, `ui (<os>)`, `e2e (<os>)`); the cause is in those jobs.
+ */
+export type Category = "code" | "infra" | "cancelled" | "unknown" | "follows";
 
 export interface Classification {
   category: Category;
@@ -130,6 +134,9 @@ const CODE_ERRORS: Rule[] = [
 const ASSERTION =
   /panicked at|assertion|assert_eq|assert_ne|^\s*left: |^\s*right: |Expected:|Received:|expect\(|AssertionError|toBe|toEqual|toHave|^\s*Error: /;
 
+/** The line a required check of ci.yml prints about the jobs it follows. */
+const FOLLOWS = /^Required check summary: /;
+
 function unique(items: string[], limit: number): string[] {
   return [...new Set(items)].slice(0, limit);
 }
@@ -152,6 +159,12 @@ export function classifyJob(job: JobInput): Classification {
   }
   const steps = job.steps ?? [];
   const lines = job.log === undefined ? [] : cleanLog(job.log);
+  const summary = lines.find((l) => FOLLOWS.test(l));
+  if (summary !== undefined) {
+    result.category = "follows";
+    result.reasons.push(summary.trim());
+    return result;
+  }
   const tests: string[] = [];
   const assertions: string[] = [];
   const codeReasons: string[] = [];
@@ -219,7 +232,11 @@ export function classifyJob(job: JobInput): Classification {
   return result;
 }
 
-/** Whether every failed job of a set failed for the runner's reasons (a rerun may help). */
+/**
+ * Whether every failed job of a set failed for the runner's reasons (a rerun may help). Checks
+ * that only follow other jobs do not count; a set of nothing but those is not the runner's.
+ */
 export function allInfra(classes: readonly Classification[]): boolean {
-  return classes.length > 0 && classes.every((c) => c.category === "infra");
+  const own = classes.filter((c) => c.category !== "follows");
+  return own.length > 0 && own.every((c) => c.category === "infra");
 }

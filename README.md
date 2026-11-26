@@ -7,19 +7,31 @@
 <p align="center"><strong>Your data, in the shape it already has.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/MouseWerk/Kalzit/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/MouseWerk/Kalzit/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/MouseWerk/Kalzit/releases/latest"><img src="https://img.shields.io/github/v/release/MouseWerk/Kalzit?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-lightgrey" alt="Platforms: Windows and Linux">
 </p>
 
-Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, Explore,
-analysis steps, data sources, organizations, teams and roles. Document databases (MongoDB) and
-graph databases (Neo4j, Memgraph, TigerGraph) are native data shapes next to SQL and metrics
-sources: a MongoDB result stays a set of documents, a Cypher result stays a graph of nodes and
-edges, and nothing is turned into a table unless you add that step yourself. The server is one
-binary with the web interface built in, and runs on Windows and Linux.
+<p align="center">
+  <a href="https://kalzit.mousewerk.de/">Website</a> ·
+  <a href="https://github.com/MouseWerk/Kalzit/releases/latest">Download</a> ·
+  <a href="docs/guide/README.md">User guide</a> ·
+  <a href="docs/releases/v0.7.5.md">Release notes</a>
+</p>
 
-> **Status: early development.** The current version is 0.7.4;
+Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, Explore,
+analysis steps, alerting, reports, data sources, organizations, teams and roles. Document
+databases (MongoDB) and graph databases (Neo4j, Memgraph, TigerGraph) are native data shapes next
+to SQL and metrics sources: a MongoDB result stays a set of documents, a Cypher result stays a
+graph of nodes and edges, a Tempo trace stays a tree of spans, and nothing is turned into a table
+unless you add that step yourself. The server is one binary with the web interface built in, and
+runs on Windows and Linux, also without internet access.
+
+Kalzit is for teams that run their own servers and want to look at all of their data in one
+place: operations and monitoring, but just as well business figures, document stores and graph
+models. It is free software under the AGPL-3.0, self-hosted only; there is no cloud offering.
+
+> **Status: early development.** The current version is 0.7.5;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
@@ -41,12 +53,13 @@ binary with the web interface built in, and runs on Windows and Linux.
 
 ## Features
 
-### Three native result shapes
+### Four native result shapes
 
-Every query answers in exactly one shape, `frame` (tables and time series), `documents` or
-`graph`. Panels say which shapes they understand, and the panel picker offers the fitting ones
-first. Turning documents into a table is an explicit, visible projection step that can be turned
-off, never a hidden conversion in the backend.
+Every query answers in exactly one shape, `frame` (tables and time series), `documents`, `graph`
+or `trace` (spans from Tempo and Jaeger). Panels say which shapes they understand, and the panel
+picker offers the fitting ones first. Turning documents into a table or a trace into a service
+map is an explicit, visible projection step that can be turned off, never a hidden conversion in
+the backend.
 
 ### Dashboards and panels
 
@@ -116,6 +129,34 @@ again at an interval.
   keeps firing; they carry reduced values only, never rows, documents or nodes.
 - Silences on labels with a required comment, a history of state changes and deliveries, and an
   alert badge on panels with the rule's threshold drawn in time series.
+- Notification policies: a tree that routes alerts by their labels, groups instances of several
+  rules into one message, and escalates a group that keeps firing in up to three steps. Contact
+  points for mail, webhooks, Slack and Microsoft Teams ([alerting guide](docs/guide/alerting.md)).
+
+### Traces
+
+- Tempo and Jaeger as data sources: a search form without a query language (service, operation,
+  tags, duration, status) that shows the TraceQL it stands for, the list of traces found and one
+  trace as a waterfall with the detail of each span.
+- A trace panel for dashboards, and steps on traces: filter spans, critical path, spans or traces
+  as a table, service map and span tree. Traces export as OTLP JSON
+  ([traces guide](docs/guide/traces.md)).
+
+### Sharing, reports and provisioning
+
+- Share a dashboard inside the organization with its time range and variables, or, when an
+  administrator allows it, as a public live link or a frozen snapshot for people without an
+  account. Every public link and snapshot has an expiry, can be revoked at any time and runs with
+  the creator's current rights ([sharing guide](docs/guide/sharing.md)).
+- Reports: a dashboard or selected panels sent by mail on a schedule, as PDF, CSV or both. Kalzit
+  draws the PDF itself on the server, without a browser; it is close to the screen, not
+  pixel-identical ([reports guide](docs/guide/reports.md)).
+- Provisioning as code: dashboards, data sources, custom roles and alert rules as YAML or JSON
+  files in Git, applied all or nothing with `kalzit provision plan|apply|export`; secrets stay
+  out of the files ([provisioning guide](docs/guide/provisioning.md)).
+- Import of Grafana dashboards from their JSON, in the interface or with
+  `kalzit provision import-grafana`, with a report of what was converted, approximated or skipped
+  ([import guide](docs/guide/grafana-import.md)).
 
 ### Data sources
 
@@ -144,10 +185,11 @@ again at an interval.
 | ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | Supported |
 | Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | Supported |
 | Couchbase 7.x (SQL++) | documents | Supported |
-| Tempo, Jaeger | various | Planned (M7) |
+| Tempo (TraceQL), Jaeger | trace, frame (trace lists, services, tags) | Supported |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and
-never returned by the API. Plugins add further kinds (see below).
+never returned by the API. The [data sources guide](docs/guide/data-sources.md) describes the
+settings and query language of each kind. Plugins add further kinds (see below).
 
 ### Plugins
 
@@ -167,8 +209,14 @@ never returned by the API. Plugins add further kinds (see below).
   without Landlock a plugin could read Kalzit's files. Its network stays closed through the
   seccomp filter or a network namespace; only if plugins are allowed without Landlock and the host
   offers neither, a plugin starts with an unlimited network and its page warns about it.
+- App plugins bring pages of their own, in a sealed-off frame with the rights of the person signed
+  in: they read dashboards and saved analyses and keep their own data, never secrets or write
+  access. Organization admins can block an app or limit it to a role.
 - A Rust SDK and the `kalzit-plugin` tool to package and sign, with two examples: "CSV and JSON
   over HTTP" and the panel "KPI tile" ([writing plugins](docs/plugins/authoring.md)).
+- Client SDKs for [TypeScript](docs/guide/sdk-typescript.md) and [Go](docs/guide/sdk-go.md):
+  typed access with a service account token to dashboards, data sources, alerts and queries in
+  their native shapes.
 
 ### AI
 
@@ -244,6 +292,14 @@ never returned by the API. Plugins add further kinds (see below).
   ([guide](docs/operations/high-availability.md)).
 - A query cache on the server, per person, so repeated loads and auto refresh do not hit the
   database again.
+- Scheduled backups of the database, certificates, plugins and `kalzit.toml` into a local folder
+  or an S3-compatible bucket, encrypted with the secrets key; `kalzit backup restore` puts one
+  back.
+- Works fully offline: nothing outside your network is needed, and every feature that reaches out
+  (AI providers, mail, sign-in providers, automatic certificates, the plugin catalog) is optional
+  and set up by an administrator ([offline and air-gapped operation](docs/guide/offline.md)).
+- Self-registration for allowed mail domains with admin approval, and CORS for chosen origins,
+  both off by default.
 - Administration > Instances lists the running Kalzit servers, which one leads and their
   versions. Guides for [backup and restore](docs/guide/backup.md),
   [upgrading](docs/guide/upgrading.md) and running behind a
@@ -273,8 +329,10 @@ never returned by the API. Plugins add further kinds (see below).
 
 ## Screenshots
 
-The same pictures as the gallery on the website: the current development version with the fictional
-example data of a data center, "Site Basalt" (every name and figure is invented). They follow your
+The same pictures as the gallery on the website, with the fictional example data of a data
+center, "Site Basalt" (every name and figure is invented). Most were taken in November 2026 from
+the development version of 0.6.0 and 0.7.0, so details of later screens can differ; traces,
+sharing, reports and provisioning have no pictures here yet. They follow your
 GitHub theme, dark or light. More screens are in the [user guide](docs/guide/README.md); how the
 pictures are made is in [docs/screenshots/README.md](docs/screenshots/README.md).
 
@@ -375,13 +433,18 @@ Your sign-ins, with this session marked and refused attempts with their reason.
 
 ## Quick start
 
-Run the container image (below), install the Windows service with the MSI package from the
-[releases](https://github.com/MouseWerk/Kalzit/releases) (see
-[the installation guide](docs/guide/installation.md#windows)), install the deb or rpm package
-on Linux, or build Kalzit from source. Each release has the Windows program for x64 and the
-Linux program with its deb and rpm for x64 and arm64
-([Linux packages](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm)). The result
-of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
+Every [release](https://github.com/MouseWerk/Kalzit/releases/latest) carries these downloads:
+
+| System | Download | Guide |
+|---|---|---|
+| Windows x64 | `kalzit-<version>-windows-x64.msi` (installs the Windows service), or the plain program `kalzit-<version>-windows-x64.exe` | [Windows](docs/guide/installation.md#windows) |
+| Debian, Ubuntu (x64, arm64) | `kalzit-<version>-linux-<arch>.deb` with a hardened systemd service | [deb and rpm](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm) |
+| Fedora, RHEL (x64, arm64) | `kalzit-<version>-linux-<arch>.rpm` with a hardened systemd service | [deb and rpm](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm) |
+| Other Linux (x64, arm64) | the plain program `kalzit-<version>-linux-<arch>` | [Linux without a package](docs/guide/linux-binary.md) |
+| Docker, Podman (amd64, arm64) | the container image, from ghcr.io or as `kalzit-<version>-image-linux-<arch>.tar.gz` | [Docker](#docker) |
+
+You can also build Kalzit from source (below). Either way the result is one binary, `kalzit`
+(`kalzit.exe` on Windows), with the web interface embedded.
 
 ### Docker
 
@@ -395,7 +458,7 @@ cosign-signed checksum file and loads it with `docker load` or `podman load`, as
 Either way the image is then called `ghcr.io/mousewerk/kalzit:<version>`:
 
 ```sh
-v=0.7.4   # the release you use
+v=0.7.5   # the release you use
 docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit "ghcr.io/mousewerk/kalzit:$v"
 docker exec kalzit kalzit setup-code     # the one-time setup code for the first start
 ```
@@ -595,20 +658,24 @@ skipped with a notice otherwise. Pull requests that change the UI visibly rerun
 `npm run screenshots` and commit the changed images. More in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#testing-contracts) and [ui/README.md](ui/README.md).
 
-**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs formatting, lints, unit and
-API tests, the UI checks and the Playwright end-to-end tests on both `ubuntu-latest` and
-`windows-latest`, plus PostgreSQL as Kalzit's own database, data sources against real servers in
-containers, and `cargo audit` and `npm audit`. A nightly job tests TigerGraph against a real
-instance.
+**CI** runs on the maintainer's machine with [`tools/local-ci`](tools/local-ci), on Windows and on
+Linux (WSL): formatting, lints, unit and API tests, the UI checks and the Playwright end-to-end
+tests, plus PostgreSQL as Kalzit's own database, data sources against real servers in containers,
+and `cargo audit` and `npm audit`. It tests each pull request merged onto the current `main` and
+reports the statuses `local/windows` and `local/linux`, which `main` requires. The workflows in
+[`.github/workflows/`](.github/workflows) build the releases, run nightly jobs (dependency
+audits, PostgreSQL, TigerGraph and the data warehouses against real instances) and can run the
+same checks on GitHub's runners by hand.
 
 ## Roadmap
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 63 of 68 plan items done. M7 Expansion: in progress, 1 of 7 areas done. M8 Analysis depth: planned. M9 Plugin store: planned."></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: done. M7 Expansion: done. M8 Analysis depth: planned. M9 Plugin store: planned. M10 Icon set: planned. M11 Multi-model and own data: planned."></picture>
 
-The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
-its plan that are merged, M7 its areas, one 0.7.x version each (alerting came with 0.7.0).
+The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json). A milestone counts as
+done once its last release is published; work merged into `main` but not yet released is not
+counted, and nothing on this list is promised for a date.
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -616,20 +683,26 @@ its plan that are merged, M7 its areas, one 0.7.x version each (alerting came wi
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
-| M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | Done |
+| M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the Ask chat | Done |
 | M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, recent sign-ins, mail and invitations, ACME, service accounts, high availability on PostgreSQL, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Done |
-| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | In progress |
-| M7 Expansion | Alerting, public links and snapshots, provisioning as code with Git and a CLI, scheduled PDF and CSV reports by mail, import of Grafana dashboards, further sources (Graphite, Redis, Oracle, traces, ArangoDB, Gremlin, Couchbase, BigQuery, Snowflake, Databricks) | In progress |
-| M8 Analysis depth | Deeper analysis and Explore, deeper variables, dashboard tabs, XY and map panels, forecast and outlier steps, queryless drill-down, graph analysis (algorithms, filters, schema, map layout), an MCP server, measured performance work with a benchmark suite in CI, feature follow-ups deferred from M6 | Planned |
+| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label); released as 0.6.0 | Done |
+| M7 Expansion | Alerting with notification policies, Slack and Teams (0.7.0 to 0.7.3); public links and snapshots, provisioning as code with Git and a CLI, scheduled PDF and CSV reports by mail, import of Grafana dashboards, traces as a fourth shape, further sources (Graphite, Redis, Oracle, Tempo, Jaeger, ArangoDB, Gremlin, Couchbase, BigQuery, Snowflake, Databricks), CORS, self-registration, scheduled backups, app plugins and SDKs (0.7.4 and 0.7.5) | Done |
+| M8 Analysis depth | Next. Graph analysis first (canvas, algorithms, pattern builder, time and explorations, scale, graph alerts), then deeper Explore and variables, dashboard tabs, XY and map panels, forecast and outlier steps, an MCP server, measured performance work with a benchmark suite, and follow-ups deferred from M6 | Planned |
 | M9 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
+| M10 Icon set | Kalzit's own animated icon set; runs next to M8 | Planned |
+| M11 Multi-model and own data | Multi-model sources in their native shapes (ArangoDB, SurrealDB, PostgreSQL with Apache AGE) and a built-in store for uploaded CSV, JSON, NDJSON and GraphML files, read-only to queries | Planned |
 
 ## Documentation
 
-- [docs/guide/](docs/guide/README.md): the user guide, one page per area: installation, Linux
-  without a package, HTTPS, reverse proxy, backup and restore, upgrading, getting started,
-  dashboards, panels, Explore, calculated fields and statistics, export, data sources, plugins, AI,
-  sign-in and security, and the administration.
+- [kalzit.mousewerk.de](https://kalzit.mousewerk.de/): the website, with an overview of the
+  published release, in English and German.
+- [docs/guide/](docs/guide/README.md): the user guide in English and German, one page per area:
+  installation, Linux without a package, HTTPS, reverse proxy, offline operation, backup and
+  restore, upgrading, getting started, dashboards, panels, Explore, saved analyses, calculated
+  fields and statistics, export, data sources, traces, alerting, sharing, reports, provisioning,
+  Grafana import, plugins, the SDKs, AI, sign-in and security, and the administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
+- [docs/process.md](docs/process.md): how changes go from a decision to a release.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.
 - [docs/api/](docs/api): the HTTP API: [access](docs/api/access.md),

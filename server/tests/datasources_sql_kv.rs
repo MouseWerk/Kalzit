@@ -182,6 +182,13 @@ fn field<'a>(result: &'a Value, name: &str) -> &'a Value {
 
 // ---- Graphite ----
 
+/// Sends lines in carbon's plaintext protocol (`path value timestamp`), which confirms nothing.
+async fn carbon_send(carbon: &str, lines: &str) {
+    let mut socket = tokio::net::TcpStream::connect(carbon).await.unwrap();
+    socket.write_all(lines.as_bytes()).await.unwrap();
+    socket.shutdown().await.unwrap();
+}
+
 /// Graphite: targets with functions and variables, tags, the schema, refused variable values.
 #[tokio::test]
 async fn graphite_renders_targets_and_lists_metrics() {
@@ -194,24 +201,33 @@ async fn graphite_renders_targets_and_lists_metrics() {
         lines.push_str(&format!("kalzit.test.requests {} {}\n", 10 + i, now - back));
         lines.push_str(&format!("kalzit.test.errors {} {}\n", i, now - back));
     }
-    let mut socket = tokio::net::TcpStream::connect(&carbon).await.unwrap();
-    socket.write_all(lines.as_bytes()).await.unwrap();
-    socket.shutdown().await.unwrap();
+    carbon_send(&carbon, &lines).await;
 
     let t = T::new().await;
     let id = t.create("graphite", json!({ "url": url }), json!({})).await;
     let h = t.health(&id).await;
     assert_eq!(h["ok"], true, "{h}");
 
-    // Carbon writes the series to disk shortly after it receives them.
-    let mut r = Value::Null;
-    for _ in 0..60 {
-        r = t.query(&id, json!({ "target": "sumSeries(kalzit.test.*)" }), json!({})).await;
-        if field(&r, "sumSeries(kalzit.test.*)").as_array().is_some_and(|v| v.iter().any(|x| x.is_number())) {
+    // Carbon writes each series to disk shortly after it receives it, one after the other: wait
+    // until both have points, since the sum below has a value as soon as either has. Carbon's
+    // plaintext protocol confirms nothing, and carbon drops the points of a new series for good
+    // when its limit of new series per minute (MAX_CREATES_PER_MINUTE, 50) is used up, which its
+    // own and statsd's series nearly do in a fresh container's first minute. So the points are
+    // sent again while a series is missing: the same values at the same times, which carbon
+    // stores once.
+    let has_points = |r: &Value, name: &str| field(r, name).as_array().is_some_and(|v| v.iter().any(|x| x.is_number()));
+    for attempt in 1..=120 {
+        let both = t.query(&id, json!({ "target": "kalzit.test.*" }), json!({})).await;
+        if has_points(&both, "kalzit.test.requests") && has_points(&both, "kalzit.test.errors") {
             break;
         }
+        assert!(attempt < 120, "carbon has not stored the points of both series after 2 minutes: {both}");
         tokio::time::sleep(Duration::from_secs(1)).await;
+        if attempt % 5 == 0 {
+            carbon_send(&carbon, &lines).await;
+        }
     }
+    let r = t.query(&id, json!({ "target": "sumSeries(kalzit.test.*)" }), json!({})).await;
     assert_eq!(types(&r).first().map(String::as_str), Some("time"), "{r}");
     assert!(field(&r, "sumSeries(kalzit.test.*)").as_array().unwrap().iter().any(|v| v.is_number()), "{r}");
 

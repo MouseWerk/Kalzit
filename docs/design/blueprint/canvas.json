@@ -53,7 +53,7 @@
     "Settings.dc.html": {
       "expand": "fill",
       "h": 1000,
-      "title": "Server settings",
+      "title": "Server settings (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 4400
@@ -61,7 +61,7 @@
     "Start.dc.html": {
       "expand": "fill",
       "h": 1040,
-      "title": "Start page",
+      "title": "Start page (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 2360
@@ -210,12 +210,108 @@
       "x": 24320,
       "y": 0
     },
+    "Icons.dc.html": {
+      "expand": "fill",
+      "h": 8320,
+      "title": "Icons (own icon language)",
+      "w": 1440,
+      "x": 25840,
+      "y": 0
+    },
+    "Shortcuts.dc.html": {
+      "expand": "fill",
+      "h": 11140,
+      "title": "Keyboard shortcut help",
+      "w": 1440,
+      "x": 27360,
+      "y": 0
+    },
+    "Auth.dc.html": {
+      "expand": "fill",
+      "h": 19090,
+      "title": "Sign-in and account pages (redesign)",
+      "w": 1440,
+      "x": 28880,
+      "y": 0
+    },
+    "Themes.dc.html": {
+      "expand": "fill",
+      "h": 14100,
+      "title": "Four more themes (mineral set)",
+      "w": 1440,
+      "x": 30400,
+      "y": 0
+    },
+    "Mails.dc.html": {
+      "expand": "fill",
+      "h": 15130,
+      "title": "Kalzit's mails",
+      "w": 1440,
+      "x": 31920,
+      "y": 0
+    },
+    "ParityEditors.dc.html": {
+      "expand": "fill",
+      "h": 15550,
+      "title": "Parity: editor additions",
+      "w": 1440,
+      "x": 33440,
+      "y": 0
+    },
+    "Logs.dc.html": {
+      "expand": "fill",
+      "h": 10050,
+      "title": "Logs",
+      "w": 1440,
+      "x": 34960,
+      "y": 0
+    },
+    "XYMapTrend.dc.html": {
+      "expand": "fill",
+      "h": 9600,
+      "title": "XY chart, map, trend",
+      "w": 1440,
+      "x": 36480,
+      "y": 0
+    },
+    "StartRedesign.dc.html": {
+      "expand": "fill",
+      "h": 14000,
+      "title": "Start, redesigned",
+      "w": 1440,
+      "x": 38000,
+      "y": 0
+    },
+    "MobileNav.dc.html": {
+      "expand": "fill",
+      "h": 5160,
+      "title": "Navigation on narrow screens",
+      "w": 1440,
+      "x": 39520,
+      "y": 0
+    },
+    "Panels.dc.html": {
+      "expand": "fill",
+      "h": 8960,
+      "title": "Panels: box, menu, Inspect, single view",
+      "w": 1440,
+      "x": 41040,
+      "y": 0
+    },
+    "SettingsRedesign.dc.html": {
+      "expand": "fill",
+      "h": 13920,
+      "title": "Settings: Verwaltung and Konto",
+      "w": 1440,
+      "x": 42560,
+      "y": 0
+    },
     "Graph082.dc.html": {
       "expand": "fill",
       "h": 19340,
       "title": "Graph: algorithms and paths (M8, 0.8.2)",
       "w": 1440,
-      "x": 33440,
+      "x": 44080,
       "y": 0
     }
   },
@@ -239,19 +335,19 @@
   },
   "order": [
     "Main.dc.html",
-    "DashboardEdit.dc.html",
-    "DashboardEditSelected.dc.html",
     "PanelEditor.dc.html",
-    "Start.dc.html",
     "Explore.dc.html",
-    "Settings.dc.html",
     "Updates.dc.html",
-    "DataSources.dc.html",
     "DataSourceNew.dc.html",
+    "DashboardEdit.dc.html",
+    "Start.dc.html",
+    "Settings.dc.html",
+    "DataSources.dc.html",
     "DataChat.dc.html",
+    "DashboardEditSelected.dc.html",
     "SavedAnalyses.dc.html",
-    "Graph.dc.html",
     "Access.dc.html",
+    "Graph.dc.html",
     "Plugins.dc.html",
     "AI.dc.html",
     "Identity.dc.html",
@@ -264,6 +360,18 @@
     "Settings075.dc.html",
     "Graph081.dc.html",
     "Handbook.dc.html",
+    "Icons.dc.html",
+    "Shortcuts.dc.html",
+    "Auth.dc.html",
+    "Themes.dc.html",
+    "Mails.dc.html",
+    "ParityEditors.dc.html",
+    "Logs.dc.html",
+    "XYMapTrend.dc.html",
+    "StartRedesign.dc.html",
+    "MobileNav.dc.html",
+    "Panels.dc.html",
+    "SettingsRedesign.dc.html",
     "Graph082.dc.html"
   ],
   "pages": [],

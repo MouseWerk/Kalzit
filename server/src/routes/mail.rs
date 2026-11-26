@@ -124,7 +124,7 @@ async fn save(
     let normalized = body.settings.map(SmtpSettings::normalized);
     let password = match &normalized {
         Some(s) => {
-            settings::check(s, true)?;
+            settings::check(s)?;
             let password = password_for(&state, s, sent).await?;
             // The same check a test mail makes, up to the sign-in; nothing is sent.
             // Each save connects and signs in: limited like connection tests.
@@ -173,6 +173,8 @@ async fn save(
             "host": s.host,
             "port": s.port,
             "security": s.security.name(),
+            // Plain SMTP: mails and a sign-in travel unencrypted, which the audit log names.
+            "encrypted": s.security != settings::Security::None,
             "signIn": !s.username.is_empty(),
             "passwordChanged": password_changed,
         }),
@@ -221,7 +223,7 @@ async fn test(
             if !matches!(effective.source, SettingsSource::Default | SettingsSource::Database) {
                 return Err(not_editable());
             }
-            settings::check(&s, true)?;
+            settings::check(&s)?;
             let password = password_for(&state, &s, sent).await?;
             (s, password)
         }
@@ -240,7 +242,24 @@ async fn test(
         .try_acquire(&key, &key, mono)
         .map_err(|wait| ApiError::rate_limited("too many test mails, wait a few minutes", wait))?;
     let lang = mail::language(&state, Some(&user.id)).await?;
-    let content = templates::test_mail(lang, &mail::host(&state));
+    let encryption = match (smtp_settings.security, lang) {
+        (settings::Security::None, templates::Lang::De) => "ohne Verschlüsselung".to_string(),
+        (settings::Security::None, templates::Lang::En) => "no encryption".to_string(),
+        (security, _) => security.name().to_uppercase(),
+    };
+    let server = format!("{}:{}, {}", smtp_settings.host, smtp_settings.port, encryption);
+    let sender = if smtp_settings.from_name.is_empty() {
+        smtp_settings.from_address.clone()
+    } else {
+        format!("{} <{}>", smtp_settings.from_name, smtp_settings.from_address)
+    };
+    let zone = mail::time_zone(&state, None).await?;
+    let sent = templates::moment(state.clock.now_ms(), zone.as_deref(), lang);
+    let content = templates::test_mail(
+        lang,
+        &mail::brand(&state).await?,
+        &templates::TestServer { server: &server, sender: &sender, sent: &sent },
+    );
     let effective = settings::Effective {
         settings: Some(smtp_settings),
         password,

@@ -91,7 +91,7 @@ test("searches traces without a query language and opens one as a waterfall", as
   await expect(page.getByRole("table", { name: t("explore.result") })).toBeVisible();
 });
 
-test("sets CORS at once with undo and checks an origin", async ({ page }) => {
+test("sets CORS at once with undo and checks an origin", { tag: "@smoke" }, async ({ page }) => {
   await signInOwner(page, "en");
   await page.goto("/settings/cors");
   const field = page.getByRole("textbox", {
@@ -158,7 +158,7 @@ test("creates an account as a visitor: address first, then the inbox", async ({ 
   ).toBeVisible();
   await shot(page, "register-start");
   await page.getByLabel(t("access.login.email")).fill("jonas.keller@kalzit.test");
-  await page.getByRole("button", { name: t("access.signup.title") }).click();
+  await page.getByRole("button", { name: t("access.signup.send") }).click();
   await expect(
     page.getByRole("heading", { name: t("serverAdmin.visitor.sentTitle") }),
   ).toBeVisible();

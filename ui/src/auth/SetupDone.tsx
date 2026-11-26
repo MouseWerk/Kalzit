@@ -19,8 +19,10 @@ function errorCode(error: unknown): ErrorCode {
 }
 
 /**
- * The last step of setup: the owner is signed in. The next steps as tiles (connect a source, try
- * the sample data, invite people), a summary of what was set up and the way to Start.
+ * The last step of setup: the owner is signed in. Three next steps as a list in the column
+ * (connect a source, try the sample data, invite people; board Auth.dc.html, frame 8B), what was
+ * set up (organization, owner, defaults), then the way to Start as the one main action. The
+ * summary stays until the board's finish list takes it over.
  */
 export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
   const { t } = useI18n();
@@ -34,92 +36,87 @@ export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
   });
 
   return (
-    <div className="access__card setup-done">
+    <div className="access__form">
       <h2 className="visually-hidden">{t("access.setup.done.next")}</h2>
-      <div className="setup-done__tiles">
-        <Link to="/data-sources/new" search={{}} className="next-tile next-tile--lead">
-          <span className="next-tile__icon">
-            <Icon name="dataSources" />
-          </span>
-          <h3>{t("access.setup.done.sourceTitle")}</h3>
-          <p>{t("access.setup.done.sourceText")}</p>
-          <span className="next-tile__go">
-            {t("access.setup.done.sourceGo")}
-            <Icon name="arrowRight" />
-          </span>
-        </Link>
-        <button
-          type="button"
-          className="next-tile"
-          aria-disabled={sample.isPending}
-          onClick={() => {
-            if (!sample.isPending) {
-              sample.mutate();
-            }
-          }}
-        >
-          <span className="next-tile__icon">
-            <Icon name="explore" />
-          </span>
-          <h3>{t("access.setup.done.sampleTitle")}</h3>
-          <p>{t("access.setup.done.sampleText")}</p>
-          <span className="next-tile__go">
-            {sample.isPending ? (
-              <>
-                <span className="access__spinner" aria-hidden="true" />
-                {t("access.setup.done.sampleBusy")}
-              </>
-            ) : (
-              <>
-                {t("access.setup.done.sampleGo")}
+      <ul className="next-list">
+        <li>
+          <Link to="/data-sources/new" search={{}} className="next-step">
+            <span className="next-step__icon" aria-hidden="true">
+              <Icon name="dataSources" />
+            </span>
+            <span className="next-step__title">{t("access.setup.done.sourceTitle")}</span>
+            <span className="next-step__text">{t("access.setup.done.sourceText")}</span>
+            <span className="next-step__go" aria-hidden="true">
+              <Icon name="arrowRight" />
+            </span>
+          </Link>
+        </li>
+        <li>
+          <button
+            type="button"
+            className="next-step"
+            aria-disabled={sample.isPending}
+            onClick={() => {
+              if (!sample.isPending) {
+                sample.mutate();
+              }
+            }}
+          >
+            <span className="next-step__icon" aria-hidden="true">
+              <Icon name="explore" />
+            </span>
+            <span className="next-step__title">{t("access.setup.done.sampleTitle")}</span>
+            <span className="next-step__text">
+              {sample.isPending
+                ? t("access.setup.done.sampleBusy")
+                : t("access.setup.done.sampleText")}
+            </span>
+            <span className="next-step__go" aria-hidden="true">
+              {sample.isPending ? (
+                <Icon name="refresh" className="icon--busy" />
+              ) : (
                 <Icon name="arrowRight" />
-              </>
-            )}
-          </span>
-        </button>
-        <Link to="/admin/members" className="next-tile">
-          <span className="next-tile__icon">
-            <Icon name="members" />
-          </span>
-          <h3>{t("access.setup.done.inviteTitle")}</h3>
-          <p>{t("access.setup.done.inviteText")}</p>
-          <span className="next-tile__go">
-            {t("access.setup.done.inviteGo")}
-            <Icon name="arrowRight" />
-          </span>
-        </Link>
-      </div>
+              )}
+            </span>
+          </button>
+        </li>
+        <li>
+          <Link to="/admin/members" className="next-step">
+            <span className="next-step__icon" aria-hidden="true">
+              <Icon name="members" />
+            </span>
+            <span className="next-step__title">{t("access.setup.done.inviteTitle")}</span>
+            <span className="next-step__text">{t("access.setup.done.inviteText")}</span>
+            <span className="next-step__go" aria-hidden="true">
+              <Icon name="arrowRight" />
+            </span>
+          </Link>
+        </li>
+      </ul>
+      <dl className="access-facts">
+        <dt>{t("access.setup.done.org")}</dt>
+        <dd>{org?.name}</dd>
+        <dt>{t("access.setup.done.owner")}</dt>
+        <dd>
+          {me.name} · {me.email}
+        </dd>
+        <dt>{t("access.setup.done.defaults")}</dt>
+        <dd>
+          {t("access.setup.done.defaultsValue", {
+            language: t(`language.${choices.language}`),
+            theme: t(`theme.${choices.theme}`),
+            zone: choices.timeZone,
+          })}
+        </dd>
+      </dl>
       <AccessAlert>
         {sample.error === null ? null : (
           <AccessNotice tone="danger" icon="alert" title={t(`errors.${errorCode(sample.error)}`)} />
         )}
       </AccessAlert>
-      <div className="setup-done__foot">
-        <dl className="setup-done__summary">
-          <dt>{t("access.setup.done.org")}</dt>
-          <dd>{org?.name}</dd>
-          <dt>{t("access.setup.done.owner")}</dt>
-          <dd>
-            {me.name} · {me.email}
-          </dd>
-          <dt>{t("access.setup.done.defaults")}</dt>
-          <dd>
-            {t("access.setup.done.defaultsValue", {
-              language: t(`language.${choices.language}`),
-              theme: t(`theme.${choices.theme}`),
-              zone: choices.timeZone,
-            })}
-          </dd>
-        </dl>
-        <Link to="/" className="button button--secondary">
-          {t("access.setup.done.toStart")}
-          <Icon name="arrowRight" />
-        </Link>
-      </div>
-      <p className="setup-done__note">
-        <Icon name="check" />
-        <span>{t("access.setup.done.codeDeleted")}</span>
-      </p>
+      <Link to="/" className="button button--primary button--block access__submit">
+        {t("access.setup.done.toStart")}
+      </Link>
     </div>
   );
 }

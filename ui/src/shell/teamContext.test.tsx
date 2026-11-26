@@ -78,7 +78,10 @@ describe("team spaces on the Dashboards page", () => {
     const server = setup([OPS, SALES]);
     const { user } = renderApp("/dashboards");
     await screen.findByRole("link", { name: "Network load" });
-    expect(folderNames()).toEqual(["All dashboards", "Operations space", "General"]);
+    // "All dashboards" leads the views above the folders; the tree holds the folders alone.
+    expect(folderNames()).toEqual(["Operations space", "General"]);
+    const views = screen.getByRole("navigation", { name: "Show dashboards" });
+    expect(within(views).getByRole("link", { name: /^All dashboards/ })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Deals" })).toBeNull();
     // The space carries the team mark for screen readers too.
     const tree = screen.getByRole("navigation", { name: "Folders" });
@@ -90,7 +93,7 @@ describe("team spaces on the Dashboards page", () => {
     await user.click(screen.getByRole("button", { name: "Organization MouseWerk Operations" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "All areas" }));
     await screen.findByRole("link", { name: "Deals" });
-    expect(folderNames()).toEqual(["All dashboards", "General", "Operations space", "Sales space"]);
+    expect(folderNames()).toEqual(["General", "Operations space", "Sales space"]);
   });
 
   it("creates a team space for a team the member maintains", async () => {

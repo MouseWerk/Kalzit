@@ -10,7 +10,7 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatUnit, joinFormatted } from "../fieldConfig/units";
+import { axisTickFormat } from "../fieldConfig/units";
 import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
@@ -121,13 +121,42 @@ function TimeSeriesPanel({
       format={(index, value) =>
         displayText(displayValue(value, "number", series[index]?.options ?? {}, language))
       }
-      axisFormat={(value) => joinFormatted(formatUnit(value, axisUnit, axisDecimals, language))}
+      // An arrow over plain values, which the compiler keeps while unit, decimals and language
+      // stay. A formatter made by a call here was made again with everything else the panel
+      // works out, also for a new time range object (every drop of a dragged panel), and a new
+      // formatter has uPlot draw the chart again (a long task per drop at 4x CPU throttling).
+      axisFormat={(value, ticks) => formatTick(value, ticks, axisUnit, axisDecimals, language)}
       yRange={{
         min: config.defaults.min ?? (percent ? (negative ? -100 : 0) : undefined),
         max: config.defaults.max ?? (percent ? 100 : undefined),
       }}
     />
   );
+}
+
+/** Tick formats by unit, decimals, language and set of ticks: the chart asks tick by tick. */
+const tickFormats = new Map<string, (value: number) => string>();
+/** Enough for the charts on a dashboard; past it the cache starts over. */
+const MAX_TICK_FORMATS = 256;
+
+/** A value axis tick as text; the axis' other ticks decide how many digits it takes. */
+function formatTick(
+  value: number,
+  ticks: readonly number[],
+  unit: string | undefined,
+  decimals: number | undefined,
+  language: string,
+): string {
+  const key = `${unit ?? ""}\u0000${decimals ?? ""}\u0000${language}\u0000${ticks.join(",")}`;
+  let format = tickFormats.get(key);
+  if (format === undefined) {
+    if (tickFormats.size >= MAX_TICK_FORMATS) {
+      tickFormats.clear();
+    }
+    format = axisTickFormat(ticks, unit, decimals, language);
+    tickFormats.set(key, format);
+  }
+  return format(value);
 }
 
 function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOptions>) {
