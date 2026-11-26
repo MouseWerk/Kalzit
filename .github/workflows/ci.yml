@@ -407,10 +407,14 @@ jobs:
           cluster.routing.allocation.disk.threshold_enabled: "false"
           OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
         ports: ["9201:9200"]
+      # With Graph Data Science and Memgraph with MAGE, so the graph algorithm steps run in the
+      # libraries (KALZIT_TEST_GRAPH_LIBRARIES); the image carries the GDS release of its Neo4j
+      # version (2026.10.0) and installs it at start, offline. Kalzit itself never needs either.
       neo4j:
         image: neo4j:2026.10.0-community
         env:
           NEO4J_AUTH: neo4j/kalzit-ci-neo4j
+          NEO4J_PLUGINS: '["graph-data-science"]'
           # Without limits Neo4j sizes its heap and page cache from the runner's whole memory,
           # next to a dozen other services and the build: the runner then starves and is lost.
           NEO4J_server_memory_heap_initial__size: 256m
@@ -418,7 +422,7 @@ jobs:
           NEO4J_server_memory_pagecache_size: 128m
         ports: ["7687:7687"]
       memgraph:
-        image: memgraph/memgraph:3.14.0
+        image: memgraph/memgraph-mage:3.14.0
         ports: ["7688:7687"]
       clickhouse:
         image: clickhouse/clickhouse-server:25.8
@@ -456,6 +460,7 @@ jobs:
       KALZIT_TEST_OPENSEARCH_URL: http://127.0.0.1:9201
       KALZIT_TEST_NEO4J_URL: bolt://neo4j:kalzit-ci-neo4j@127.0.0.1:7687
       KALZIT_TEST_MEMGRAPH_URL: bolt://127.0.0.1:7688
+      KALZIT_TEST_GRAPH_LIBRARIES: "1"
       KALZIT_TEST_MONGODB_URL: mongodb://kalzit:kalzit-ci-mongo@127.0.0.1:27017/?authSource=admin
       KALZIT_TEST_CLICKHOUSE_URL: http://kalzit:kalzit-ci-clickhouse@127.0.0.1:8123/kalzit
       KALZIT_TEST_INFLUXDB2_URL: http://kalzit:kalzit-ci-influx-token@127.0.0.1:8086/kalzit
@@ -524,7 +529,7 @@ jobs:
             if curl -fs "http://127.0.0.1:9201/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null; then
               os=ok
             fi
-            if docker exec "${{ job.services.neo4j.id }}" cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN 1" > /dev/null 2>&1; then neo4j=ok; fi
+            if docker exec "${{ job.services.neo4j.id }}" cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN gds.version()" > /dev/null 2>&1; then neo4j=ok; fi
             if timeout 1 bash -c "</dev/tcp/127.0.0.1/7688" 2> /dev/null; then memgraph=ok; fi
             if curl -fs http://127.0.0.1:8123/ping > /dev/null; then clickhouse=ok; fi
             if curl -fs http://127.0.0.1:8086/health > /dev/null; then influx2=ok; fi

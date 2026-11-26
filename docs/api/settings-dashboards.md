@@ -1207,7 +1207,7 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
 | --- | --- | --- | --- |
 | PageRank | `gds.pageRank` | `pagerank.get` over `project()`, `out` without `weight` and without nodes lacking edges | server |
 | Eigenvector, closeness, harmonic | `gds.eigenvector`, `gds.closeness`, `gds.closeness.harmonic` | server | server |
-| Betweenness | `gds.betweenness` | `betweenness_centrality.get` over `project()` | server |
+| Betweenness | `gds.betweenness` | server (always: a running MAGE procedure cannot be stopped) | server |
 | Louvain, Leiden | `gds.louvain` (not with `resolution`), `gds.leiden` | `community_detection.get_subgraph`, `leiden_community_detection.get_subgraph` (not with `resolution` or `maxIterations`) | server |
 | Label propagation | `gds.labelPropagation` | server | server |
 | Weakly, strongly connected | `gds.wcc`, `gds.scc` | `weakly_connected_components.get` over `project()`; strongly: server | server |
@@ -1222,11 +1222,13 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
 | Link prediction | server | server | server |
 | Merge nodes, aggregate along | server | server | server |
 
-- In Neo4j, Kalzit projects exactly the result's nodes (by id) and the edges between them into
-  GDS's in-memory catalog under a name made for the step (`kalzit-algorithm-<uuid>`), runs the
-  algorithm's `stream` mode and drops the projection right after, also when the stream failed;
-  one such step per source at a time. Projections left by a broken connection are dropped by the
-  next step's sweep. These are fixed queries of Kalzit (`cypher::check_fixed`); a user's query
+- In Neo4j, Kalzit projects exactly the result's nodes and the edges between them into GDS's
+  in-memory catalog, seeking the edges and the nodes without edges by their ids (a node's other
+  relationships are never read), under a name made for the step (`kalzit-algorithm-<uuid>`), runs
+  the algorithm's `stream` mode and drops the projection right after, also when the stream
+  failed; one such step per source at a time. Projections left by a broken connection are
+  dropped by a later step's sweep once they are older than the longest time a request may take
+  (one hour) plus ten minutes. These are fixed queries of Kalzit (`cypher::check_fixed`); a user's query
   still may not project or drop a graph. In Memgraph the result's nodes and edges go to a
   `*_subgraph` procedure as lists or through `project()`, in one read query; paths use
   Memgraph's own expansions, whose filter admits only the result's edges and nodes.
@@ -1252,8 +1254,10 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
   `algorithm.option` (an option the library does not offer), `algorithm.isolated_nodes`
   (Memgraph's projection holds no nodes without edges), `algorithm.empty` (no edges),
   `algorithm.library_failed` (the library failed or did not answer in time; the server computed
-  the same step; only when the library lacks what the step needs, an unknown procedure or a
-  syntax it does not take, the source is not asked again for that step for ten minutes),
+  the same step; when the library lacks what the step needs, an unknown procedure or function or
+  a syntax it does not take, the source is not asked again for that step for ten minutes; when
+  it ran out of time, not for that step on results of the same size or larger, by powers of two
+  of nodes plus edges; errors the data causes are not remembered),
   `algorithm.place_server` (the step asked for it). An answer of the library Kalzit cannot read
   is not replaced: the step fails with `steps.algorithm_answer`, `ranIn: "database"` and
   `reason: "algorithm.answer_unreadable"`, and may be run with `"place": "server"`.

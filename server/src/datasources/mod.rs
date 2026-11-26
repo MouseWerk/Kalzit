@@ -2324,7 +2324,10 @@ async fn graph_steps_after(
                     break;
                 }
                 Ok(Err(why)) => reason = Some(why),
-                Ok(Ok(job)) if conn.pushdown.refused(&job.memo_key()) => {
+                Ok(Ok(job))
+                    if conn.pushdown.refused(&job.memo_key())
+                        || job.slow_keys().any(|key| conn.pushdown.refused(&key)) =>
+                {
                     reason = Some(library::reason::LIBRARY_FAILED);
                 }
                 Ok(Ok(job)) => {
@@ -2353,19 +2356,27 @@ async fn graph_steps_after(
                                 break;
                             }
                         },
-                        // Only a library that lacks what the step needs is not asked again for a
-                        // while (the memo's ten minutes); time, memory or a lost connection may
-                        // pass, so the next run asks the library again.
+                        // A library that lacks what the step needs is not asked again for a while
+                        // (the memo's ten minutes), nor one that ran out of time for results of
+                        // this size and larger (a procedure that cannot be stopped may still be
+                        // running); memory or a lost connection may pass, so the next run asks
+                        // the library again.
                         Ok(Err(e)) => {
                             let detail = e.detail();
                             if detail.reason == "algorithm.unsupported" {
                                 conn.pushdown.remember(&job.memo_key());
+                            } else if detail.reason == "algorithm.timeout" {
+                                conn.pushdown.remember(&job.slow_key());
                             }
                             detail.message
                         }
-                        Err(_) => format!("no answer within {} s", time.as_secs()),
+                        Err(_) => {
+                            conn.pushdown.remember(&job.slow_key());
+                            format!("no answer within {} s", time.as_secs())
+                        }
                     };
                     tracing::debug!("graph algorithm not run in the source: {}", scrub(&why, std::iter::empty()));
+
                     reason = Some(library::reason::LIBRARY_FAILED);
                 }
             }

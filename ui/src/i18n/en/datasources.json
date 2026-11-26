@@ -1514,6 +1514,7 @@
   "datasources.reason.steps.algorithm_answer": "The database answered the step in an unexpected form. You can compute it on the server.",
   "datasources.reason.algorithm.no_library": "The database has no algorithm library for this step. Kalzit computes it on the server.",
   "datasources.reason.algorithm.unsupported": "The database’s algorithm library cannot run this step: {detail}. Kalzit computes it on the server; with the library installed or updated, the database computes it.",
+  "datasources.reason.algorithm.timeout": "The database’s algorithm library did not finish this step in time. Kalzit computes it on the server and, for a while, also for results of this size and larger.",
   "datasources.reason.algorithm.local": "Computed on the server: the step needs only the result.",
   "datasources.reason.algorithm.not_in_library": "Computed on the server: the database’s library has no variant of this step for a part of the graph.",
   "datasources.reason.algorithm.enumerating": "Computed on the server: listing steps keep their count and length limits there.",

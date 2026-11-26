@@ -1299,13 +1299,24 @@ fn algorithm_setup(cases: &Value) -> Vec<String> {
     statements
 }
 
+/// Whether the graph databases of the tests have their algorithm libraries (Neo4j with Graph
+/// Data Science, Memgraph with MAGE), as in CI (`KALZIT_TEST_GRAPH_LIBRARIES=1`). Then every
+/// step the library takes must run there; without the flag a missing library is no failure.
+fn graph_libraries() -> bool {
+    std::env::var("KALZIT_TEST_GRAPH_LIBRARIES").is_ok_and(|v| v == "1")
+}
+
 /// The algorithm cases of `conformance.json` in the database: where the source has its library
 /// (Neo4j GDS, Memgraph MAGE) the step runs there and passes the case's checks for a library;
 /// without it, or where the library has no read-only variant limited to the result, it runs on
 /// the server and passes them exactly, with the reason in its place. Merging nodes by label is
-/// left out: the test nodes carry the label `KalzitAlgo` too.
-async fn graph_algorithms(t: &T, id: &str) {
+/// left out: the test nodes carry the label `KalzitAlgo` too. With `graph_libraries()`, every
+/// step that `library::route` sends to the library ran there (none fell back to the server),
+/// and at least `min_in_database` of them did.
+async fn graph_algorithms(t: &T, id: &str, lib: kalzit::analysis::algo::library::Library, min_in_database: usize) {
+    use kalzit::analysis::algo::library;
     let cases: Value = serde_json::from_str(include_str!("../src/analysis/conformance.json")).unwrap();
+    let required = graph_libraries();
     let mut in_database = 0;
     for case in cases["algorithms"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
@@ -1344,22 +1355,44 @@ async fn graph_algorithms(t: &T, id: &str) {
             continue;
         }
         assert!(place["error"].is_null(), "{name}: {r}");
-        let library = place["ranIn"] == "database";
-        if library {
+        let in_library = place["ranIn"] == "database";
+        if in_library {
             in_database += 1;
         } else {
             assert!(place["reason"].is_string(), "{name}: a step on the server says why: {r}");
         }
+        if required {
+            assert_ne!(place["reason"], library::reason::LIBRARY_FAILED, "{name}: the library failed: {r}");
+            let kind = kalzit::analysis::parse_step(&step).unwrap().kind;
+            let result: kalzit::shapes::GraphSet = serde_json::from_value(plain["result"]["graph"].clone()).unwrap();
+            let routed = library::route(Some(lib), &kind, &result, &Default::default());
+            if matches!(routed, Ok(Ok(_))) {
+                assert!(in_library, "{name}: the library takes this step, but it ran on the server: {r}");
+            }
+        }
+        let library_answer = in_library;
         let summary: kalzit::shapes::StepSummary = serde_json::from_value(place["summary"].clone()).unwrap();
         let graph: kalzit::shapes::GraphSet = match r["result"]["shape"].as_str() {
             Some("graph") => serde_json::from_value(r["result"]["graph"].clone()).unwrap(),
             _ => kalzit::shapes::GraphSet::default(),
         };
-        kalzit::analysis::algo::conformance::check_case(case, &graph, Some(&summary), library)
-            .unwrap_or_else(|e| panic!("{e} ({}): {r}", if library { "in the database" } else { "on the server" }));
+        kalzit::analysis::algo::conformance::check_case(case, &graph, Some(&summary), library_answer).unwrap_or_else(
+            |e| panic!("{e} ({}): {r}", if library_answer { "in the database" } else { "on the server" }),
+        );
     }
     eprintln!("graph algorithm cases computed in the database: {in_database}");
+    if required {
+        assert!(
+            in_database >= min_in_database,
+            "{lib:?}: {in_database} cases ran in the library, at least {min_in_database} expected"
+        );
+    }
 }
+
+/// The fewest conformance cases that must run in each library with `graph_libraries()`; a change
+/// that sends fewer steps there lowers these on purpose.
+const MIN_IN_GDS: usize = 28;
+const MIN_IN_MAGE: usize = 15;
 
 #[tokio::test]
 async fn neo4j_runs_graph_algorithms() {
@@ -1370,7 +1403,7 @@ async fn neo4j_runs_graph_algorithms() {
     let t = T::new(None).await;
     let (settings, secrets) = graph_settings(&url, json!({}));
     let id = t.create("neo4j", settings, secrets).await;
-    graph_algorithms(&t, &id).await;
+    graph_algorithms(&t, &id, kalzit::analysis::algo::library::Library::Gds, MIN_IN_GDS).await;
     t.finish().await;
 }
 
@@ -1383,7 +1416,7 @@ async fn memgraph_runs_graph_algorithms() {
     let t = T::new(None).await;
     let (settings, secrets) = graph_settings(&url, json!({ "allowWriteCapableUser": true }));
     let id = t.create("memgraph", settings, secrets).await;
-    graph_algorithms(&t, &id).await;
+    graph_algorithms(&t, &id, kalzit::analysis::algo::library::Library::Mage, MIN_IN_MAGE).await;
     t.finish().await;
 }
 

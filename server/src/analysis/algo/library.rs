@@ -64,13 +64,38 @@ pub struct Job {
     pub numeric: bool,
     /// The most rows one run may answer.
     pub max_rows: usize,
+    /// The result's nodes and edges together, the size the job computes on.
+    pub size: usize,
 }
 
 impl Job {
-    /// What the source remembers when the job failed, so it is not tried again for a while.
+    /// What the source remembers when the library lacks what the job needs, so it is not tried
+    /// again for a while.
     pub fn memo_key(&self) -> Value {
         json!({ "algorithm": self.runs, "project": self.project })
     }
+
+    /// What the source remembers when the job ran out of time: the job and its size class (the
+    /// power of two of nodes plus edges), so neither it nor a larger result of the same step is
+    /// sent to the library again for a while, while smaller results still are.
+    pub fn slow_key(&self) -> Value {
+        self.slow_key_of(size_class(self.size))
+    }
+
+    /// The slow keys of this job's size class and every smaller one; any of them remembered
+    /// means the library was too slow for a result no larger than this one.
+    pub fn slow_keys(&self) -> impl Iterator<Item = Value> + '_ {
+        (0..=size_class(self.size)).map(|class| self.slow_key_of(class))
+    }
+
+    fn slow_key_of(&self, class: u32) -> Value {
+        json!({ "slow": self.memo_key(), "class": class })
+    }
+}
+
+/// The size class of a result: the number of bits of its size, 0 for none.
+fn size_class(size: usize) -> u32 {
+    usize::BITS - size.leading_zeros()
 }
 
 /// The start value of randomised library runs when the step gives none (board 0.8.2: fixed).
@@ -133,7 +158,9 @@ fn vector(var: &str) -> String {
     )
 }
 
-/// The GDS projection of the result's nodes and edges.
+/// The GDS projection of the result's nodes and edges. The edges are sought by their ids (no
+/// node's other relationships are read, which matters for nodes with many of them), the nodes
+/// without any of the result's edges (`$lone`) by theirs; each becomes one row of `n`, `r`, `m`.
 fn gds_project(numeric: bool, orientation: Orientation, weight: bool, vectors: bool) -> String {
     let key = key(numeric);
     let (source, target) = match orientation {
@@ -145,20 +172,21 @@ fn gds_project(numeric: bool, orientation: Orientation, weight: bool, vectors: b
         data.push("relationshipProperties: {w: coalesce(toFloat(r[$weight]), 1.0)}".to_string());
     }
     if vectors {
-        let (s, t) = match orientation {
-            Orientation::Reverse => ("coalesce(m, n)", "n"),
-            _ => ("n", "m"),
-        };
-        data.push(format!("sourceNodeProperties: {{kz_v: {}}}", vector(s)));
-        data.push(format!("targetNodeProperties: {{kz_v: {}}}", vector(t)));
+        data.push(format!("sourceNodeProperties: {{kz_v: {}}}", vector(source)));
+        data.push(format!("targetNodeProperties: {{kz_v: {}}}", vector(target)));
     }
     let config = match orientation {
         Orientation::Undirected => "{undirectedRelationshipTypes: ['*']}",
         _ => "{}",
     };
     format!(
-        "MATCH (n) WHERE {key}(n) IN $nodes \
-         OPTIONAL MATCH (n)-[r]->(m) WHERE {key}(r) IN $rels \
+        "MATCH (__kz_a)-[__kz_r]->(__kz_b) WHERE {key}(__kz_r) IN $rels \
+         WITH collect({{n: __kz_a, r: __kz_r, m: __kz_b}}) AS __kz_e \
+         OPTIONAL MATCH (__kz_x) WHERE {key}(__kz_x) IN $lone \
+         WITH __kz_e, collect(__kz_x) AS __kz_l \
+         WITH __kz_e + [__kz_y IN __kz_l | {{n: __kz_y, r: null, m: null}}] AS __kz_all \
+         UNWIND __kz_all AS __kz_p \
+         WITH __kz_p.n AS n, __kz_p.r AS r, __kz_p.m AS m \
          WITH gds.graph.project($graph, {source}, {target}, {{{data}}}, {config}) AS g \
          RETURN g.nodeCount AS nodes",
         data = data.join(", ")
@@ -171,16 +199,15 @@ fn gds_nodes(numeric: bool, call: &str, column: &str) -> String {
     format!("CALL {call} YIELD nodeId, {column} RETURN {key}(gds.util.asNode(nodeId)) AS id, {column} AS value")
 }
 
-/// The MAGE subgraph as lists: `nodes` and the result's edges between them, `rels`.
+/// The MAGE subgraph as lists: `nodes` and the result's edges between them, `rels`, both sought
+/// by their ids (no node's other relationships are read).
 const MAGE_LISTS: &str = "MATCH (n) WHERE id(n) IN $nodes \
      WITH collect(n) AS nodes \
-     UNWIND nodes AS __kz_x \
-     OPTIONAL MATCH (__kz_x)-[r]->() WHERE id(r) IN $rels \
+     OPTIONAL MATCH ()-[r]->() WHERE id(r) IN $rels \
      WITH nodes, collect(r) AS rels ";
 
-/// The MAGE projection of the result's edges, `graph`.
-const MAGE_PROJECT: &str = "MATCH (n) WHERE id(n) IN $nodes \
-     MATCH p = (n)-[r]->() WHERE id(r) IN $rels \
+/// The MAGE projection of the result's edges, `graph`, sought by their ids.
+const MAGE_PROJECT: &str = "MATCH p = ()-[r]->() WHERE id(r) IN $rels \
      WITH project(p) AS graph ";
 
 /// The filter of Memgraph's path expansions: only the result's edges between its nodes.
@@ -195,12 +222,15 @@ fn mage_pattern(direction: Direction, a: &str, expansion: &str, b: &str) -> Stri
     }
 }
 
-/// The ids of the result's nodes and of the edges between them, and whether they are all numbers.
-fn ids(graph: &GraphSet, topo: &Topo) -> (Vec<String>, Vec<String>, bool) {
+/// The ids of the result's nodes, of the edges between them and of the nodes without any of
+/// those edges, and whether they are all numbers.
+fn ids(graph: &GraphSet, topo: &Topo) -> (Vec<String>, Vec<String>, Vec<String>, bool) {
     let nodes: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
     let rels: Vec<String> = topo.edge_at.iter().map(|at| graph.edges[*at].id.clone()).collect();
+    let lone: Vec<String> =
+        (0..topo.n).filter(|v| topo.out[*v].is_empty() && topo.inn[*v].is_empty()).map(|v| nodes[v].clone()).collect();
     let numeric = nodes.iter().chain(&rels).all(|id| id.parse::<i64>().is_ok());
-    (nodes, rels, numeric)
+    (nodes, rels, lone, numeric)
 }
 
 /// Whether the step runs in `library`, and how; else why not. The graph's size and weights are
@@ -213,6 +243,17 @@ pub fn route(
 ) -> Result<Result<Job, &'static str>, Detail> {
     check_size(kind, graph, limits)?;
     let topo = Topo::of(graph, kind)?;
+    // A node the step names must be in the result, in the library as on the server.
+    match kind {
+        StepKind::Paths { from, to, .. } => {
+            super::node_place(graph, from)?;
+            super::node_place(graph, to)?;
+        }
+        StepKind::Reachable { from, .. } => {
+            super::starts(graph, from)?;
+        }
+        _ => {}
+    }
     if let StepKind::MergeNodes { .. } | StepKind::AggregateAlong { .. } = kind {
         return Ok(Err(if library.is_some() { reason::LOCAL } else { reason::NO_LIBRARY }));
     }
@@ -220,17 +261,21 @@ pub fn route(
     if graph.nodes.is_empty() || topo.m() == 0 {
         return Ok(Err(reason::EMPTY));
     }
-    let (nodes, rels, numeric) = ids(graph, &topo);
+    let (nodes, rels, lone, numeric) = ids(graph, &topo);
     if library == Library::Mage && !numeric {
         return Ok(Err(reason::NO_LIBRARY));
     }
     let direction = direction_of(kind);
     let weighted = weight_of(kind).is_some();
     let mut params = vec![("nodes".to_string(), Param::Ids(nodes)), ("rels".to_string(), Param::Ids(rels))];
+    if library == Library::Gds {
+        params.push(("lone".to_string(), Param::Ids(lone)));
+    }
     let n = graph.nodes.len();
-    let max_rows = n + topo.m() + 16;
+    let size = n + topo.m();
+    let max_rows = size + 16;
     let job = |project: Option<String>, runs: Vec<String>, params: Vec<(String, Param)>, max_rows: usize| {
-        Ok(Ok(Job { library, project, runs, params, numeric, max_rows }))
+        Ok(Ok(Job { library, project, runs, params, numeric, max_rows, size }))
     };
     match library {
         Library::Gds => {
@@ -367,12 +412,11 @@ pub fn route(
                 StepKind::Similarity { measure, min_score, .. } => {
                     let top_k = super::top_k(kind, limits);
                     params.push(("topK".into(), Param::Int(i64::from(top_k))));
-                    // GDS keeps pairs above its cutoff; 0 is not allowed there, the smallest number is.
-                    params.push(("cutoff".into(), Param::Float(min_score.unwrap_or(0.0).max(1e-42))));
-                    let pairs = |call: &str| {
+                    let min_score = min_score.unwrap_or(0.0);
+                    let pairs = |call: &str, value: &str| {
                         format!(
                             "CALL {call} YIELD node1, node2, similarity \
-                             RETURN {k}(gds.util.asNode(node1)) AS a, {k}(gds.util.asNode(node2)) AS b, similarity AS value"
+                             RETURN {k}(gds.util.asNode(node1)) AS a, {k}(gds.util.asNode(node2)) AS b, {value} AS value"
                         )
                     };
                     let max_rows = n * top_k as usize + 16;
@@ -380,24 +424,41 @@ pub fn route(
                         SimilarityMeasure::Cosine | SimilarityMeasure::Knn => {
                             let StepKind::Similarity { properties, .. } = kind else { unreachable!() };
                             params.push(("keys".into(), Param::Texts(properties.clone())));
+                            // GDS's kNN answers the cosine moved to 0..1, (cos + 1) / 2: its cutoff
+                            // moves alike, and the answer moves back to the cosine the server gives.
+                            params.push(("cutoff".into(), Param::Float(((min_score + 1.0) / 2.0).max(1e-42))));
                             let call = "gds.knn.stream($graph, {nodeProperties: {kz_v: 'COSINE'}, topK: $topK, \
                                         similarityCutoff: $cutoff, sampleRate: 1.0, deltaThreshold: 0.0, randomJoins: 0, \
                                         maxIterations: 100, randomSeed: 19, concurrency: 1})";
-                            job(project(Orientation::Natural, false, true), vec![pairs(call)], params, max_rows)
+                            job(
+                                project(Orientation::Natural, false, true),
+                                vec![pairs(call, "2.0 * similarity - 1.0")],
+                                params,
+                                max_rows,
+                            )
                         }
                         _ => {
                             let metric = if *measure == SimilarityMeasure::Jaccard { "JACCARD" } else { "OVERLAP" };
                             params.push(("metric".into(), Param::Text(metric.into())));
+                            // GDS keeps pairs above its cutoff; 0 is not allowed there, the smallest
+                            // number is.
+                            params.push(("cutoff".into(), Param::Float(min_score.max(1e-42))));
                             let call = "gds.nodeSimilarity.stream($graph, {similarityMetric: $metric, topK: $topK, \
                                         similarityCutoff: $cutoff})";
-                            job(project(orientation(direction), false, false), vec![pairs(call)], params, max_rows)
+                            job(
+                                project(orientation(direction), false, false),
+                                vec![pairs(call, "similarity")],
+                                params,
+                                max_rows,
+                            )
                         }
                     }
                 }
                 StepKind::LinkPrediction { .. } => Ok(Err(reason::NOT_IN_LIBRARY)),
                 StepKind::Paths { mode: PathMode::AllShortest, .. } => Ok(Err(reason::ENUMERATING)),
                 StepKind::Paths { mode, from, to, weight, .. } => {
-                    let k = bounds(kind, limits)?.max_count;
+                    // Not `k`, which names the id function of the queries below.
+                    let count = bounds(kind, limits)?.max_count;
                     params.push(("from".into(), Param::Id(from.clone())));
                     params.push(("to".into(), Param::Id(to.clone())));
                     if let Some(w) = weight {
@@ -406,7 +467,7 @@ pub fn route(
                     let w = if weighted { ", relationshipWeightProperty: 'w'" } else { "" };
                     let call = match mode {
                         PathMode::KShortest => {
-                            params.push(("k".into(), Param::Int(i64::from(k))));
+                            params.push(("k".into(), Param::Int(i64::from(count))));
                             format!("gds.shortestPath.yens.stream($graph, {{sourceNode: s, targetNode: t, k: $k{w}}})")
                         }
                         _ => format!("gds.shortestPath.dijkstra.stream($graph, {{sourceNode: s, targetNode: t{w}}})"),
@@ -485,13 +546,10 @@ pub fn route(
                     );
                     job(None, vec![run], params, max_rows)
                 }
+                // Betweenness grows with nodes times edges, and a running MAGE procedure cannot be
+                // stopped: on the server, which stops it at the step's time limit.
                 StepKind::Centrality { measure: CentralityMeasure::Betweenness, .. } => {
-                    params.push(("directed".into(), Param::Bool(direction != Direction::Both)));
-                    let run = format!(
-                        "{MAGE_PROJECT}CALL betweenness_centrality.get(graph, $directed, false) YIELD node, betweenness_centrality \
-                         RETURN id(node) AS id, betweenness_centrality AS value"
-                    );
-                    job(None, vec![run], params, max_rows)
+                    Ok(Err(reason::NOT_CANCELLABLE))
                 }
                 StepKind::Communities { resolution: Some(_), .. }
                 | StepKind::Communities { max_iterations: Some(_), .. } => Ok(Err(reason::OPTION)),
@@ -685,10 +743,8 @@ pub fn merge(
             // A library that searched within the bound answers nothing; whether a longer path
             // exists is one search here.
             let StepKind::Paths { from, to, .. } = kind else { unreachable!() };
-            let longer = || {
-                let (s, t) = (super::node_place(graph, from).ok()?, super::node_place(graph, to).ok()?);
-                super::paths::fewest_edges(&topo, s, t, direction).filter(|e| *e > max_length)
-            };
+            let (s, t) = (super::node_place(graph, from)?, super::node_place(graph, to)?);
+            let longer = || super::paths::fewest_edges(&topo, s, t, direction).filter(|e| *e > max_length);
             match beyond.or_else(longer) {
                 Some(edges) if paths.is_empty() => Outcome::PathsTooLong { edges },
                 _ => Outcome::Paths { paths, total: None },
@@ -836,11 +892,16 @@ mod tests {
                     {
                         assert!(!q.contains(word), "{word} in {q}");
                     }
-                    assert!(q.contains("IN $nodes") || q.contains("$graph"), "the query reads only the result: {q}");
+                    assert!(
+                        q.contains("IN $nodes") || q.contains("IN $rels") || q.contains("$graph"),
+                        "the query reads only the result: {q}"
+                    );
+                    // The result's edges are sought by their ids, never by expanding its nodes.
+                    assert!(!q.contains("(n)-[r]->") && !q.contains("(__kz_x)-["), "{q}");
                 }
                 if let Some(p) = &job.project {
                     assert_eq!(check(p).unwrap_err().reason, "cypher.function_not_allowed", "{p}");
-                    assert!(p.contains("IN $nodes") && p.contains("IN $rels"), "{p}");
+                    assert!(p.contains("(__kz_r) IN $rels") && p.contains("(__kz_x) IN $lone"), "{p}");
                 }
                 if library == Library::Mage {
                     for q in &job.runs {
@@ -883,6 +944,9 @@ mod tests {
         assert_eq!(at(Some(Library::Mage), &cycles), reason::NOT_CANCELLABLE);
         let similar = step(json!({ "type": "similarity", "measure": "jaccard", "topK": 2 }));
         assert_eq!(at(Some(Library::Mage), &similar), reason::NOT_CANCELLABLE);
+        let betweenness = step(json!({ "type": "centrality", "measure": "betweenness" }));
+        assert_eq!(at(Some(Library::Mage), &betweenness), reason::NOT_CANCELLABLE);
+        assert!(at(Some(Library::Gds), &betweenness).contains("gds.betweenness.stream"));
         assert!(at(Some(Library::Gds), &similar).contains("gds.nodeSimilarity.stream"));
         let labelled = step(json!({ "type": "similarity", "measure": "jaccard", "topK": 2, "label": "K" }));
         assert_eq!(at(Some(Library::Gds), &labelled), reason::OPTION);
@@ -907,6 +971,11 @@ mod tests {
         assert!(q.contains("(s)-[*WSHORTEST 30 ") && q.contains("]->(t)"), "{q}");
         let k = step(json!({ "type": "paths", "mode": "kShortest", "from": "0", "to": "3", "k": 2 }));
         assert_eq!(at(Some(Library::Mage), &k), reason::NOT_IN_LIBRARY);
+        // GDS reads the nodes by their ids, also where the step has a count of its own.
+        for path in [&shortest, &k] {
+            let q = at(Some(Library::Gds), path);
+            assert!(q.contains("WHERE id(s) = $from") && q.contains("| id(gds.util.asNode(__kz_x))"), "{q}");
+        }
         let all = step(json!({ "type": "paths", "mode": "allShortest", "from": "0", "to": "3" }));
         assert_eq!(at(Some(Library::Mage), &all), reason::ENUMERATING);
         let reach = step(json!({ "type": "reachable", "from": ["0", "3"], "maxHops": 2, "direction": "in" }));
@@ -923,7 +992,44 @@ mod tests {
         let text = graph(false);
         assert_eq!(route(Some(Library::Mage), &pr, &text, &limits).unwrap().unwrap_err(), reason::NO_LIBRARY);
         let job = route(Some(Library::Gds), &pr, &text, &limits).unwrap().unwrap();
-        assert!(!job.numeric && job.project.as_ref().unwrap().contains("elementId(n) IN $nodes"));
+        assert!(!job.numeric && job.project.as_ref().unwrap().contains("elementId(__kz_r) IN $rels"));
+        // Only the nodes without any of the result's edges are sought one by one.
+        let mut lone = graph(false);
+        lone.nodes.push(crate::shapes::Node { id: "4:x:9".into(), labels: vec![], properties: Default::default() });
+        let job = route(Some(Library::Gds), &pr, &lone, &limits).unwrap().unwrap();
+        assert!(job.params.contains(&("lone".to_string(), Param::Ids(vec!["4:x:9".into()]))));
+        // A node a step names that the result lacks is refused before any library is asked.
+        for kind in [
+            step(json!({ "type": "paths", "mode": "shortest", "from": "0", "to": "42" })),
+            step(json!({ "type": "reachable", "from": ["42"], "maxHops": 2 })),
+        ] {
+            for library in [Some(Library::Gds), Some(Library::Mage), None] {
+                assert_eq!(route(library, &kind, &g, &limits).unwrap_err().reason, "steps.node_missing");
+            }
+        }
+    }
+
+    /// A job that ran out of time is remembered for its size and larger ones only.
+    #[test]
+    fn slow_jobs_are_remembered_by_size() {
+        let limits = AlgoLimits::default();
+        let pr = step(json!({ "type": "centrality", "measure": "pageRank" }));
+        let small = route(Some(Library::Gds), &pr, &graph(true), &limits).unwrap().unwrap();
+        let mut larger = graph(true);
+        for i in 20..60 {
+            larger.nodes.push(crate::shapes::Node {
+                id: i.to_string(),
+                labels: vec![],
+                properties: Default::default(),
+            });
+        }
+        let large = route(Some(Library::Gds), &pr, &larger, &limits).unwrap().unwrap();
+        assert!(large.slow_keys().any(|k| k == small.slow_key()), "a slow small job keeps larger ones away");
+        assert!(
+            !small.slow_keys().any(|k| k == large.slow_key()),
+            "a slow large job leaves smaller ones to the library"
+        );
+        assert_ne!(small.slow_key(), small.memo_key());
     }
 
     /// Answers become the graph the server would make: ids map back to the nodes, scores and

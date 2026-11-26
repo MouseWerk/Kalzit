@@ -104,8 +104,10 @@ pub fn check_case(case: &Value, graph: &GraphSet, summary: Option<&StepSummary>,
         }
     }
     if let Some(want) = wanted("ranking").and_then(Value::as_array) {
+        // Equal values (a symmetric graph) are ranked by name; values that differ only by
+        // floating-point noise, as a library's iterations leave them, count as equal.
         let mut got: Vec<(f64, String)> =
-            node_values.iter().filter_map(|(k, v)| v.as_f64().map(|x| (x, k.clone()))).collect();
+            node_values.iter().filter_map(|(k, v)| v.as_f64().map(|x| ((x * 1e9).round(), k.clone()))).collect();
         got.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         let got: Vec<&str> = got.iter().take(want.len()).map(|(_, k)| k.as_str()).collect();
         let exp: Vec<&str> = want.iter().filter_map(Value::as_str).collect();

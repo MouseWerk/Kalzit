@@ -2774,6 +2774,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.algorithm_answer` | | the database's algorithm library answered in a form Kalzit does not read; the step may run with `"place": "server"` |
 | `algorithm.no_library` | | the source has no graph algorithm library Kalzit uses, or not the one the step was planned for; the server computes the step itself, nothing to do |
 | `algorithm.unsupported` | `detail` | the source's algorithm library lacks the procedure or syntax the step needs (not installed, or an older version); the server computes the step itself and does not ask the library again for ten minutes; installing or updating the library lets the database compute it |
+| `algorithm.timeout` | `detail` | the source's algorithm library did not finish the step in time; the server computes the step itself and for ten minutes does not ask the library for that step on results of the same size or larger (by powers of two of nodes plus edges) |
 | `algorithm.local` | | the `reason` of a graph algorithm step that ran on the server (`steps[]`, not an error): the step needs only the result, which is already on the server |
 | `algorithm.not_in_library` | | step `reason`: the source's library has no read-only variant of the algorithm limited to the result |
 | `algorithm.enumerating` | | step `reason`: the step lists paths or cycles, which runs on the server with its count and length bounds |

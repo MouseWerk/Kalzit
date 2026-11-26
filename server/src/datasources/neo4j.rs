@@ -761,12 +761,18 @@ const SWEEP_QUERY: &str = "CALL gds.graph.list() YIELD graphName, creationTime \
      WHERE (graphName STARTS WITH 'kalzit-communities-' OR graphName STARTS WITH 'kalzit-algorithm-') \
      AND creationTime < datetime() - duration({seconds: $age}) RETURN graphName";
 
-/// How much older than a request's time limit a leftover graph must be before a sweep drops it.
+/// The longest time limit any request may have: the largest value of the server setting
+/// `datasources.query_timeout_secs` and of a source's `queryTimeoutSecs`. A sweep keeps every
+/// graph younger than that, whatever its own request's limit, as another request (here or on
+/// another Kalzit server) may have the longest one.
+const LONGEST_REQUEST: Duration = Duration::from_secs(3600);
+
+/// How much older than the longest request a leftover graph must be before a sweep drops it.
 const SWEEP_MARGIN: Duration = Duration::from_secs(600);
 
-/// The `$age` of `SWEEP_QUERY` for requests with this time limit, in seconds.
-fn sweep_age(timeout: Duration) -> i64 {
-    (timeout + SWEEP_MARGIN).as_secs().try_into().unwrap_or(i64::MAX)
+/// The `$age` of `SWEEP_QUERY` in seconds.
+fn sweep_age() -> i64 {
+    (LONGEST_REQUEST + SWEEP_MARGIN).as_secs().try_into().unwrap_or(i64::MAX)
 }
 
 /// The communities of the given nodes by the database's own algorithm: Memgraph MAGE's
@@ -864,21 +870,17 @@ fn finish_lease_with<T>(
     rows.map_err(error)
 }
 
-/// An algorithm library's failure as a source error. A failure of the fixed query itself (an
-/// unknown procedure or function, a syntax the database does not take, a wrong argument) is
-/// `algorithm.unsupported`: the source does not have what the step needs, and Kalzit stops
-/// asking for a while (`datasources::graph_steps_after`). Anything else (time, memory, the
-/// connection) may pass and is read as for any query.
+/// An algorithm library's failure as a source error. A procedure or function the database does
+/// not have, or a syntax it does not take, is `algorithm.unsupported`: the source lacks what the
+/// step needs, and Kalzit stops asking for a while (`datasources::graph_steps_after`). A run that
+/// ran out of time is `algorithm.timeout`, remembered for results of its size and larger. Anything
+/// else (a wrong argument or a semantic error caused by the data, memory, the connection) may
+/// pass and is read as for any query.
 pub(crate) fn algorithm_error(e: BoltError) -> SourceError {
     if let BoltError::Failure { code, message } = &e {
         let lower = message.to_lowercase();
-        let unsupported = [
-            "Neo.ClientError.Procedure.ProcedureNotFound",
-            "Neo.ClientError.Statement.SyntaxError",
-            "Neo.ClientError.Statement.SemanticError",
-            "Neo.ClientError.Statement.ArgumentError",
-        ]
-        .contains(&code.as_str())
+        let unsupported = ["Neo.ClientError.Procedure.ProcedureNotFound", "Neo.ClientError.Statement.SyntaxError"]
+            .contains(&code.as_str())
             || [
                 "there is no procedure",
                 "unknown function",
@@ -890,6 +892,13 @@ pub(crate) fn algorithm_error(e: BoltError) -> SourceError {
             .any(|m| lower.contains(m));
         if unsupported {
             return SourceError::failed("algorithm.unsupported", message.clone()).with("detail", message.clone());
+        }
+        let timeout = code == "Kalzit.Timeout"
+            || code.contains("TransactionTimedOut")
+            || lower.contains("transaction timeout")
+            || lower.contains("execution timeout");
+        if timeout {
+            return SourceError::failed("algorithm.timeout", message.clone()).with("detail", message.clone());
         }
     }
     e.into_source()
@@ -908,9 +917,9 @@ fn out_of_time(timeout: Duration) -> BoltError {
     }
 }
 
-/// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`: graphs older than any request of
-/// this time limit, here or on another Kalzit server, could still use), projects the nodes under a name made for this request, streams
-/// Louvain and drops the graph, also when the stream failed. Only a broken connection skips the
+/// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`: graphs older than any request,
+/// here or on another Kalzit server, could still use), projects the nodes under a name made for
+/// this request, streams Louvain and drops the graph, also when the stream failed. Only a broken connection skips the
 /// drop; the next request's sweep removes that graph. `permit` is the source's community gate,
 /// held until the graph is gone.
 async fn neo4j_communities(
@@ -928,8 +937,7 @@ async fn neo4j_communities(
     let named = |name: &Bv| vec![("graph".to_string(), name.clone())];
     let rows = async {
         let left =
-            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
-                .await?;
+            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age()))], 10_000).await?;
         for row in left {
             if let Some(name @ Bv::String(_)) = row.first() {
                 internal_rows(c, db, CONNECT_TIMEOUT, &drop_graph, named(name), 1).await?;
@@ -1015,8 +1023,7 @@ async fn neo4j_algorithm(
     let left = || time_left(until).ok_or_else(|| out_of_time(timeout));
     let answers = async {
         let swept =
-            internal_rows(c, db, left()?, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
-                .await?;
+            internal_rows(c, db, left()?, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age()))], 10_000).await?;
         for row in swept {
             if let Some(name @ Bv::String(_)) = row.first() {
                 let time = left()?.min(CONNECT_TIMEOUT);
@@ -1668,13 +1675,25 @@ mod algorithm_errors {
         ] {
             assert_eq!(algorithm_error(e).detail().reason, "algorithm.unsupported");
         }
+        // Errors the data causes may pass with other data, so they are not remembered.
         for e in [
             failure("Neo.ClientError.Procedure.ProcedureCallFailed", "Not enough memory to run the algorithm"),
-            failure("Neo.ClientError.Transaction.TransactionTimedOut", "terminated: timeout"),
-            out_of_time(Duration::from_secs(30)),
+            failure("Neo.ClientError.Statement.ArgumentError", "Source node with id 4:x:9 not found"),
+            failure("Neo.ClientError.Statement.SemanticError", "Expected a node property of type FLOAT"),
             BoltError::TooLarge(10),
         ] {
-            assert_ne!(algorithm_error(e).detail().reason, "algorithm.unsupported");
+            let reason = algorithm_error(e).detail().reason;
+            assert!(reason != "algorithm.unsupported" && reason != "algorithm.timeout", "{reason}");
+        }
+        for e in [
+            failure("Neo.ClientError.Transaction.TransactionTimedOut", "terminated: timeout"),
+            failure(
+                "Memgraph.ClientError.MemgraphError.MemgraphError",
+                "Transaction was asked to abort because of transaction timeout.",
+            ),
+            out_of_time(Duration::from_secs(30)),
+        ] {
+            assert_eq!(algorithm_error(e).detail().reason, "algorithm.timeout");
         }
     }
 }
@@ -2211,10 +2230,11 @@ mod tests {
         let seen = seen.lock().unwrap().clone();
         // The sweep comes first and drops what it lists ("4:x:1" here), then project, stream, drop.
         assert!(seen[0].0.contains("gds.graph.list"), "{seen:?}");
-        // Only graphs older than the time limit (5 s here) plus ten minutes, by the database's
-        // clock, so another Kalzit server's running request keeps its graph.
+        // Only graphs older than the longest time limit any request may have (an hour, whatever
+        // this one's 5 s) plus ten minutes, by the database's clock, so another request's graph,
+        // here or on another Kalzit server, is kept while it may still run.
         assert!(seen[0].0.contains("creationTime < datetime() - duration({seconds: $age})"), "{seen:?}");
-        assert_eq!(seen[0].1.as_deref(), Some("age=605"), "{seen:?}");
+        assert_eq!(seen[0].1.as_deref(), Some("age=4200"), "{seen:?}");
         assert!(seen[1].0.contains("gds.graph.drop") && seen[1].1.as_deref() == Some("4:x:1"), "{seen:?}");
         assert!(
             seen[2].0.contains("gds.graph.project") && seen[2].1.as_deref().unwrap().starts_with("kalzit-communities-")
