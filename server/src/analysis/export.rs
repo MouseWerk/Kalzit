@@ -509,6 +509,14 @@ fn graph_json_to(
     out: &mut Emit<'_>,
 ) -> Result<(), Detail> {
     let mut sink = Sink::new(max, control, deadline, out);
+    // Suggested edges of link prediction are no data of the source: they stay out of the file.
+    let without;
+    let graph = if graph.suggested.is_some() {
+        without = GraphSet { suggested: None, ..graph.clone() };
+        &without
+    } else {
+        graph
+    };
     let file = GraphFile { shape: "graph", graph };
     let written = serde_json::to_writer(&mut sink, &file).map_err(std::io::Error::other);
     sink.done(written)
@@ -1175,6 +1183,34 @@ mod tests {
             field("roh", FieldType::Json, vec![json!({ "a": [1, "x"] }), Value::Null, json!("-1")]),
         ])
         .unwrap()
+    }
+
+    /// Suggested edges of link prediction are no data: neither the JSON nor the GraphML file
+    /// carries them.
+    #[test]
+    fn graph_files_leave_suggestions_out() {
+        use crate::shapes::{Edge, Node};
+        let node = |id: &str| Node { id: id.into(), labels: vec!["K".into()], properties: Default::default() };
+        let edge = |id: &str| Edge {
+            id: id.into(),
+            edge_type: "T".into(),
+            from: "a".into(),
+            to: "b".into(),
+            properties: Default::default(),
+        };
+        let graph = GraphSet {
+            nodes: vec![node("a"), node("b")],
+            edges: vec![edge("real")],
+            suggested: Some(vec![edge("~SUGGESTED~a~b")]),
+            ..Default::default()
+        };
+        let control = Control::unbounded();
+        for format in [ExportFormat::Json, ExportFormat::Graphml] {
+            let file = encode_content(Content::Graph(&graph), format, &control, Caps::default()).unwrap();
+            let text = String::from_utf8(file.chunks.concat()).unwrap();
+            assert!(text.contains("real"), "{text}");
+            assert!(!text.contains("SUGGESTED") && !text.contains("suggested"), "{text}");
+        }
     }
 
     #[test]
