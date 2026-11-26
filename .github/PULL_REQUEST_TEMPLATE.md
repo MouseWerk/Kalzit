@@ -14,8 +14,9 @@
 - [ ] New UI texts are in the English and German catalogs.
 - [ ] Visible UI changes: `npm run screenshots` was rerun and the changed images are committed.
 - [ ] Visual baselines: a changed screen comes with a pull request in `MouseWerk/kalzit-visual` (`npm run visual:update` on Linux) and the new commit in `ui/e2e/visual/baselines.lock`; the reviewer looked at every changed image diff there.
-- [ ] User-facing changes have a line in `docs/releases/v<version>.md` ("Improved" or "Fixed"), and a manual Windows check where needed.
+- [ ] User-facing changes have a fragment `docs/releases/unreleased/<pr>-<topic>.md` ("Improved", "Fixed", "Checklist for Windows (manual)" as needed).
 - [ ] Docs (`docs/ARCHITECTURE.md`, `docs/api/`) are updated when a contract changed.
+- [ ] The user guide (`docs/guide/`, English and German) describes new or changed user- or admin-facing functions.
 
 ## Screenshots
 

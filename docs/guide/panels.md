@@ -279,6 +279,21 @@ always (the **Always** mode) and the labels of selected nodes are drawn whatever
 may lie over each other. A selection gives a multi-value variable at most 100 values and says so; a
 click on a node whose neighbours cannot be loaded opens its details instead.
 
+The tools on the canvas (top left) choose how the pointer selects (**Pointer** V, **Rectangle** R,
+**Lasso** L; Shift adds to the selection, Alt takes out, a double click keeps the tool), open the
+**Search** (F) and hold **Undo** and **Redo** with the history of this view, and zoom. Dragging a
+node moves it and pins it where you drop it; **Release** (P) lets the layout place it again.
+While viewing, your pinned nodes, their places and what you hid are kept for you; in the panel
+editor, pinned nodes are saved with the panel for everyone. Resting the pointer on a node or an
+edge (or I on the keyboard) shows its info card; the panel editor chooses up to four properties
+per label for it. A click on an edge selects it and opens its own details. A right click (or
+Shift+F10) opens the menu of a node, an edge, the selection or the empty canvas, with **Hide** (H),
+**Show hidden** (Shift+H), **Invert selection** (Ctrl+I) and more. The search looks through
+captions and properties of what the panel has loaded and jumps to each hit; the minimap (M) shows
+where you are. Ctrl+Z takes back the last step of the view: moving, pinning, hiding, explorer
+steps, opened groups; zoom and selection are not part of it. Every key is listed under **Graph**
+in the keyboard help (?).
+
 ![A network panel with a customer selected and the details beside the drawing](../screenshots/graph-inspector-dark.png)
 
 The **Explorer** (on in the toolbar, on from the start with the panel option) loads a node's
