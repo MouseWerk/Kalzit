@@ -221,23 +221,23 @@ export async function settle(page: Page): Promise<void> {
         element.scrollTo(Math.round(element.scrollLeft), Math.round(element.scrollTop));
       }
     }
-    // A page scrolled near its end (a result scrolled into view) pushes the sticky sidebar up by
-    // a fraction of a pixel, drawn a pixel apart from run to run. Scrolled back by whole pixels
-    // until the sidebar is no longer pushed, it stays at the top.
+    // A page scrolled to its end (a result scrolled into view) has its sticky parts (the sidebar,
+    // the settings list) pushed up by the bottom of their box, at a fraction of a pixel that was
+    // drawn a pixel apart from run to run. A page scrolled further than END_GAP short of its end
+    // is scrolled back to there, where nothing sticky is pushed.
+    const END_GAP = 40;
     const page = document.scrollingElement;
+    if (page !== null && page.scrollTop > 0) {
+      const end = Math.floor(page.scrollHeight - page.clientHeight);
+      if (page.scrollTop > end - END_GAP) {
+        page.scrollTo(page.scrollLeft, Math.max(0, end - END_GAP));
+      }
+    }
     const sidebar = document.querySelector(".shell__sidebar");
     // The sidebar itself shows from its top: a focus or a scroll into view may have moved it.
     for (const scrolled of [sidebar, ...(sidebar?.querySelectorAll("*") ?? [])]) {
       if (scrolled !== null && scrolled.scrollTop !== 0) {
         scrolled.scrollTop = 0;
-      }
-    }
-    if (page !== null && sidebar !== null && getComputedStyle(sidebar).position === "sticky") {
-      for (let step = 0; step < 8 && page.scrollTop > 0; step++) {
-        if (sidebar.getBoundingClientRect().top >= 0) {
-          break;
-        }
-        page.scrollTo(page.scrollLeft, Math.ceil(page.scrollTop) - 1);
       }
     }
   });
