@@ -138,7 +138,11 @@ const REFUSED_STYLES = {
 for (const [name, { inject, problem }] of Object.entries(REFUSED_STYLES)) {
   test(`the console guard catches ${name} on an admin page`, async ({ page, consoleGuard }) => {
     await signInOwner(page);
-    await page.goto("/admin/members");
+    // Within the app, as above: a full page load would cancel the start page's requests.
+    await page
+      .getByRole("navigation", { name: t("nav.label") })
+      .getByRole("link", { name: t("nav.members"), exact: true })
+      .click();
     await expect(page.getByRole("heading", { name: t("admin.members.title") })).toBeVisible();
     // Nothing so far: what the guard finds below comes from the probe's style.
     expect(await consoleGuard.drain()).toEqual([]);
