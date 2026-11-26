@@ -861,6 +861,9 @@
   :root {
     --size-graph-min: 12rem;
     --size-graph-min-panel: 6rem;
+    /* The graph canvas's minimap (MINIMAP_WIDTH and MINIMAP_HEIGHT in canvas/Minimap.tsx). */
+    --size-graph-minimap-width: 8.25rem;
+    --size-graph-minimap-height: 5.5rem;
   }
 }
 
