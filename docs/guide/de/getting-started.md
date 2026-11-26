@@ -97,6 +97,8 @@ Die Leiste oben hat **Sprache**, **Darstellung** und **Hilfe**. Eine Sprache ode
 die du dort wählst, wird beim Anmelden zu deiner Einstellung, sofern du noch keine hast.
 **Hilfe** öffnet diese Seite und [Installation](installation.md); beide werden mit Kalzit
 ausgeliefert und lassen sich ohne Konto lesen.
+Nach der Anmeldung öffnet **Hilfe > Handbuch** die ganze Anleitung in Kalzit, auf Deutsch und
+Englisch und mit Suche; sie ist Teil des Programms und geht auch ohne Internet.
 
 ### Passwort vergessen
 

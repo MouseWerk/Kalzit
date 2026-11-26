@@ -38,7 +38,7 @@ async function createWebhook(name: string): Promise<string> {
   return ((await answer.json()) as { id: string }).id;
 }
 
-test("an admin adds a webhook and a rule that notifies it", async ({ page }) => {
+test("an admin adds a webhook and a rule that notifies it", { tag: "@smoke" }, async ({ page }) => {
   const sourceName = unique("Alerting Verkauf");
   await optedInSource(sourceName);
   await signInOwner(page);
@@ -106,7 +106,9 @@ async function createPanelRule(name: string, sourceId: string, dashboardId: stri
   expect(answer.status()).toBe(201);
 }
 
-test("a viewer reads the rules and a panel's badge, but changes nothing", async ({ pageAs }) => {
+test("a viewer reads the rules and a panel's badge, but changes nothing", {
+  tag: "@smoke",
+}, async ({ pageAs }) => {
   const sourceId = await optedInSource(unique("Alerting Ansicht"));
   const title = unique("Alerting Dashboard");
   const dashboardId = await owner.createDashboard(regionDashboard(title, sourceId));

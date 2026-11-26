@@ -18,17 +18,23 @@ const PORT = Number(process.argv[2] ?? 39301)
 // lines of linux.sh and windows.sh).
 const JOBS = {
   windows: [
-    ['server', ['server']], ['plugins', ['server']], ['ui', ['ui']], ['sdk', ['sdk']],
-    ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['e2e', ['e2e']], ['msi', ['msi-requested']],
+    ['server', ['server']], ['ui', ['ui']], ['sdk', ['sdk']], ['devkit', ['devkit']],
+    ['devgen', ['devgen', 'server', 'ui']], ['plugins', ['server']], ['e2e', ['e2e']], ['msi', ['msi-requested']],
   ],
   linux: [
-    ['changes', ['always']], ['server', ['server']], ['plugins', ['server']], ['ui', ['ui']], ['sdk', ['sdk']],
-    ['roadmap', ['roadmap']], ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['audit', ['audit']],
+    ['changes', ['always']], ['server', ['server']], ['ui', ['ui']], ['sdk', ['sdk']], ['roadmap', ['roadmap']],
+    ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['plugins', ['server']], ['audit', ['audit']],
     ['update-rights', ['server']], ['postgres', ['server']], ['ldap', ['server']], ['datasources', ['server']],
     ['datasources-sql-kv', ['server']], ['datasources-more', ['server']], ['acme', ['server']], ['e2e', ['e2e']],
     ['visual', ['e2e']], ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
   ],
 }
+// The jobs of the fast gate (stage.txt `gate`), with the areas that switch them on there where
+// they differ; the rest belongs to the full suite.
+const GATE_JOBS = new Map([
+  ['changes', null], ['ui', null], ['server', null], ['sdk', null], ['roadmap', null], ['devkit', null],
+  ['devgen', null], ['e2e', null], ['audit', ['lockfiles']],
+])
 
 const read = path => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
@@ -60,7 +66,7 @@ function minutesSince(hms) {
   return Math.floor(ms / 60000)
 }
 
-function parseLeg(leg, out, result, areas, active) {
+function parseLeg(leg, out, result, areas, active, gate) {
   const seen = new Map()
   const re = new RegExp(`^\\[(\\d\\d:\\d\\d:\\d\\d)\\] ${leg}: (\\S+) (started|passed in (\\d+) min|FAILED in (\\d+) min)`)
   for (const line of (out ?? '').split(/\r?\n/)) {
@@ -74,7 +80,8 @@ function parseLeg(leg, out, result, areas, active) {
   const done = result !== undefined
   const jobs = JOBS[leg].map(([name, wants]) => {
     if (seen.has(name)) return seen.get(name)
-    const wanted = wants.some(a => a === 'always' || areas.has(a))
+    const own = gate ? GATE_JOBS.get(name) ?? wants : wants
+    const wanted = (!gate || GATE_JOBS.has(name)) && own.some(a => a === 'always' || areas.has(a))
     return { name, state: wanted && !done && active ? 'queued' : 'skipped' }
   })
   let state
@@ -90,13 +97,14 @@ function loadRun(id, newest) {
   const winOut = read(join(dir, 'windows.out'))
   if (winOut?.includes('windows: msi started')) areas.add('msi-requested')
   const active = newest && existsSync(join(CI_HOME, 'run.lock'))
+  const gate = (read(join(dir, 'stage.txt')) ?? '').trim() === 'gate'
   const legs = ['windows', 'linux'].map(leg =>
-    parseLeg(leg, leg === 'windows' ? winOut : read(join(dir, 'linux.out')), read(join(dir, `${leg}.result`)), areas, active))
+    parseLeg(leg, leg === 'windows' ? winOut : read(join(dir, 'linux.out')), read(join(dir, `${leg}.result`)), areas, active, gate))
   const states = legs.map(l => l.state)
   const state = states.includes('failed') ? 'failed' : states.includes('stopped') ? 'stopped'
     : states.every(s => s === 'passed') ? 'passed' : 'running'
   areas.delete('msi-requested')
-  return { id, dir, ...label(id), areas: [...areas], legs, state }
+  return { id, dir, ...label(id), stage: gate ? 'fast gate' : 'full suite', areas: [...areas], legs, state }
 }
 
 const ICON = { passed: '✓', failed: '✕', running: '', queued: '', skipped: '–', stopped: '!' }
@@ -153,7 +161,7 @@ h1{font-size:18px;margin:0}.top{display:flex;gap:12px;align-items:baseline;flex-
     return `<a href="/?run=${encodeURIComponent(id)}" class="${id === run.id ? 'cur' : ''}"><span class="dot ${r.state}">${ICON[r.state] ?? ''}</span><span>${esc(r.title)} ${esc(r.sha ?? '')}</span><span class="muted">${esc(r.when)}</span></a>`
   }).join('')
   return `${head}
-<div class="top"><h1>${esc(run.title)} <span class="muted">${esc(run.sha ?? '')}</span></h1><span class="badge ${run.state}">${stateText}</span><span class="muted">${esc(run.when)}</span></div>
+<div class="top"><h1>${esc(run.title)} <span class="muted">${esc(run.sha ?? '')} · ${esc(run.stage)}</span></h1><span class="badge ${run.state}">${stateText}</span><span class="muted">${esc(run.when)}</span></div>
 <div class="muted">Areas: ${run.areas.length ? run.areas.map(esc).join(' · ') : 'none'}</div>
 <div class="graph"><div class="flow">
   <div class="node">Merge onto main<br><span class="muted">detect areas</span></div><div class="fork"></div>

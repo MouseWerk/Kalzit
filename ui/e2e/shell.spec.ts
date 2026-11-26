@@ -83,7 +83,7 @@ test("members open from their own entry in the organization group", async ({ pag
   await expect(members).toHaveAttribute("aria-current", "page");
 });
 
-test("every administration section opens from the sidebar", async ({ page }) => {
+test("every administration section opens from the sidebar", { tag: "@smoke" }, async ({ page }) => {
   await signInOwner(page);
   const nav = page.getByRole("navigation", { name: t("nav.label") });
   const sections = nav.getByRole("button", { name: t("admin.sections") });
@@ -280,7 +280,10 @@ test("the appearance preview sits beside the rows by the room of the section, no
   await expect.poll(below).toBe(true);
 });
 
-test("signing out of a dashboard with unsaved changes asks first", async ({ page, world }) => {
+test("signing out of a dashboard with unsaved changes asks first", { tag: "@smoke" }, async ({
+  page,
+  world,
+}) => {
   const owner = await Api.owner();
   const id = await owner.createDashboard(regionDashboard(unique("Abmelden"), world.sourceId));
   await owner.dispose();

@@ -19,7 +19,7 @@ Organisation**). Im Abschnitt des Servers stehen auch die längste Laufzeit (Sta
 die größte Snapshot-Größe (Standard 10 MB). Änderungen gelten sofort: Ist Teilen aus, antwortet
 kein öffentlicher Link und kein öffentlicher Snapshot mehr; nach dem Einschalten wieder.
 
-Geteilt wird am Dashboard über **Teilen**. **Verwaltung > Freigaben** zeigt den Admins der
+Geteilt wird am Dashboard über **Teilen**. [**Verwaltung > Freigaben**](app:/admin/shares) zeigt den Admins der
 Organisation jeden öffentlichen Link und Snapshot, mit Status und Grund, wenn einer ausgesetzt
 ist; **Einstellungen > Meine Freigaben** zeigt die eigenen.
 
