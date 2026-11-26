@@ -460,6 +460,11 @@ impl DataSourcePlugin for Oracle {
         "oracle"
     }
 
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Frame]
     }
@@ -631,6 +636,8 @@ mod tests {
             variables: &vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         sql::prepare(text, Engine::Oracle, &ctx)
     }
@@ -721,6 +728,8 @@ mod tests {
                 variables: &vars,
                 identifiers: Some(&names),
                 identifier_variables: None,
+                filters: &[],
+                column_types: None,
             };
             let p = sql::prepare("SELECT * FROM ${t:identifier}", Engine::Oracle, &ctx);
             match ok {

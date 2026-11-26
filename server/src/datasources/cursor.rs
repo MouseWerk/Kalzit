@@ -30,16 +30,18 @@ const MAX_CURSOR: usize = 8 * 1024;
 pub struct Binding([u8; 32]);
 
 impl Binding {
+    #[expect(clippy::too_many_arguments, reason = "the parts of one query a cursor belongs to")]
     pub fn new(
         org_id: &str,
         user_id: &str,
         datasource_id: &str,
         query: &Value,
         steps: &[Value],
+        filters: &[crate::shapes::AdhocFilter],
         range: TimeRange,
         variables: &BTreeMap<String, Value>,
     ) -> Self {
-        let basis = serde_json::json!({
+        let mut basis = serde_json::json!({
             "o": org_id,
             "u": user_id,
             "d": datasource_id,
@@ -48,6 +50,10 @@ impl Binding {
             "r": [range.from, range.to],
             "v": variables.iter().map(|(k, v)| (k.clone(), canonical(v))).collect::<BTreeMap<_, _>>(),
         });
+        // Only with filters, so cursors of queries without them keep their binding.
+        if !filters.is_empty() {
+            basis["f"] = serde_json::json!(filters);
+        }
         Binding(sha2::Sha256::digest(basis.to_string().as_bytes()).into())
     }
 
@@ -135,7 +141,7 @@ mod tests {
 
     fn binding(user: &str, query: Value) -> Binding {
         let range = TimeRange { from: 1, to: 2 };
-        Binding::new("org", user, "ds", &query, &[], range, &BTreeMap::new())
+        Binding::new("org", user, "ds", &query, &[], &[], range, &BTreeMap::new())
     }
 
     #[test]
@@ -161,11 +167,11 @@ mod tests {
         assert_eq!(refused(&binding("u1", json!({ "lucene": "b", "size": 10 })), &cursor), "query.cursor_invalid");
         let q = json!({ "lucene": "a", "size": 10 });
         let vars = BTreeMap::new();
-        let other_range = Binding::new("org", "u1", "ds", &q, &[], TimeRange { from: 1, to: 3 }, &vars);
+        let other_range = Binding::new("org", "u1", "ds", &q, &[], &[], TimeRange { from: 1, to: 3 }, &vars);
         assert_eq!(refused(&other_range, &cursor), "query.cursor_invalid");
-        let other_ds = Binding::new("org", "u1", "ds2", &q, &[], TimeRange { from: 1, to: 2 }, &vars);
+        let other_ds = Binding::new("org", "u1", "ds2", &q, &[], &[], TimeRange { from: 1, to: 2 }, &vars);
         assert_eq!(refused(&other_ds, &cursor), "query.cursor_invalid");
-        let other_org = Binding::new("org2", "u1", "ds", &q, &[], TimeRange { from: 1, to: 2 }, &vars);
+        let other_org = Binding::new("org2", "u1", "ds", &q, &[], &[], TimeRange { from: 1, to: 2 }, &vars);
         assert_eq!(refused(&other_org, &cursor), "query.cursor_invalid");
         // Another server key.
         assert_eq!(open(&super::tests::keys(), &mine, &cursor).unwrap_err().reason, "query.cursor_invalid");

@@ -150,6 +150,7 @@ fn source_query(q: &pb::QueryRequest) -> Result<SourceQuery, Status> {
             budget: ResponseBudget::new(usize::try_from(limits.max_response_bytes).unwrap_or(usize::MAX)),
         },
         cursor: q.cursor.clone(),
+        filters: Vec::new(),
     })
 }
 

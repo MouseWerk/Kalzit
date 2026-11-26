@@ -1,4 +1,12 @@
 import {
+  type AdhocFilter,
+  decodeFilter,
+  MAX_FILTER_KEY,
+  MAX_FILTER_VALUE,
+  MAX_FILTERS,
+} from "./adhoc";
+import {
+  ALL_VALUE,
   optionValues,
   type VariableModel,
   type VariableValue,
@@ -96,18 +104,62 @@ export function fitAddressValues(
   values: VariableValues,
 ): VariableValues {
   const fitted: [string, VariableValue][] = [];
+  // The server takes at most 20 filters over all ad hoc variables together.
+  let filterRoom = MAX_FILTERS;
   for (const variable of variables) {
     if (!Object.hasOwn(values, variable.name)) continue;
+    const given = valueList(values[variable.name]);
+    if (variable.type === "adhoc") {
+      // Only filters the server takes (`shapes::check_filters`); it checks them again.
+      const filters = given.filter((v) => validFilter(decodeFilter(v))).slice(0, filterRoom);
+      filterRoom -= filters.length;
+      fitted.push([variable.name, filters]);
+      continue;
+    }
+    if (variable.type === "switch") {
+      const value = given[0];
+      if (value !== undefined && (value === variable.onValue || value === variable.offValue)) {
+        fitted.push([variable.name, value]);
+      }
+      continue;
+    }
+    if (variable.type === "datasource") {
+      // The server decides whether the person may query the source it names.
+      if (given[0] !== undefined) fitted.push([variable.name, given[0]]);
+      continue;
+    }
     if (variable.type !== "textbox" && variable.type !== "query" && variable.type !== "custom") {
       continue;
     }
-    const allowed = variable.type === "custom" ? new Set(optionValues(variable)) : null;
+    // A custom variable takes its own values (and "All" when it offers it), unless typed values
+    // are allowed.
+    const allowed =
+      variable.type === "custom" && variable.allowCustom !== true
+        ? new Set([...optionValues(variable), ...(variable.includeAll === true ? [ALL_VALUE] : [])])
+        : null;
     const list = valueList(values[variable.name]).filter((v) => allowed?.has(v) ?? true);
     const multi = variable.multi === true && variable.type !== "textbox";
     if (list.length === 0) continue;
     fitted.push([variable.name, multi ? list : (list[0] as string)]);
   }
   return Object.fromEntries(fitted);
+}
+
+/**
+ * A filter as the server takes it: a key of 1 to 200 characters that is not only spaces and has
+ * no control characters, a value of at most 1,000 characters without NUL.
+ */
+function validFilter(filter: AdhocFilter | null): boolean {
+  if (filter === null) return false;
+  const keyLength = [...filter.key].length;
+  return (
+    filter.key.trim() !== "" &&
+    keyLength <= MAX_FILTER_KEY &&
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+    !/[\u0000-\u001f\u007f-\u009f]/.test(filter.key) &&
+    [...filter.value].length <= MAX_FILTER_VALUE &&
+    !filter.value.includes("\u0000")
+  );
 }
 
 /** The address to open, or null when the filled-in link is not allowed. */

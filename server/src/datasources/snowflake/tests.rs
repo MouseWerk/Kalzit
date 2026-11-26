@@ -151,6 +151,8 @@ async fn writes_stages_and_system_functions_are_refused_before_anything_is_sent(
             variables: &vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
+            column_types: None,
         };
         sql::prepare(statement, Engine::Snowflake, &ctx).unwrap_or_else(|e| panic!("{statement}: {e}"));
     }

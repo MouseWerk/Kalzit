@@ -131,7 +131,9 @@ async fn check(state: &AppState, ctx: &OrgCtx, input: &ReportInput, now: i64, pr
     if let Some(r) = &input.time_range {
         range::resolve_range(&r.from, &r.to, now, zone).map_err(|e| invalid("timeRange", e.reason, e.message))?;
     }
-    gather::variables(&model, &input.variables)?;
+    let merged = gather::variables(&model, &input.variables)?;
+    // A data source the report's values pick needs the creator's own query right, as for a share.
+    super::query::picked_sources(state, ctx, &model, &merged).await?;
     let compiled = input.schedule.compile().map_err(|e| invalid("schedule", e.reason, e.message))?;
     let mut formats = input.formats.clone();
     formats.sort();

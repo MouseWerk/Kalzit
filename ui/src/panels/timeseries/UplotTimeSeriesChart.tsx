@@ -3,13 +3,36 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useI18n } from "../../i18n/i18n";
 import { zoneOption } from "../../lib/timeSettings";
+import {
+  backward,
+  drawable,
+  forward,
+  logTicks,
+  type ScaleSpec,
+  softRange,
+  symlogTicks,
+  valueScale,
+} from "../axisScale";
 import { TONES, type Tone } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { useThemeVersion } from "../useThemeVersion";
 import { type ChartData, chartData } from "./align";
-import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
-import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
+import type { AxisKey, AxisPlan } from "./axes";
+import {
+  ChartShell,
+  chartAxes,
+  type PlotArea,
+  SERIES_COLORS,
+  type TimeSeriesChartProps,
+} from "./ChartShell";
+import {
+  PX_PER_TIME_TICK,
+  PX_PER_VALUE_TICK,
+  TIME_LABEL_OVERHANG,
+  VALUE_AXIS_SIZE,
+  valueAxisSize,
+} from "./layout";
 import {
   FREE_CLASS,
   MONO_CLASS,
@@ -74,8 +97,69 @@ function plotArea(chart: uPlot): PlotArea {
   };
 }
 
-function aligned(data: ChartData): uPlot.AlignedData {
-  return [data.x, ...data.stacked.ys] as uPlot.AlignedData;
+/** The data as uPlot takes it; values a log axis cannot draw (<= 0) become gaps. */
+function aligned(
+  data: ChartData,
+  axes: readonly AxisPlan[],
+  axisOf: readonly AxisKey[],
+): uPlot.AlignedData {
+  const ys = data.stacked.ys.map((values, index) => {
+    const kind = axes.find((a) => a.key === axisOf[index])?.spec.scale ?? "linear";
+    return kind === "log"
+      ? values.map((v) => (v === null || !drawable(kind, v) ? null : v))
+      : values;
+  });
+  return [data.x, ...ys] as uPlot.AlignedData;
+}
+
+/** Room for an axis label turned along the axis, in px. */
+const TITLE_SIZE = 16;
+
+/** What a built chart depends on of its axes; the rest reaches it through `live`. */
+function axesKey(axes: readonly AxisPlan[], axisOf: readonly AxisKey[]): string {
+  return JSON.stringify([
+    axes.map((a) => [
+      a.key,
+      a.show,
+      a.spec.scale,
+      a.spec.base,
+      a.label ?? "",
+      a.width ?? 0,
+      a.grid,
+      a.color,
+      a.line,
+      a.series[0] ?? 0,
+    ]),
+    axisOf,
+  ]);
+}
+
+/**
+ * A value scale's range: on a linear scale uPlot's own rounding of the data, widened by the soft
+ * limits and centered on zero where asked; on the log scales the shared math (`axisScale.ts`).
+ * Fixed ends stay exactly.
+ */
+function scaleRange(
+  spec: ScaleSpec,
+  dataMin: number | null,
+  dataMax: number | null,
+): uPlot.Range.MinMax {
+  const extent =
+    dataMin === null || dataMax === null || !Number.isFinite(dataMin) || !Number.isFinite(dataMax)
+      ? null
+      : { min: dataMin, max: dataMax };
+  if (spec.scale !== "linear") {
+    const scale = valueScale(extent, spec, 5);
+    return [scale.min, scale.max];
+  }
+  const wide = softRange(extent, spec) ?? { min: 0, max: 1 };
+  let [min, max] = uPlot.rangeNum(wide.min, wide.max, 0.1, true);
+  if (spec.centeredZero === true) {
+    const reach = Math.max(Math.abs(min ?? 0), Math.abs(max ?? 0));
+    min = -reach;
+    max = reach;
+  }
+  return [spec.min ?? min, spec.max ?? max];
 }
 
 /**
@@ -92,18 +176,19 @@ export function UplotTimeSeriesChart({
   legend,
   tooltip,
   format,
+  axes: givenAxes,
+  axisOf: givenAxisOf,
   axisFormat,
-  yRange,
+  note,
 }: TimeSeriesChartProps) {
   const { language, timeZone } = useI18n();
+  const { axes, axisOf } = chartAxes({ series, styles, axes: givenAxes, axisOf: givenAxisOf });
   const boxRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
   const probesRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
   // The stacked data the chart draws; stacked bars read their baselines from it when drawn.
   const stackRef = useRef<StackedData>(EMPTY_STACK);
-  const yMin = yRange?.min;
-  const yMax = yRange?.max;
   const { width, height } = useElementSize(boxRef);
   const themeVersion = useThemeVersion();
   const [plot, setPlot] = useState<PlotArea>({ left: VALUE_AXIS_SIZE, width: 1 });
@@ -111,18 +196,18 @@ export function UplotTimeSeriesChart({
   const [built, setBuilt] = useState(0);
   // What the chart's callbacks read when they run: new data, a new range or new value bounds
   // reach a built chart through setData instead of a new chart.
-  const live = useRef({ timeRange, yMin, yMax, axisFormat });
+  const live = useRef({ timeRange, axes, axisFormat });
   useLayoutEffect(() => {
-    live.current = { timeRange, yMin, yMax, axisFormat };
+    live.current = { timeRange, axes, axisFormat };
   });
   // A new chart only when what it is built from changes: the series' names and styles (colors,
   // draw style, fills, stacking), language, time zone and theme. Data alone goes through setData.
-  const structure = `${series.map((s) => s.name).join("\u0000")}\n${styleKey(styles)}`;
-  const scales = `${timeRange.from},${timeRange.to},${yMin ?? ""},${yMax ?? ""}`;
+  const structure = `${series.map((s) => s.name).join("\u0000")}\n${styleKey(styles)}\n${axesKey(axes, axisOf)}`;
+  const scales = `${timeRange.from},${timeRange.to},${JSON.stringify(axes.map((a) => a.spec))}`;
   const builtFor = useRef<{
     series: readonly unknown[];
     scales: string;
-    axisFormat: (value: number, ticks: readonly number[]) => string;
+    axisFormat: TimeSeriesChartProps["axisFormat"];
   } | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the chart is built from `structure`; themeVersion only triggers a redraw
@@ -134,6 +219,7 @@ export function UplotTimeSeriesChart({
     }
     const axis = probeColor(probes, ".ts__probe--axis");
     const grid = probeColor(probes, ".ts__probe--grid");
+    const borderColor = probeColor(probes, ".ts__probe--line");
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
     const forced = forcedColors();
     const tones: Partial<Record<Tone, string>> = {};
@@ -178,13 +264,27 @@ export function UplotTimeSeriesChart({
           time: true,
           range: () => [live.current.timeRange.from, live.current.timeRange.to],
         },
-        // Fixed ends from the field options; uPlot's own range for the open ones.
-        y: {
-          range: (_u, dataMin, dataMax) => {
-            const [min, max] = uPlot.rangeNum(dataMin, dataMax, 0.1, true);
-            return [live.current.yMin ?? min, live.current.yMax ?? max];
-          },
-        },
+        // Each value axis: its distribution and its range, read when the scale is set.
+        ...Object.fromEntries(
+          axes.map((plan): [string, uPlot.Scale] => {
+            const { scale: kind, base } = plan.spec;
+            const current = () =>
+              live.current.axes.find((a) => a.key === plan.key)?.spec ?? plan.spec;
+            return [
+              plan.key,
+              {
+                ...(kind === "linear"
+                  ? {}
+                  : {
+                      distr: 100,
+                      fwd: (v: number) => forward(kind, base, v),
+                      bwd: (v: number) => backward(kind, base, v),
+                    }),
+                range: (_u, dataMin, dataMax) => scaleRange(current(), dataMin, dataMax),
+              },
+            ];
+          }),
+        ),
       },
       axes: [
         {
@@ -194,12 +294,43 @@ export function UplotTimeSeriesChart({
           values: (_u, splits, _axis, _space, step) =>
             splits.map((v) => (step >= DAY ? dates : times).format(v)),
         },
-        {
-          ...axisStyle,
-          grid: { stroke: grid, width: 1 },
-          size: (_u, values) => valueAxisSize(values, font),
-          values: (_u, values) => values.map((v) => live.current.axisFormat(v, values)),
-        },
+        ...axes.map((plan): uPlot.Axis => {
+          const first = plan.series[0] ?? 0;
+          const stroke =
+            plan.color === "series"
+              ? probeColor(probes, `.${styles[first]?.colorClass ?? "series-1"}`)
+              : axis;
+          const title = plan.label === undefined ? 0 : TITLE_SIZE;
+          return {
+            ...axisStyle,
+            stroke,
+            scale: plan.key,
+            side: plan.side === "left" ? 3 : 1,
+            show: plan.show,
+            grid: { show: plan.grid, stroke: grid, width: 1 },
+            border: { show: plan.line, stroke: borderColor, width: 1 },
+            ...(plan.label === undefined
+              ? {}
+              : { label: plan.label, labelSize: TITLE_SIZE, labelFont: font, labelGap: 0 }),
+            size: (_u, values) => (plan.width ?? valueAxisSize(values, font)) + title,
+            ...(plan.spec.scale === "linear"
+              ? {}
+              : {
+                  // Ticks at the powers of the base (and zero around zero).
+                  splits: (u: uPlot) => {
+                    const range = u.scales[plan.key];
+                    const ticks = plan.spec.scale === "log" ? logTicks : symlogTicks;
+                    return ticks(
+                      plan.spec.base,
+                      range?.min ?? 1,
+                      range?.max ?? 10,
+                      Math.max(2, Math.floor(u.bbox.height / uPlot.pxRatio / PX_PER_VALUE_TICK)),
+                    );
+                  },
+                }),
+            values: (_u, values) => values.map((v) => live.current.axisFormat(v, plan.key, values)),
+          };
+        }),
       ],
       series: [
         {},
@@ -220,13 +351,14 @@ export function UplotTimeSeriesChart({
             hatchSpacing,
             fadeTo,
           };
+          const scale = axisOf[index] ?? "y";
           return style === undefined
-            ? { label: s.name }
-            : uplotSeries(s.name, index, style, paint, stackRef);
+            ? { label: s.name, scale }
+            : { ...uplotSeries(s.name, index, style, paint, stackRef), scale };
         }),
       ],
     };
-    const chart = new uPlot(options, aligned(data), target);
+    const chart = new uPlot(options, aligned(data, axes, axisOf), target);
     chartRef.current = chart;
     builtFor.current = { series, scales, axisFormat };
     setPlot(plotArea(chart));
@@ -255,10 +387,10 @@ export function UplotTimeSeriesChart({
     } else {
       const data = chartData(series, styles);
       stackRef.current = data.stacked;
-      chart.setData(aligned(data));
+      chart.setData(aligned(data, live.current.axes, axisOf));
     }
     setPlot(plotArea(chart));
-  }, [series, scales, axisFormat, styles]);
+  }, [series, scales, axisFormat, styles, axisOf]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {
@@ -277,13 +409,14 @@ export function UplotTimeSeriesChart({
       legend={legend}
       tooltip={tooltip}
       format={format}
+      note={note}
       boxRef={boxRef}
       plot={plot}
       timeAt={(x) =>
         chartRef.current?.posToVal(x - plot.left, "x") ??
         timeRange.from + ((x - plot.left) / plot.width) * (timeRange.to - timeRange.from)
       }
-      valueAt={(y) => chartRef.current?.posToVal(y, "y") ?? Number.NaN}
+      valueAt={(y) => chartRef.current?.posToVal(y, axes[0]?.key ?? "y") ?? Number.NaN}
     >
       {(cursorX) => (
         <>
@@ -291,6 +424,7 @@ export function UplotTimeSeriesChart({
           <div className="ts__probes" ref={probesRef} aria-hidden="true">
             <span className="ts__probe ts__probe--axis" />
             <span className="ts__probe ts__probe--grid" />
+            <span className="ts__probe ts__probe--line" />
             {SERIES_CLASSES.map((name) => (
               <span key={name} className={`ts__probe ${name}`} />
             ))}

@@ -203,6 +203,7 @@ fn req(gremlin: &str, variables: Value, max_rows: usize) -> SourceQuery {
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
         },
         cursor: None,
+        filters: Vec::new(),
     }
 }
 

@@ -147,6 +147,62 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.
 
+## Visual comparison
+
+Every screen of the UI is photographed in light and dark at 360, 1280, 2560 and 3440 px wide
+(30 screens, one or two of each area, also at 1280 px with twice the device scale:
+`HIDPI_SCREENS` in `ui/e2e/visual/variants.ts`), and compared pixel by pixel with an approved
+baseline (`ui/e2e/visual.config.ts`). The screens are the pages of the UI sweep
+(`ui/e2e/sweep/pages.ts`, held against the router, so a new route is photographed too), the
+four setup steps and Explore with each result shape.
+
+- **Where the baselines live.** In their own public repository, `MouseWerk/kalzit-visual`
+  (`baselines/<width>/<screen>--<theme>.png`), so Kalzit's history does not carry every version
+  of about a thousand pictures. Kalzit pins the commit it compares against in
+  `ui/e2e/visual/baselines.lock` (repository and commit SHA). `npm run visual` fetches that
+  commit once into a cache folder (`ui/e2e/.visual-baselines/<sha>`; the local CI keeps it under
+  its cache folder, GitHub in the Actions cache keyed by the SHA) and compares against it.
+- **Where it runs.** Linux with Chromium only, in the Linux leg of the local CI (job `visual`)
+  and in the Linux e2e job of `ci.yml`. On Windows and macOS the run skips every test (fonts are
+  drawn differently there); `KALZIT_VISUAL_ANY_SYSTEM=1` runs it anyway, to look at pictures.
+- **Same pictures every run and machine.** Its own server with a fresh data folder, seeded once
+  with fixed names; the fixture data lies around a fixed moment and the pages run on a clock
+  fixed to it; times the server stamps during the run are moved to that moment; counters that
+  grow with the run (page views of public links, the query activity of data sources, recent
+  dashboards, the Explore history, usage and cache counts) are held still in the answers of
+  their own endpoints; animations, the caret and hover are off. Text that differs by machine or
+  run (run-folder paths, the server's port, the host name, ids, the commit and build date,
+  measured times, free disk space) is replaced by a placeholder in the places of the UI that
+  show it. Text is drawn in grayscale, scroll positions are whole pixels, and the font stacks end
+  in Noto Sans and Noto Sans Mono from the dev dependencies instead of the system's fonts. Two
+  runs on the same commit give no difference.
+- **Threshold.** Per pixel, a color distance of 0.1 (YIQ, 0 to 1) counts as equal; one pixel
+  beyond it fails the screen. The threshold is not raised to get a run green; a failing
+  comparison is never accepted on its own.
+- **When it fails.** The run lists the screens that differ (console, `summary.md`, the job
+  summary on GitHub) and keeps expected, actual and diff pictures per screen: locally in
+  `ui/e2e/.output/visual-diffs/`, in the local CI in the run's log folder
+  (`linux-visual-diffs/`), on GitHub as the artifact `visual-diffs`. Look at the diff: an
+  unintended change is a bug to fix. A flaky picture from text that differs by run: run with
+  `KALZIT_VISUAL_DISCOVER=1`, which lists every such text outside the known places in
+  `ui/e2e/.output/visual-discover.jsonl`, and add the place to `ui/e2e/visual/stage.ts`.
+- **Updating baselines.** Only on purpose, as a pair of pull requests:
+  1. Clone `MouseWerk/kalzit-visual` beside the Kalzit checkout and run, on Linux (WSL works),
+     `KALZIT_VISUAL_BASELINES=../../kalzit-visual npm run visual:update` in `ui/`; or on
+     GitHub: `gh workflow run visual.yml --ref <branch> -f update=true` and copy the artifact
+     `visual-baselines` into `baselines/` of the clone. Only the screens that changed are
+     written; a removed screen's pictures are deleted by hand (a test fails on pictures without
+     a screen).
+  2. A pull request in `kalzit-visual` with the changed pictures, named after the Kalzit pull
+     request; merged once reviewed, always with a merge commit (never squash or rebase) and
+     without deleting its branch first: the lock names the pull request's own commit, which must
+     stay reachable from `main` there.
+  3. In the Kalzit pull request, `ui/e2e/visual/baselines.lock` set to that merged commit. Its
+     CI then compares against the new pictures.
+- **Review.** The reviewer opens every changed picture in the `kalzit-visual` pull request
+  (GitHub shows image diffs side by side, as swipe and as onion skin) and checks that each
+  change is the one the Kalzit pull request intends. The pull request template asks for it.
+
 ## Keeping things clean
 
 - One topic per branch and pull request. Unrelated findings become their own task.
