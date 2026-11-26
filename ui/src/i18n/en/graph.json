@@ -54,6 +54,7 @@
   "graph.export.data.title": "Export {format}",
   "graph.export.data.loaded": "Everything loaded",
   "graph.export.data.visible": "Visible nodes",
+  "graph.export.data.withExplorer": "{nodes}, {explorer} from the explorer not included",
   "graph.export.data.hint": "The server makes the file from the panel’s query. Nodes you loaded with the explorer are not part of it.",
   "graph.export.data.truncated": "The data source cut the result at its limit, so the file is incomplete. JSON and GraphML files note this.",
   "graph.roleDescription": "graph",

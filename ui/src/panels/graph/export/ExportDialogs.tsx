@@ -10,7 +10,13 @@ import { type PanelHost, usePanelHost } from "../../host";
 import { embeddedFonts, imageFileName } from "../../image";
 import type { GraphPalette } from "../colors";
 import { countText } from "../plural";
-import { type DataScope, exportScope, type ScopeCounts, scopeCounts } from "./dataScope";
+import {
+  dataCounts,
+  type DataScope,
+  exportScope,
+  type ScopeCounts,
+  scopeCounts,
+} from "./dataScope";
 import type { DataFormat, ExportLegend, ExportSource, ImageFormat } from "./GraphExport";
 import { firstFamily, lightPalette, paletteColors } from "./palettes";
 import { picturePdf } from "./pdf";
@@ -438,13 +444,14 @@ function DataDialog({
   view,
   visibility,
   selected,
+  own,
   format,
   onClose,
 }: ExportSource & { format: DataFormat; onClose: () => void }) {
   const { t, language } = useI18n();
   const host = usePanelHost();
   const id = useId();
-  const counts = scopeCounts(model, view, visibility, selected);
+  const counts = dataCounts(model, view, visibility, selected, own);
   const [picked, setScope] = useState<DataScope>("loaded");
   const scope = picked === "selection" && counts.selected === 0 ? "loaded" : picked;
   const [numbers, setNumbers] = useState<ExportLanguage>(language === "de" ? "de" : "en");
@@ -471,7 +478,7 @@ function DataDialog({
     try {
       // Only GraphML holds positions; the other formats are sent none.
       const drawing = format === "graphml" ? (scene?.() ?? null) : null;
-      const graph = exportScope(scope, model, view, visibility, selected, drawing);
+      const graph = exportScope(scope, model, view, visibility, selected, drawing, own);
       saveFile(
         await run(
           { format, language: numbers, ...(graph === undefined ? {} : { graph }) },
@@ -488,21 +495,23 @@ function DataDialog({
     }
   }
 
+  // The file holds only the panel's own result; nodes from the explorer are named apart.
+  const count = (key: "total" | "visible" | "selected") => {
+    const nodes = countText(t, language, "node", counts[key]);
+    const extra = counts.explorer[key];
+    if (extra === 0) return nodes;
+    return t("graph.export.data.withExplorer", {
+      nodes,
+      explorer: new Intl.NumberFormat(language).format(extra),
+    });
+  };
   const scopes: { value: DataScope; label: string; count: string; disabled?: boolean }[] = [
-    {
-      value: "loaded",
-      label: t("graph.export.data.loaded"),
-      count: countText(t, language, "node", counts.total),
-    },
-    {
-      value: "visible",
-      label: t("graph.export.data.visible"),
-      count: countText(t, language, "node", counts.visible),
-    },
+    { value: "loaded", label: t("graph.export.data.loaded"), count: count("total") },
+    { value: "visible", label: t("graph.export.data.visible"), count: count("visible") },
     {
       value: "selection",
       label: t("graph.export.scope.selection"),
-      count: countText(t, language, "node", counts.selected),
+      count: count("selected"),
       disabled: counts.selected === 0,
     },
   ];

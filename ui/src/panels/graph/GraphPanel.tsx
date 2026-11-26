@@ -420,6 +420,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     ...steps.map((s) => s.graph),
     ...(restored === null ? [] : [restored]),
   ]);
+  // The panel's own result: a data file holds only its nodes, not those the explorer loaded.
+  const ownGraphs = useSameList(graphs.map((g) => g.graph));
+  const own = useMemo(() => nodeIds(ownGraphs), [ownGraphs]);
   // Pinned nodes stay when their step is taken back; edges only to nodes still there.
   const pinSet = useMemo(() => {
     const kept = new Map<string, PinnedNode>();
@@ -2260,6 +2263,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           view={view}
           visibility={visibility}
           selected={selected}
+          own={own}
           open={exportOpen}
           onOpen={setExportOpen}
           legend={{

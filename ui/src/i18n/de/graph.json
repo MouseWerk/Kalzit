@@ -54,6 +54,7 @@
   "graph.export.data.title": "{format} exportieren",
   "graph.export.data.loaded": "Alles Geladene",
   "graph.export.data.visible": "Sichtbare Knoten",
+  "graph.export.data.withExplorer": "{nodes}, {explorer} aus dem Explorer nicht dabei",
   "graph.export.data.hint": "Der Server erstellt die Datei aus der Abfrage des Panels. Knoten, die du mit dem Explorer geladen hast, sind nicht dabei.",
   "graph.export.data.truncated": "Die Datenquelle hat das Ergebnis an ihrem Limit abgeschnitten, die Datei ist daher unvollständig. JSON- und GraphML-Dateien halten das fest.",
   "graph.roleDescription": "Graph",

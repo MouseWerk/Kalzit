@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GraphModel } from "../model";
 import type { GraphView, Visibility } from "../view";
-import { exportScope, MAX_POSITIONS, scopeCounts } from "./dataScope";
+import { dataCounts, exportScope, MAX_POSITIONS, scopeCounts } from "./dataScope";
 import { isWinAnsi, MAX_TEXT_IMAGES, pdfColor, picturePdf, type TextImage } from "./pdf";
 import {
   composePicture,
@@ -632,6 +632,48 @@ describe("the part of the graph a data file holds", () => {
     expect(exportScope("selection", model, view, visibility, selected, null)).toEqual({
       nodes: ["b", "d", "e"],
     });
+  });
+
+  it("names no nodes when all of them are visible: the file is the whole result", () => {
+    const all: Visibility = { nodes: Uint8Array.from([1, 1, 1, 1]), edges: visibility.edges };
+    expect(exportScope("visible", model, view, all, new Set(), null)).toBeUndefined();
+    // Selecting every node is no narrowing either.
+    expect(exportScope("selection", model, view, all, new Set([0, 1, 2, 3]), null)).toBeUndefined();
+    expect(exportScope("visible", model, view, all, new Set(), drawn)).toEqual({
+      positions: { a: [10.13, 20], b: [30, 40.5] },
+    });
+  });
+
+  it("counts only the panel's own nodes for a file, the explorer's apart", () => {
+    // a, c and e came from the panel's query; b and d the explorer loaded.
+    const own = new Set(["a", "c", "e"]);
+    expect(dataCounts(model, view, visibility, new Set([1, 2, 3]), own)).toEqual({
+      total: 3,
+      visible: 2,
+      selected: 1,
+      explorer: { total: 2, visible: 2, selected: 2 },
+    });
+    // Without the panel's own ids every node is its own, as the picture counts them.
+    expect(dataCounts(model, view, visibility, new Set([1, 2, 3]))).toEqual({
+      total: 5,
+      visible: 4,
+      selected: 3,
+      explorer: { total: 0, visible: 0, selected: 0 },
+    });
+  });
+
+  it("sends only the panel's own nodes and their places, not the explorer's", () => {
+    const own = new Set(["a", "c", "e"]);
+    expect(exportScope("visible", model, view, visibility, new Set(), drawn, own)).toEqual({
+      nodes: ["a", "e"],
+      positions: { a: [10.13, 20] },
+    });
+    expect(exportScope("loaded", model, view, visibility, new Set(), drawn, own)).toEqual({
+      positions: { a: [10.13, 20] },
+    });
+    // All of the own nodes visible: nothing to narrow, though explorer nodes are hidden.
+    const ownShown: Visibility = { nodes: Uint8Array.from([1, 0, 1, 1]), edges: visibility.edges };
+    expect(exportScope("visible", model, view, ownShown, new Set(), null, own)).toBeUndefined();
   });
 
   it("sends where single nodes are drawn, only those the file holds", () => {

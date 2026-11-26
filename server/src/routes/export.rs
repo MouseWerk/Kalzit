@@ -210,7 +210,8 @@ struct Wanted {
 fn graph_scope(scope: Option<GraphExportScope>) -> ApiResult<Option<GraphExportScope>> {
     let Some(mut scope) = scope else { return Ok(None) };
     let max = export::SCOPE_MAX_NODES;
-    if scope.positions.as_ref().is_some_and(|p| p.len() > max) {
+    if let Some(count) = scope.positions.as_ref().map(|p| p.len()).filter(|&n| n > max) {
+        tracing::debug!("graph export without positions: {count} sent, at most {max} kept");
         scope.positions = None;
     }
     if scope.nodes.as_ref().is_some_and(|n| n.len() > max) {

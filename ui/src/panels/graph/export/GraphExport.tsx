@@ -48,6 +48,11 @@ export interface ExportSource {
   visibility: Visibility;
   /** The selected view nodes. */
   selected: ReadonlySet<number>;
+  /**
+   * The ids of the nodes in the panel's own result: a data file holds only these, not the nodes
+   * the explorer loaded. Without it every node is the panel's own.
+   */
+  own?: ReadonlySet<string>;
   legend: ExportLegend;
 }
 

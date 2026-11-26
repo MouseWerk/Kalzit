@@ -67,4 +67,32 @@ describe("the export menu of a graph panel", () => {
     }
     expect(screen.queryByText(/needs data:export/)).toBeNull();
   });
+
+  it("counts only the panel's own nodes for a file and names the explorer's apart", async () => {
+    render(
+      <PanelHostContext value={{ exportData: { allowed: true, stored: false, run: vi.fn() } }}>
+        <GraphExport
+          {...props}
+          model={{ nodes: ["a", "b", "c"].map((id) => ({ id })), edges: [] } as unknown as GraphModel}
+          view={
+            {
+              nodes: [0, 1, 2].map((node) => ({ node, members: 1 })),
+              edges: [],
+              nodeOf: Int32Array.from([0, 1, 2]),
+            } as unknown as GraphView
+          }
+          visibility={{ nodes: Uint8Array.from([1, 1, 0]), edges: new Uint8Array() }}
+          own={new Set(["a", "c"])}
+          open={{ kind: "data", format: "json" }}
+        />
+      </PanelHostContext>,
+    );
+    expect(await screen.findByText("2 nodes, 1 from the explorer not included")).toBeTruthy();
+    expect(screen.getByText("1 node, 1 from the explorer not included")).toBeTruthy();
+    // Nothing selected: the selection names no explorer nodes and cannot be picked.
+    expect(screen.getByRole("radio", { name: /Only the selection/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
 });
