@@ -651,16 +651,25 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 
      Freigabe-Links und Snapshots bleiben in M7.
 
-     Direkt nach M8 (Entscheidung des Inhabers vom 23.11.2026): Grafana-Abgleich am lebenden
-     System. Grafana wird neben einer Kalzit-Instanz mit denselben Quellen und Beispieldaten
-     installiert, und beide werden Bereich für Bereich durchgegangen (Panel-Editor mit Optionen,
-     Overrides, Transformationen, Feldkonfiguration, Wertzuordnungen, Schwellwerten und Links;
-     Dashboards, Variablen, Explore, Alerting, Verwaltung). Ergebnis ist eine Tabelle je Bereich:
-     Funktion vorhanden, anders oder fehlend, Grafanas Name neben Kalzits Name. Ziel: Kalzit fühlt
-     sich für Grafana-Nutzer vertraut an und kann alles, was Grafana kann. Danach entscheidet der
-     Inhaber über Namen und Lücken, die Umsetzung folgt in PRs. Es gilt der Clean-Room-Grundsatz:
-     verglichen werden Verhalten und Funktionen, kein Code, Name oder Logo von Grafana im Produkt,
-     und die drei nativen Datenformen bleiben.
+     Grafana-Abgleich (Entscheidungen des Inhabers vom 23. und 24.11.2026): Der erste Abgleich
+     am lebenden System lief am 24.11.2026 (Grafana neben Kalzit mit denselben Quellen und
+     Beispieldaten, Bereich für Bereich: Funktion vorhanden, anders oder fehlend, Grafanas Name
+     neben Kalzits Name). Seine Befunde werden als Parity-Programm vor dem Rest von M8 behoben,
+     in drei Wellen:
+     - Welle 1, ohne Board: Hänger und Fehlverhalten im Bearbeiten-Modus, Diagrammgrößen und
+       Seitenaufbau, Treue des Grafana-Imports, SQL-Zeitmakros, der Intervall-Variablen-Fehler
+       und die Details der Datenquellen.
+     - Welle 2, nach einem gemeinsamen Board "Parity: Editor-Ergänzungen": fehlende Optionen in
+       den vorhandenen Editoren (Achsen, Legende und Tooltip der Zeitreihe, Feldkonfiguration,
+       Variablen, Transformationen als Schritte, Tabellenfuß).
+     - Welle 3, je Panel nach eigenem Board: Logs (auch die Log-Ansicht in Explore), XY-Diagramm,
+       Karte und Trend. Nicht geplant: Candlestick, Canvas, Flame graph und News.
+     Die offenen M8-PRs werden daneben weiter gemergt. Nach dem Parity-Programm und einem
+     Durchgang durch alle Bildschirme folgt ein zweiter Abgleich am lebenden System, auch für
+     die beim ersten Mal nicht geprüften Bereiche (Alerting, Verwaltung, Variablen- und
+     Annotationseditor, Bibliotheks-Panels, Playlists, Tastenkürzel, helles Thema). Es gilt der
+     Clean-Room-Grundsatz: verglichen werden Verhalten und Funktionen, kein Code, Name oder Logo
+     von Grafana im Produkt, und die nativen Datenformen bleiben.
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
