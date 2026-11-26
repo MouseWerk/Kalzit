@@ -126,6 +126,7 @@
   "shortcuts.ask.stop": "Antwort anhalten",
   "shortcuts.area.providers": "Anbieter der Anmeldung",
   "shortcuts.area.fields": "Textfelder",
+  "shortcuts.area.handbook": "Handbuch",
   "shortcuts.providers.move": "Anbieter nach oben oder unten",
   "shortcuts.explore.aiStop": "KI-Antwort anhalten",
   "shortcuts.explore.aiStopNote": "während sie geschrieben wird",
@@ -133,5 +134,7 @@
   "shortcuts.explore.logsLevelNote": "auf einem Level in der Legende des Logs-Volumens",
   "shortcuts.field.confirm": "Bestätigen: Namen speichern, Adresse hinzufügen",
   "shortcuts.field.cancel": "Namen bearbeiten abbrechen",
+  "shortcuts.handbook.search": "Im Handbuch suchen",
+  "shortcuts.handbook.pages": "Vorige und nächste Seite im Handbuch",
   "shortcuts.chart.readoutEnd": "Ablesen beenden"
 }

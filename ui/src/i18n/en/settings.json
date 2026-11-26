@@ -12,7 +12,7 @@
   "settings.search.none": "No setting matches “{query}”.",
   "settings.section.appearance.label": "Appearance and brand",
   "settings.section.appearance.lead": "Changes apply at once for everyone, with undo. Values from the file or the environment are locked.",
-  "settings.section.appearance.keywords": "look design color color theme logo name brand branding dark light font",
+  "settings.section.appearance.keywords": "look design color color theme logo name brand branding dark light font handbook help guide",
   "settings.section.general.label": "General",
   "settings.section.general.lead": "Defaults for everyone who has not chosen their own, and how the server logs.",
   "settings.section.general.keywords": "start page time zone week log metrics prometheus monitoring",
