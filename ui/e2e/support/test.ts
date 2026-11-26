@@ -47,32 +47,58 @@ const WEBKIT_NOTICES_PER_DOCUMENT = 3;
 function recordStyleWrites(): void {
   const log = {
     doc: Math.random().toString(36).slice(2),
+    /** Set on the copy a document makes as it goes: it holds every write the document made. */
+    final: false,
+    /** Set on a copy the next document forwards from the tab's session storage. */
+    stored: false,
     permitted: 0,
     foreign: [] as string[],
     refusedAttributes: [] as string[],
   };
   (window as unknown as { __kalzitStyles: typeof log }).__kalzitStyles = log;
+  // Serialized into the page, so the binding's name is spelled out (STYLE_REPORT).
+  const send = (window as unknown as { __kalzitStyleReport?: (copy: typeof log) => Promise<void> })
+    .__kalzitStyleReport;
+  const top = window === window.top;
+  const prefix = "__kalzitStyles:";
   // Copies of the top document's log for the guard, which still has them once the page has
-  // gone on to another document (a notice is checked a moment after it was reported).
+  // gone on to another document (a notice is checked a moment after it was reported). A binding
+  // call can be lost with its document (Playwright drops one whose document is gone by the time
+  // it handles it), so each copy is also written to the tab's session storage, synchronously,
+  // and the tab's next document forwards it.
   const report = () => {
-    // Serialized into the page, so the binding's name is spelled out (STYLE_REPORT).
-    const send = (
-      window as unknown as { __kalzitStyleReport?: (copy: typeof log) => Promise<void> }
-    ).__kalzitStyleReport;
-    if (window === window.top && send !== undefined) {
-      // A copy lost with its document only means the guard has none to fall back on.
-      send({
-        ...log,
-        foreign: [...log.foreign],
-        refusedAttributes: [...log.refusedAttributes],
-      }).catch(() => {});
+    if (!top) {
+      return;
     }
+    const copy = {
+      ...log,
+      foreign: [...log.foreign],
+      refusedAttributes: [...log.refusedAttributes],
+    };
+    try {
+      sessionStorage.setItem(prefix + log.doc, JSON.stringify(copy));
+    } catch {
+      // No session storage (an opaque origin): the guard has only the binding's copies.
+    }
+    send?.(copy).catch(() => {});
   };
+  // The logs of the tab's earlier documents, before this document's own first copy.
+  if (top && send !== undefined) {
+    try {
+      for (const key of Object.keys(sessionStorage)) {
+        if (key.startsWith(prefix)) {
+          const stored = JSON.parse(sessionStorage.getItem(key) ?? "null");
+          sessionStorage.removeItem(key);
+          if (stored !== null) {
+            send({ ...stored, stored: true }).catch(() => {});
+          }
+        }
+      }
+    } catch {
+      // As above.
+    }
+  }
   report();
-  // One more copy as the document goes (a navigation, a reload, the page closing), for a write
-  // the observer has not reported yet. Chromium may lose it: Playwright drops a binding call whose
-  // document is already gone by the time it handles the call.
-  window.addEventListener("pagehide", () => report());
   // A style attribute the policy refused keeps its text but applies no declaration. Writes
   // through the CSSOM (element.style, as React does) are allowed and always apply.
   const checkAttribute = (element: Element) => {
@@ -91,7 +117,7 @@ function recordStyleWrites(): void {
     }
   };
   const size = () => log.permitted + log.foreign.length + log.refusedAttributes.length;
-  new MutationObserver((records) => {
+  const record = (records: MutationRecord[]) => {
     const before = size();
     for (const record of records) {
       if (record.type === "attributes") {
@@ -121,17 +147,28 @@ function recordStyleWrites(): void {
     if (size() !== before) {
       report();
     }
-  }).observe(document, {
+  };
+  const observer = new MutationObserver(record);
+  observer.observe(document, {
     childList: true,
     characterData: true,
     subtree: true,
     attributes: true,
     attributeFilter: ["style"],
   });
+  // The final copy as the document goes (a navigation, a reload, the page closing), with the
+  // writes the observer has not handled yet.
+  window.addEventListener("pagehide", () => {
+    record(observer.takeRecords());
+    log.final = true;
+    report();
+  });
 }
 
 interface StyleLog {
   doc: string;
+  final: boolean;
+  stored: boolean;
   permitted: number;
   foreign: string[];
   refusedAttributes: string[];
@@ -139,6 +176,16 @@ interface StyleLog {
 
 /** The binding through which every top document sends copies of its log (recordStyleWrites). */
 const STYLE_REPORT = "__kalzitStyleReport";
+
+/**
+ * How long a notice from a document the page has left waits for that document's final copy. The
+ * next document forwards it as it starts, so it normally arrives within milliseconds.
+ */
+const LAST_COPY_TIMEOUT_MS = 10_000;
+
+function logSize(log: StyleLog): number {
+  return log.permitted + log.foreign.length + log.refusedAttributes.length;
+}
 
 function styleLog(page: Page): Promise<StyleLog | null> {
   return page
@@ -198,6 +245,10 @@ class Guard {
   /** The last copy each top document sent of its log, and each page's current document. */
   private readonly reported = new Map<string, StyleLog>();
   private readonly current = new Map<Page, string>();
+  /** The copies the tab's next documents forwarded from session storage, per document. */
+  private readonly stored = new Map<string, StyleLog>();
+  /** Checks waiting for a document's final copy, per document. */
+  private readonly waiting = new Map<string, (() => void)[]>();
   /** Style notices checked so far (passed or not), for probes that wait for one. */
   private checkedNotices = 0;
   private baseline = 0;
@@ -206,9 +257,23 @@ class Guard {
 
   async watch(context: BrowserContext): Promise<void> {
     await context.exposeBinding(STYLE_REPORT, ({ page }, log: StyleLog) => {
-      this.reported.set(log.doc, log);
-      if (page !== null) {
-        this.current.set(page, log.doc);
+      if (log.stored) {
+        // Logs only grow; a popup starts with a copy of its opener's session storage, maybe older.
+        const known = this.stored.get(log.doc);
+        if (known === undefined || logSize(log) >= logSize(known)) {
+          this.stored.set(log.doc, log);
+        }
+      } else {
+        this.reported.set(log.doc, log);
+        if (page !== null) {
+          this.current.set(page, log.doc);
+        }
+      }
+      if (this.finalCopy(log.doc) !== null) {
+        for (const wake of this.waiting.get(log.doc) ?? []) {
+          wake();
+        }
+        this.waiting.delete(log.doc);
       }
     });
     await context.addInitScript(recordStyleWrites);
@@ -242,25 +307,46 @@ class Guard {
     // observer runs after the write the browser refused). The reporting document is the one that
     // sent the last copy before the notice arrived (a notice's location is the script that wrote
     // the style, not its document). If the page has gone on to another document by then (a
-    // navigation right after the editor wrote its styles), the newest copy that document sent
-    // stands in for it. Its copies arrive in order and before anything the page sends after it
-    // left the document, so once the read comes from another document no newer copy follows.
-    // The order of the notice and the copy with the write differs per engine (Firefox reports a
-    // refused style a task after the write), so the copy is not tied to the notice. A copy that
-    // misses a write can only fail the check, never pass it: a missed CodeMirror write lowers the
-    // notice budget, and a missed foreign style leaves its notice over the budget.
+    // navigation right after the editor wrote its styles), that document's final copy stands in
+    // for it: the one it made as it went, which holds every write it made. The next document
+    // forwards it from session storage, so it arrives even when the binding call made as the
+    // document went is lost. An earlier copy is no proof: it may miss the write, and a missed
+    // write can pass within the notice budget (WebKit's own notices, CodeMirror's writes).
+    // Without a final copy the notice fails as unreadable.
     const doc = this.current.get(page);
     this.checks.push(
-      styleLog(page).then((read) => {
-        const log =
-          doc === undefined || read?.doc === doc ? read : (this.reported.get(doc) ?? null);
-        this.checkedNotices += 1;
-        const problem = this.styleProblem(log);
-        if (problem !== null) {
-          this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
-        }
-      }),
+      styleLog(page)
+        .then((read) => (doc === undefined || read?.doc === doc ? read : this.lastCopy(doc)))
+        .then((log) => {
+          this.checkedNotices += 1;
+          const problem = this.styleProblem(log);
+          if (problem !== null) {
+            this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
+          }
+        }),
     );
+  }
+
+  /** A document's final copy: the one the next document forwarded, else the one it sent. */
+  private finalCopy(doc: string): StyleLog | null {
+    const sent = this.reported.get(doc);
+    return this.stored.get(doc) ?? (sent?.final === true ? sent : null);
+  }
+
+  /** The final copy once it arrived; null when none came within `LAST_COPY_TIMEOUT_MS`. */
+  private lastCopy(doc: string): Promise<StyleLog | null> {
+    if (this.finalCopy(doc) !== null) {
+      return Promise.resolve(this.finalCopy(doc));
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(this.finalCopy(doc)), LAST_COPY_TIMEOUT_MS);
+      const wakers = this.waiting.get(doc) ?? [];
+      wakers.push(() => {
+        clearTimeout(timer);
+        resolve(this.finalCopy(doc));
+      });
+      this.waiting.set(doc, wakers);
+    });
   }
 
   /** Style notices checked so far, passed or not. */
