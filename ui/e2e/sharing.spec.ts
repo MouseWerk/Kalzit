@@ -38,11 +38,9 @@ async function dashboard(title: string): Promise<string> {
   return owner.createDashboard(regionDashboard(title, source));
 }
 
-test("an admin shares a dashboard in public, a visitor opens it, and revoking ends it", async ({
-  page,
-  browser,
-  consoleGuard,
-}) => {
+test("an admin shares a dashboard in public, a visitor opens it, and revoking ends it", {
+  tag: "@smoke",
+}, async ({ page, browser, consoleGuard }) => {
   const title = unique("Verkauf öffentlich");
   const dashboardId = await dashboard(title);
   await signInOwner(page);
@@ -111,9 +109,9 @@ test("an admin shares a dashboard in public, a visitor opens it, and revoking en
   await visitor.close();
 });
 
-test("a snapshot freezes the panels and is listed for the admin and its creator", async ({
-  page,
-}) => {
+test("a snapshot freezes the panels and is listed for the admin and its creator", {
+  tag: "@smoke",
+}, async ({ page }) => {
   const title = unique("Verkauf Snapshot");
   const dashboardId = await dashboard(title);
   await signInOwner(page);

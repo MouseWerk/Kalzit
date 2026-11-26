@@ -37,7 +37,6 @@ async function renderGraph(type: string, graph: GraphSet | null, host: PanelHost
 function toolbar(patch: Partial<GraphToolbarProps> = {}) {
   const props: GraphToolbarProps = {
     title: "Shop",
-    drawn: true,
     drawable: true,
     layout: { value: "force", onChange: vi.fn() },
     direction: null,
@@ -45,8 +44,6 @@ function toolbar(patch: Partial<GraphToolbarProps> = {}) {
     onDisplay: vi.fn(),
     explorer: { on: false, disabled: false, note: null, onToggle: vi.fn() },
     onCloseGroups: null,
-    onZoom: vi.fn(),
-    onFit: vi.fn(),
     ...patch,
   };
   render(<GraphToolbar {...props} />);
@@ -54,14 +51,13 @@ function toolbar(patch: Partial<GraphToolbarProps> = {}) {
 }
 
 describe("graph toolbar", () => {
-  it("has zoom icons, Show all, the layout, Graph and Table as one choice, and the explorer", async () => {
+  it("has the layout, Graph and Table as one choice, and the explorer; zoom lies on the canvas", async () => {
     const user = userEvent.setup();
     const props = toolbar();
     const tools = screen.getByRole("group", { name: "Graph tools for Shop" });
-    await user.click(within(tools).getByRole("button", { name: "Zoom in" }));
-    expect(props.onZoom).toHaveBeenLastCalledWith(1.5);
-    await user.click(within(tools).getByRole("button", { name: "Show all" }));
-    expect(props.onFit).toHaveBeenCalled();
+    // Zoom and "Show all" moved to the canvas tools (Graph 0.8.1 board, decision 1).
+    expect(within(tools).queryByRole("button", { name: "Zoom in" })).toBeNull();
+    expect(within(tools).queryByRole("button", { name: "Show all" })).toBeNull();
     expect(within(tools).getByRole("combobox", { name: "Layout" })).toBeTruthy();
     const view = within(tools).getByRole("group", { name: "View" });
     const graph = within(view).getByRole("button", { name: "Graph" });
@@ -90,9 +86,8 @@ describe("graph toolbar", () => {
     expect(onChange).toHaveBeenLastCalledWith("right");
   });
 
-  it("leaves out zoom without a drawing and the choices where nothing can be drawn", () => {
-    toolbar({ drawn: false, drawable: false });
-    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+  it("leaves out the choices where nothing can be drawn", () => {
+    toolbar({ drawable: false });
     expect(screen.queryByRole("group", { name: "View" })).toBeNull();
     expect(screen.getByRole("button", { name: "Explorer" })).toBeTruthy();
   });

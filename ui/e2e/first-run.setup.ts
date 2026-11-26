@@ -7,12 +7,12 @@ import { expect, signIn, test } from "./support/test";
 /**
  * Runs once before every other project: a fresh server shows the setup page, the first owner
  * goes through its four steps, signs out and signs in again. Everything else builds on this
- * account.
+ * account. Part of the smoke set (@smoke), and a dependency of every other project, so it runs
+ * in every run and every shard.
  */
-test("first-run setup creates the owner, who can sign out and sign in again", async ({
-  page,
-  consoleGuard,
-}) => {
+test("first-run setup creates the owner, who can sign out and sign in again", {
+  tag: "@smoke",
+}, async ({ page, consoleGuard }) => {
   // The wrong code and the wrong password below are refused requests, which browsers log.
   consoleGuard.allow(/status of 403 .*\/api\/setup\/check$/);
   consoleGuard.allow(/status of 401 .*\/api\/auth\/login$/);

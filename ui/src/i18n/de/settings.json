@@ -12,7 +12,7 @@
   "settings.search.none": "Keine Einstellung passt zu „{query}“.",
   "settings.section.appearance.label": "Darstellung und Marke",
   "settings.section.appearance.lead": "Änderungen gelten sofort für alle, mit Rückgängig. Werte aus Datei oder Umgebung sind gesperrt.",
-  "settings.section.appearance.keywords": "aussehen design farbe thema logo name marke branding dunkel hell schrift",
+  "settings.section.appearance.keywords": "aussehen design farbe thema logo name marke branding dunkel hell schrift handbuch hilfe anleitung",
   "settings.section.general.label": "Allgemein",
   "settings.section.general.lead": "Vorgaben für alle ohne eigene Wahl und wie der Server protokolliert.",
   "settings.section.general.keywords": "startseite zeitzone woche protokoll log metriken prometheus monitoring",

@@ -136,7 +136,9 @@ test.describe("pages before the app at 1440 px", () => {
     }
   });
 
-  test("the keyboard reaches the form before language, theme and help", async ({ page }) => {
+  test("the keyboard reaches the form before language, theme and help", { tag: "@smoke" }, async ({
+    page,
+  }) => {
     await page.goto("/login");
     await expect(page.getByLabel(t("access.login.email"))).toBeVisible();
     await page.keyboard.press("Tab");

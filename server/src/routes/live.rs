@@ -594,13 +594,18 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
     let min = limits.min_refresh.as_millis() as u64;
     let refresh_ms = sub.refresh_ms.unwrap_or(limits.default_refresh.as_millis() as u64);
     let refresh_ms = refresh_ms.clamp(min, (MAX_REFRESH.as_millis() as u64).max(min));
+    // A panel's own query options apply to its live runs too; the range keeps its length, so
+    // they are worked out once.
+    let mut interval_ms = sub.interval_ms;
+    let mut max_data_points = sub.max_data_points;
     let (items, variables, identifiers) = match (&sub.panel, &sub.queries) {
         (Some(panel), None) => {
-            let PanelRun { items, variables, identifiers } =
+            let PanelRun { items, variables, identifiers, limits } =
                 panel_run(state, ctx, &panel.dashboard_id, &panel.panel_id, &sub.variables, sub.limit).await?;
             if !items.is_empty() {
                 check_items(&items)?;
             }
+            (interval_ms, max_data_points) = limits.apply(range.at(state.clock.now_ms()), interval_ms, max_data_points);
             (items, variables, Some(identifiers))
         }
         (None, Some(items)) => {
@@ -624,8 +629,8 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
         org_id: ctx.org_id.clone(),
         items,
         range,
-        interval_ms: sub.interval_ms,
-        max_data_points: sub.max_data_points,
+        interval_ms,
+        max_data_points,
         variables,
         identifiers,
         refresh_ms,

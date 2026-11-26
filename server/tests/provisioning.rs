@@ -751,9 +751,14 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
     assert_eq!(status_of(r, "panel 7 \"Orders per channel\""), ItemStatus::Converted);
 
     // Table: the organize step's names become display names on the columns' own names, cell
-    // displays and mappings carry over, the footer and the sort order are reported.
+    // displays and mappings carry over, the footer becomes Kalzit's, the sort order is reported.
     let table = panel(m, "p8");
-    assert_eq!(table["options"], json!({ "columnFilters": true }));
+    assert_eq!(
+        table["options"],
+        json!({ "columnFilters": true, "footer": { "show": true, "over": "all", "columns": [
+            { "column": "Orders", "calc": "sum" }, { "column": "Revenue", "calc": "sum" }
+        ] } })
+    );
     let overrides = table["fieldConfig"]["overrides"].as_array().unwrap();
     let column = |name: &str| {
         overrides
@@ -785,7 +790,7 @@ fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
     for (own, shown) in [("country", "Country"), ("segment", "Segment"), ("orders", "Orders")] {
         assert_eq!(column(own), json!({ "displayName": shown }));
     }
-    assert_eq!(notes_of(r, "panel 8 \"Top customers\""), ["table_footer", "table_sort", "link_grafana_path"]);
+    assert_eq!(notes_of(r, "panel 8 \"Top customers\""), ["table_sort", "link_grafana_path"]);
 
     // Thresholds drawn as lines and areas; the transparent base step becomes neutral.
     let cpu = panel(m, "p9");

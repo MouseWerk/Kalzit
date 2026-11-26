@@ -2,6 +2,7 @@ pub mod about;
 pub mod acme;
 pub mod admin_orgs;
 pub mod admin_settings;
+pub mod admin_summary;
 pub mod admin_users;
 pub mod ai;
 pub mod ai_calls;
@@ -108,6 +109,7 @@ pub fn all() -> Vec<table::RouteDef> {
         me::routes(),
         sign_ins::routes(),
         home::routes(),
+        admin_summary::routes(),
         panel_state::routes(),
         panel_plugins::routes(),
         apps::routes(),
