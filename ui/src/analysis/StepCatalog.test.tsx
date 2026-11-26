@@ -77,11 +77,12 @@ describe("the step catalog dialog", () => {
   it("shows the table steps in their groups with what the result is before the step", async () => {
     const { user } = setup();
     const dialog = await openCatalog(user);
+    // Rows: filter rows, sort and limit.
     expect(
       within(dialog)
         .getAllByRole("group")
         .map((g) => g.querySelector(".step-catalog__heading")?.textContent),
-    ).toEqual(["Fields · 4", "Rows · 2", "Combine · 2", "Reshape · 2", "Calculate · 7"]);
+    ).toEqual(["Fields · 4", "Rows · 3", "Combine · 2", "Reshape · 2", "Calculate · 7"]);
     expect(
       within(dialog).getByText("The result before this step is a table: 3 rows, 2 fields"),
     ).toBeTruthy();
