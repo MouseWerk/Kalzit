@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext, useState } from "react";
+import { createContext, type ReactNode, useContext, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBrandingSync } from "../appearance/api";
 import { BrandMark } from "../appearance/BrandMark";
@@ -11,9 +11,9 @@ import { recordChoice } from "../lib/localChoice";
 import { setTheme, THEMES, useTheme } from "../theme/theme";
 import "../appearance/appearance.css";
 import "./auth.css";
-import "./links.css";
 
-export type AccessWidth = "narrow" | "wide" | "done";
+/** Every page before the app has the one column; only help reads better wider. */
+export type AccessWidth = "narrow" | "done";
 
 /** The guide page the Help link opens; the help pages ship with Kalzit (see help/HelpPage). */
 export const HELP_PAGE = "getting-started";
@@ -37,15 +37,23 @@ export function AccessAbove({ children }: { children: ReactNode }) {
 }
 
 /**
- * The frame of the pages before the app shell: sign in, setup and help. A slim top bar with the
- * mark, language, theme and help; the form in a column on the left and, on wide screens, a panel
- * on the right with the calm backdrop and what the page has to say: the admin's notice where one
- * is set, otherwise one line about the product, unless the server turned it off or carries its
- * own name or logo (`signIn.productLine`); then the panel is the backdrop alone. Narrow screens and the widest pages ("done") keep
- * one centred column on the backdrop, the notice above the form. What a page shows above its
- * heading (`above`) has a row of its own, so the heading starts at the same height on every page
- * and the notice in the panel starts in the heading's row. Language and theme chosen here become
- * the preference of the account that signs in next, where it has none.
+ * The frame of the pages before the app shell: sign in, setup, the pages behind mailed links,
+ * errors and help (board Auth.dc.html, frame 2). A slim top bar with the mark, language, theme and
+ * help; on wide screens the page in a column on the left and a panel on the right with the calm
+ * backdrop and what the page has to say: the admin's notice where one is set, otherwise one line
+ * about the product, unless the server turned it off or carries its own name or logo
+ * (`signIn.productLine`); then the panel is the backdrop alone. Narrow screens and help keep one
+ * centred column on the backdrop, the notice above the page.
+ *
+ * Every page in it has one anatomy, top to bottom: the context (`above`: organization and server,
+ * the account in the second step, the steps of setup) in a row of its own, so the heading starts
+ * at the same height everywhere; the heading in one size with at most one sentence; at most one
+ * message; the content, standing on the page without a card; one main action; the side paths as
+ * text with a link. The column is 400 px wide on every page, help excepted.
+ *
+ * In the source the page comes before the panel and before language, theme and help, so the
+ * keyboard reaches the form first; a skip link at the very start leads there too. Language and
+ * theme chosen here become the preference of the account that signs in next, where it has none.
  */
 export function AccessLayout({
   context,
@@ -73,6 +81,7 @@ export function AccessLayout({
   const theme = useTheme();
   const noticed = notice !== undefined && notice !== null;
   const [aboveSlot, setAboveSlot] = useState<HTMLElement | null>(null);
+  const main = useRef<HTMLElement>(null);
   const productLine = !noticed && branding?.signIn.productLine === true;
   // With nothing to say the panel is decoration, not a landmark. One element either way, so the
   // backdrop is not built anew once the server's answer says which it is.
@@ -96,19 +105,31 @@ export function AccessLayout({
       recordChoice({ language: option });
     },
   }));
-  const themes: ToolbarMenuEntry[] = THEMES.map((option) => ({
-    kind: "radio",
-    key: option,
-    label: t(`theme.${option}`),
-    checked: option === theme,
-    onSelect: () => {
-      setTheme(option);
-      recordChoice({ theme: option });
-    },
-  }));
+  // The mode only; the light and dark variants are chosen only in the account settings, and here
+  // the server's default variants apply (board Themes, frame 7). Chosen here, the mode holds for
+  // this browser and becomes the account's choice on signing in.
+  const themes: ToolbarMenuEntry[] = [
+    { kind: "heading", key: "mode-heading", label: t("theme.mode") },
+    ...THEMES.map(
+      (option): ToolbarMenuEntry => ({
+        kind: "radio",
+        key: option,
+        label: t(`theme.${option}`),
+        checked: option === theme,
+        onSelect: () => {
+          setTheme(option);
+          recordChoice({ theme: option });
+        },
+      }),
+    ),
+  ];
 
   return (
     <div className={width === "done" ? "access" : "access access--split"}>
+      {/* A button, not a link to "#...": the fragment of these pages carries the links' tokens. */}
+      <button type="button" className="access__skip" onClick={() => main.current?.focus()}>
+        {t("access.top.skip")}
+      </button>
       <header className="access__top">
         <Link to="/" className="access__brand">
           <span className="access__mark">
@@ -117,33 +138,15 @@ export function AccessLayout({
           <span className="access__product">{brand.productName}</span>
           {context === undefined ? null : <span className="access__context">{context}</span>}
         </Link>
-        <div className="access__tools">
-          <ToolbarMenu
-            label={t("access.top.language", { language: t(`language.${language}`) })}
-            icon="globe"
-            text={t(`language.${language}`)}
-            entries={languages}
-            className="access__tool"
-          />
-          <ToolbarMenu
-            label={t("access.top.theme", { theme: t(`theme.${theme}`) })}
-            icon="screen"
-            text={t(`theme.${theme}`)}
-            entries={themes}
-            className="access__tool"
-          />
-          <Link
-            to="/help/$page"
-            params={{ page: HELP_PAGE }}
-            className="button button--ghost icon-button access__tool"
-            aria-label={t("access.top.help")}
-            {...(helpInNewTab ? { target: "_blank", rel: "noopener" } : {})}
-          >
-            <Icon name="help" />
-            <span className="icon-button__text">{t("access.top.help")}</span>
-          </Link>
-        </div>
       </header>
+      <main ref={main} tabIndex={-1} className={`access__column access__column--${width}`}>
+        <div className="access__above" ref={setAboveSlot}>
+          {above}
+        </div>
+        <div className="access__flow">
+          <AboveSlot value={aboveSlot}>{children}</AboveSlot>
+        </div>
+      </main>
       <div className="access__panel" {...landmark}>
         <Backdrop />
         {noticed ? (
@@ -162,14 +165,34 @@ export function AccessLayout({
           </div>
         ) : null}
       </div>
-      <main className={`access__column access__column--${width}`}>
-        <div className="access__above" ref={setAboveSlot}>
-          {above}
-        </div>
-        <div className="access__flow">
-          <AboveSlot value={aboveSlot}>{children}</AboveSlot>
-        </div>
-      </main>
+      {/* After the page in the source, so the keyboard reaches the form first; on screen in the
+          corner of the top bar. */}
+      <div className="access__tools">
+        <ToolbarMenu
+          label={t("access.top.language", { language: t(`language.${language}`) })}
+          icon="globe"
+          text={t(`language.${language}`)}
+          entries={languages}
+          className="access__tool"
+        />
+        <ToolbarMenu
+          label={t("access.top.theme", { theme: t(`theme.${theme}`) })}
+          icon="screen"
+          text={t(`theme.${theme}`)}
+          entries={themes}
+          className="access__tool"
+        />
+        <Link
+          to="/help/$page"
+          params={{ page: HELP_PAGE }}
+          className="button button--ghost icon-button access__tool"
+          aria-label={t("access.top.help")}
+          {...(helpInNewTab ? { target: "_blank", rel: "noopener" } : {})}
+        >
+          <Icon name="help" />
+          <span className="icon-button__text">{t("access.top.help")}</span>
+        </Link>
+      </div>
       <p className="access__fine">{t("access.fineprint")}</p>
     </div>
   );
@@ -215,26 +238,26 @@ export function AccessAlert({ children }: { children: ReactNode }) {
   );
 }
 
-/** A form's own error and status notices: tinted fill and icon, never a frame. */
+/**
+ * A message of a page: a surface with an icon and text, in the error tint for errors and neutral
+ * for everything else, never a frame or a bar. It says what is, then what can be done next.
+ */
 export function AccessNotice({
   tone,
   icon,
   title,
   detail,
-  heading = false,
 }: {
   tone: "danger" | "info";
-  icon: "alert" | "clock" | "check" | "lock" | "link" | "members" | "shieldCheck";
+  icon: "alert" | "clock" | "check" | "lock" | "link" | "members" | "shieldCheck" | "info";
   title: ReactNode;
   detail?: ReactNode;
-  /** The notice is what the page says (an end state of a link): its title is the page's heading. */
-  heading?: boolean;
 }) {
   return (
     <div className={`access-notice access-notice--${tone}`}>
       <Icon name={icon} />
       <div>
-        {heading ? <h1 className="access-notice__title">{title}</h1> : <p>{title}</p>}
+        <p>{title}</p>
         {detail === undefined || detail === null ? null : (
           <p className="access-notice__detail">{detail}</p>
         )}
@@ -244,29 +267,93 @@ export function AccessNotice({
 }
 
 /**
- * An end state of a link (expired, used, unknown, saved; board frames 3C and 3D): the notice says
- * what happened and is the page's heading, one button below it says what to do.
+ * An end state as a page of its own (board frame 2, "Endzustände sind Seiten"): an icon on a
+ * faceted tile, the heading in the size of every other page, one sentence, one action and, where
+ * there is one, a side path. A link that no longer works, an inbox to check, a saved password.
  */
-export function LinkState({
-  tone,
+export function AccessEnd({
+  tone = "info",
   icon,
   title,
   text,
   action,
+  aside,
   status = false,
 }: {
-  tone: "danger" | "info";
-  icon: "check" | "clock" | "link";
-  title: string;
-  text: string;
-  action: ReactNode;
-  /** Announced when it appears (after saving), not only shown. */
+  /** "danger" tints the tile for a real error; waiting, done and used links stay neutral. */
+  tone?: "danger" | "info";
+  icon: "alert" | "check" | "clock" | "link" | "lock" | "members" | "info";
+  title: ReactNode;
+  text?: ReactNode;
+  /** The one action; several only where they weigh the same ("Cancel" next to "Sign out"). */
+  action?: ReactNode;
+  /** A side path below the action, as text with a link. */
+  aside?: ReactNode;
+  /**
+   * Announced when it appears (after saving or sending), not only shown. Only the heading and
+   * the sentence are the live region: the actions below may tick ("Next try in 52 s"), and a
+   * status around them would announce every second.
+   */
   status?: boolean;
 }) {
   return (
-    <div className="access__card link-state" role={status ? "status" : undefined}>
-      <AccessNotice tone={tone} icon={icon} title={title} detail={text} heading />
-      {action}
+    <div className="access-end">
+      <span className={`access-end__tile access-end__tile--${tone}`} aria-hidden="true">
+        <Icon name={icon} />
+      </span>
+      <div className="access__head" role={status ? "status" : undefined}>
+        <h1>{title}</h1>
+        {text === undefined || text === null || text === "" ? null : (
+          <p className="access__lead">{text}</p>
+        )}
+      </div>
+      {action === undefined ? null : <div className="access-end__actions">{action}</div>}
+      {aside === undefined || aside === null ? null : <p className="access__below">{aside}</p>}
+    </div>
+  );
+}
+
+/**
+ * The steps of a flow (setup, setting up a second factor) in the row above the heading: a rhombus
+ * per step, then "Step 2 of 4 · Your account". The marks are the list screen readers read, with
+ * the current step as `aria-current="step"`; the line says the same to the eye.
+ */
+export function AccessSteps({
+  names,
+  current,
+  label,
+}: {
+  names: readonly string[];
+  /** The current step, counted from 1. */
+  current: number;
+  /** "Step 2 of 4": the list's name. */
+  label: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="setup-steps">
+      <ol className="setup-steps__list" aria-label={label}>
+        {names.map((name, index) => {
+          const number = index + 1;
+          const state = number < current ? "done" : number === current ? "current" : "open";
+          return (
+            <li
+              key={name}
+              className={`setup-steps__item setup-steps__item--${state}`}
+              aria-current={state === "current" ? "step" : undefined}
+            >
+              <span className="setup-steps__mark" aria-hidden="true" />
+              <span className="visually-hidden">
+                {name}
+                {state === "done" ? t("access.setup.stepDone") : null}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="setup-steps__compact" aria-hidden="true">
+        {label} · <b>{names[current - 1]}</b>
+      </p>
     </div>
   );
 }

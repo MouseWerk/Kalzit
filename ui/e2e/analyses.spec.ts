@@ -4,10 +4,9 @@ import { expectSelectValue, selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { addPanel, fillQuery, startEditing } from "./support/ui";
 
-test("an Explore query is saved, found in the list, opened again and linked into a panel", async ({
-  page,
-  world,
-}) => {
+test("an Explore query is saved, found in the list, opened again and linked into a panel", {
+  tag: "@smoke",
+}, async ({ page, world }) => {
   const owner = await Api.owner();
   const dashboardTitle = unique("Mit Auswertung");
   const dashboardId = await owner.createDashboard(regionDashboard(dashboardTitle, world.sourceId));

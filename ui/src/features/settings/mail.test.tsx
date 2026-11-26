@@ -82,6 +82,52 @@ describe("mail server settings", () => {
     expect(server.areas.mail.view.settings?.port).toBe(2525);
   });
 
+  it("offers no encryption for a relay, with a calm warning and sign-in allowed", async () => {
+    const { user, server } = await openAdmin("/settings/email", {
+      isServerAdmin: true,
+      setupServer: (s) => {
+        stored({ settings: { ...STORED, username: "" }, hasPassword: false })(s);
+        s.areas.mail.testAnswer = {
+          reply: "250 2.0.0 OK",
+          elapsedMs: 12,
+          tls: null,
+          certificateNotAfter: null,
+        };
+      },
+    });
+    const card = await form();
+    const warning = /^Mails and the server address travel unencrypted/;
+    expect(within(card).queryByText(warning)).toBeNull();
+
+    await user.click(within(card).getByRole("radio", { name: "No encryption" }));
+    const port = within(card).getByRole("textbox", { name: "Port" }) as HTMLInputElement;
+    await user.clear(port);
+    expect(port.placeholder).toBe("25");
+    expect(within(card).getByText("Plain SMTP without STARTTLS; usually port 25.")).toBeTruthy();
+    const note = within(card).getByRole("status");
+    expect(note.textContent).toMatch(warning);
+    expect(note.textContent).toContain("Use this only for a trusted relay in your own network.");
+    expect(note.textContent).not.toContain("password");
+
+    // A sign-in stays possible; the warning says the password travels unencrypted too.
+    await user.type(within(card).getByRole("textbox", { name: "User" }), "relay-user");
+    await user.type(within(card).getByLabelText("Password"), "geheim");
+    expect(within(card).getByRole("status").textContent).toContain(
+      "The password is sent unencrypted too.",
+    );
+
+    await user.click(within(card).getByRole("button", { name: "Send test mail" }));
+    expect(await within(card).findByText("Test mail accepted.")).toBeTruthy();
+    await user.click(within(card).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Mail server saved.")).toBeTruthy();
+    const body = server.calls.find((call) => call.method === "PUT")?.body as {
+      settings: Record<string, unknown>;
+      password: string;
+    };
+    expect(body.settings).toMatchObject({ security: "none", port: 0, username: "relay-user" });
+    expect(body.password).toBe("geheim");
+  });
+
   it("marks the field a failed test mail names", async () => {
     const { user } = await openAdmin("/settings/email", {
       isServerAdmin: true,
@@ -146,5 +192,33 @@ describe("mail server settings", () => {
         "Without a public address (server.public_url) Kalzit sends no links: no invitations and no password links.",
       ),
     ).toBeTruthy();
+  });
+
+  it("turns the image in the mail header off at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/settings/email", {
+      isServerAdmin: true,
+      setup: (state) => {
+        state.serverSettings.push({
+          key: "mail.mark_image",
+          scope: "server",
+          value: true,
+          default: true,
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "The setting mail.mark_image",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const mark = await screen.findByRole("switch", { name: "Mark in the mail header" });
+    expect((mark as HTMLInputElement).checked).toBe(true);
+    await user.click(mark);
+    expect(await screen.findByText("“Mark in the mail header” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "mail.mark_image");
+    expect(stored).toMatchObject({ value: false, version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: true }));
   });
 });

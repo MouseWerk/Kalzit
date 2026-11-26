@@ -4,7 +4,8 @@ import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
-import { modShortcut } from "../../shell/sidebarState";
+import { Keys } from "../../shortcuts/Keys";
+import { type ShortcutId, shortcutProps } from "../../shortcuts/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import { panelIcon } from "./panelIcons";
@@ -93,12 +94,24 @@ export function DashboardRail({
 }: DashboardRailProps) {
   const { t } = useI18n();
   const paneId = useId();
-  const [pane, setPane] = useState<Pane>(null);
-  // Selecting a panel on the canvas opens the outline, where its inspector is.
+  // Edit mode starts with the outline open, where the selected panel's inspector shows. Its
+  // room is taken once, as edit mode starts: selecting a panel never opens it (the canvas would
+  // narrow and every panel move under the pointer), the person opens and closes it.
+  const [pane, setPane] = useState<Pane>(editing ? "outline" : null);
+  const [wasEditing, setWasEditing] = useState(editing);
+  if (editing !== wasEditing) {
+    setWasEditing(editing);
+    if (editing && pane === null) {
+      setPane("outline");
+    } else if (!editing && pane === "add") {
+      setPane(null);
+    }
+  }
+  // Selecting a panel while the Add pane is open shows the outline instead, in the same room.
   const [shownFor, setShownFor] = useState<string | null>(null);
   if (selectedId !== shownFor) {
     setShownFor(selectedId);
-    if (selectedId !== null) {
+    if (selectedId !== null && pane === "add") {
       setPane("outline");
     }
   }
@@ -122,7 +135,11 @@ export function DashboardRail({
 
   return (
     // At the window's edge: the tooltips open to the left, into the canvas (TIP_SIDE_ATTRIBUTE).
-    <aside className="dash-rail" aria-label={t("toolbar.rail")} data-tip-side="before">
+    <aside
+      className={editing ? "dash-rail dash-rail--editing" : "dash-rail"}
+      aria-label={t("toolbar.rail")}
+      data-tip-side="before"
+    >
       {pane === "outline" ? (
         <Outline
           id={paneId}
@@ -400,8 +417,8 @@ interface AddEntry {
   icon: IconName;
   label: string;
   hint: string;
-  /** The shortcut that does the same, shown beside the entry. */
-  keys?: string;
+  /** The registry's shortcut that does the same, shown beside the entry. */
+  shortcut?: ShortcutId;
   onSelect: () => void;
 }
 
@@ -490,7 +507,7 @@ function AddPane({
                   title:
                     copied.panel.title === "" ? t("dashboards.panel.untitled") : copied.panel.title,
                 }),
-                keys: modShortcut("V").label,
+                shortcut: "panel.paste" as const,
                 onSelect: actions.pastePanel,
               },
             ]),
@@ -591,14 +608,19 @@ function AddPane({
           <ul className="dash-pane__list">
             {group.entries.map((entry) => (
               <li key={entry.key}>
-                <button type="button" className="dash-pane__entry" onClick={run(entry.onSelect)}>
+                <button
+                  type="button"
+                  className="dash-pane__entry"
+                  {...(entry.shortcut === undefined ? {} : shortcutProps(entry.shortcut))}
+                  onClick={run(entry.onSelect)}
+                >
                   <Icon name={entry.icon} />
                   <span className="dash-pane__entry-text">
                     <span className="dash-pane__entry-label">{entry.label}</span>
                     <span className="dash-pane__entry-hint">{entry.hint}</span>
                   </span>
-                  {entry.keys === undefined ? null : (
-                    <kbd className="kbd dash-pane__entry-key">{entry.keys}</kbd>
+                  {entry.shortcut === undefined ? null : (
+                    <Keys id={entry.shortcut} className="dash-pane__entry-key" />
                   )}
                 </button>
               </li>

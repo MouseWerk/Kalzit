@@ -412,6 +412,7 @@ export function ProviderDialog({
               type="button"
               className="button button--secondary"
               aria-disabled={busy !== null}
+              aria-busy={busy === "test" || undefined}
               onClick={() => void test()}
             >
               <Icon name="refresh" />

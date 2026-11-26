@@ -4,6 +4,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import { showToast } from "../../../lib/toasts";
 import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
+import { shortcutText } from "../../../shortcuts/registry";
 import "./shared.css";
 
 const FOCUSABLE =
@@ -52,12 +53,15 @@ export function Dialog({
   escapeKeepsInput = true,
   alert = false,
 }: DialogProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
 
   const typed = useTypedInput();
-  const keep = () => showToast({ message: t("common.dialog.backKept") });
+  const keep = () =>
+    showToast({
+      message: t("common.dialog.backKept", { keys: shortcutText("layer.close", language) }),
+    });
 
   useEscapeLayer(true, () => (backGuard && escapeKeepsInput && typed.has() ? keep() : onClose()));
   // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
@@ -150,6 +154,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string | undefined;
   /** Asks as an `alertdialog`, for what cannot be taken back (revoking a link). */
   alert?: boolean;
+  /** A third way, after the confirmation: the constructive one ("Save"), as the main button. */
+  primary?: { label: string; onClick: () => void } | undefined;
 }
 
 /** Confirmation for a destructive action. Focus starts on Cancel, so Enter does not confirm. */
@@ -164,6 +170,7 @@ export function ConfirmDialog({
   backGuard = true,
   cancelLabel,
   alert = false,
+  primary,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const textId = useId();
@@ -193,6 +200,16 @@ export function ConfirmDialog({
           >
             {confirmLabel}
           </button>
+          {primary === undefined ? null : (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={primary.onClick}
+              disabled={busy}
+            >
+              {primary.label}
+            </button>
+          )}
         </>
       }
     >

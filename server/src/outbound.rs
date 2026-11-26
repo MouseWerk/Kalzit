@@ -99,8 +99,12 @@ pub struct OwnAddresses {
     /// The listeners; an unspecified address (`0.0.0.0`, `::`) listens on every address of this
     /// computer, so its loopback names and addresses count.
     pub listeners: Vec<std::net::SocketAddr>,
-    /// The host (lowercase, without brackets) and port of Kalzit's own database server.
-    pub database: Option<(String, u16)>,
+    /// Every host (lowercase, without brackets) and port Kalzit's own database's connection
+    /// string may connect to, in every PostgreSQL form (`pg_location`).
+    pub database: Vec<(String, u16)>,
+    /// The database's connection string could not be read: the default port counts as the
+    /// database's on every host.
+    pub database_unknown: bool,
 }
 
 impl OwnAddresses {
@@ -109,13 +113,21 @@ impl OwnAddresses {
             .into_iter()
             .filter_map(|a| a.trim().parse::<std::net::SocketAddr>().ok())
             .collect();
-        let url = config.database_url();
-        let database =
-            Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "postgres" | "postgresql")).and_then(|u| {
-                let host = normalize_numeric(&normalize(u.host_str()?.trim_matches(['[', ']'])));
-                (!host.is_empty()).then_some((host, u.port().unwrap_or(5432)))
-            });
-        Self { listeners, database }
+        Self::with_database(listeners, &config.database_url())
+    }
+
+    /// The listeners and the database at `url`; numeric IPv4 forms of the database's hosts
+    /// (`2130706433`) are read as the address they mean.
+    pub fn with_database(listeners: Vec<std::net::SocketAddr>, url: &str) -> Self {
+        let location = crate::pg_location::own_database(url);
+        let mut database = Vec::new();
+        for (host, port) in location.iter().flat_map(|l| &l.tcp) {
+            let host = normalize_numeric(&normalize(host));
+            if !host.is_empty() && !database.contains(&(host.clone(), *port)) {
+                database.push((host, *port));
+            }
+        }
+        Self { listeners, database, database_unknown: location.is_some_and(|l| l.unknown) }
     }
 }
 
@@ -190,10 +202,10 @@ pub fn check_not_own(text: &str, own: &OwnAddresses) -> Result<(), String> {
             return Err(format!("{host}:{port} is Kalzit's own listener"));
         }
     }
-    if let Some((db_host, db_port)) = &own.database
-        && *db_port == port
-        && (*db_host == host || (is_loopback_host(db_host) && is_loopback_host(&host)))
-    {
+    let named = own.database.iter().any(|(db_host, db_port)| {
+        *db_port == port && (*db_host == host || (is_loopback_host(db_host) && is_loopback_host(&host)))
+    });
+    if named || (own.database_unknown && port == crate::pg_location::DEFAULT_PORT) {
         return Err(format!("{host}:{port} is Kalzit's own database server"));
     }
     Ok(())
@@ -214,10 +226,9 @@ pub async fn check_not_own_resolved(text: &str, own: &OwnAddresses) -> Result<()
     let host = normalize(host.trim_matches(['[', ']']));
     let Some(port) = url.port_or_known_default() else { return Ok(()) };
     let ips = resolve(&host, port).await;
-    let db_ips = match &own.database {
-        Some((db_host, db_port)) if *db_port == port => resolve(db_host, *db_port).await,
-        _ => Vec::new(),
-    };
+    let lookups = own.database.iter().filter(|(_, db_port)| *db_port == port).map(|(h, p)| resolve(h, *p));
+    let mut db_ips: Vec<IpAddr> = futures_util::future::join_all(lookups).await.into_iter().flatten().collect();
+    db_ips.dedup();
     check_addresses(&host, port, &ips, own, &db_ips)
 }
 
@@ -235,7 +246,7 @@ fn check_addresses(host: &str, port: u16, ips: &[IpAddr], own: &OwnAddresses, db
             return Err(format!("{host}:{port} resolves to Kalzit's own listener"));
         }
     }
-    if own.database.as_ref().is_some_and(|(_, db_port)| *db_port == port) {
+    if own.database.iter().any(|(_, db_port)| *db_port == port) {
         let db_local = db_ips.iter().any(|ip| is_local_address(*ip));
         if ips.iter().any(|ip| db_ips.contains(ip) || (db_local && is_local_address(*ip))) {
             return Err(format!("{host}:{port} resolves to Kalzit's own database server"));
@@ -476,10 +487,37 @@ mod tests {
     }
 
     #[test]
+    fn the_own_database_is_read_in_every_postgres_form() {
+        let own = OwnAddresses::with_database(
+            Vec::new(),
+            "postgres://k:p@DB1.example.test:6001,[2001:db8::5]:6002/k?hostaddr=2130706433&port=6003",
+        );
+        for bad in [
+            "http://db1.example.test:6001",
+            "http://[2001:db8::5]:6002",
+            "http://127.0.0.1:6003",
+            "http://localhost:6003",
+        ] {
+            assert!(check_not_own(bad, &own).is_err(), "{bad}");
+        }
+        assert!(check_not_own("http://db2.example.test:6001", &own).is_ok());
+        let kv = OwnAddresses::with_database(Vec::new(), "host=db3.example.test port=6004 dbname=k");
+        assert!(check_not_own("http://db3.example.test:6004", &kv).is_err());
+        // Not SQLite and unreadable: the default port is the database's everywhere.
+        let unknown = OwnAddresses::with_database(Vec::new(), "host='unterminated");
+        assert!(unknown.database_unknown);
+        assert!(check_not_own("http://proxy.example.test:5432", &unknown).is_err());
+        assert!(check_not_own("http://proxy.example.test:3128", &unknown).is_ok());
+        let sqlite = OwnAddresses::with_database(Vec::new(), "sqlite:kalzit.db?mode=rwc");
+        assert!(sqlite.database.is_empty() && !sqlite.database_unknown);
+    }
+
+    #[test]
     fn a_proxy_never_names_kalzits_own_listener_or_database() {
         let own = OwnAddresses {
             listeners: vec!["0.0.0.0:3000".parse().unwrap(), "10.0.0.7:3443".parse().unwrap()],
-            database: Some(("db.example.test".into(), 5432)),
+            database: vec![("db.example.test".into(), 5432)],
+            database_unknown: false,
         };
         for bad in [
             "http://localhost:3000",
@@ -495,7 +533,8 @@ mod tests {
             assert!(check_not_own(good, &own).is_ok(), "{good}");
         }
         // A database on this computer: any loopback name of the same port.
-        let local = OwnAddresses { listeners: Vec::new(), database: Some(("localhost".into(), 5432)) };
+        let local =
+            OwnAddresses { listeners: Vec::new(), database: vec![("localhost".into(), 5432)], database_unknown: false };
         assert!(check_not_own("http://127.0.0.1:5432", &local).is_err());
     }
 
@@ -504,7 +543,8 @@ mod tests {
         let ip = |s: &str| s.parse::<IpAddr>().unwrap();
         let own = OwnAddresses {
             listeners: vec!["0.0.0.0:3000".parse().unwrap(), "10.0.0.7:3443".parse().unwrap()],
-            database: Some(("db.example.test".into(), 5432)),
+            database: vec![("db.example.test".into(), 5432)],
+            database_unknown: false,
         };
         // A name that resolves to a loopback address, to the listener's address, or (for an
         // unspecified listener) to any address of this computer.
@@ -534,7 +574,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_name_of_this_computer_is_refused_by_address() {
-        let own = OwnAddresses { listeners: vec!["127.0.0.1:3000".parse().unwrap()], database: None };
+        let own = OwnAddresses {
+            listeners: vec!["127.0.0.1:3000".parse().unwrap()],
+            database: Vec::new(),
+            database_unknown: false,
+        };
         assert!(resolve("localhost", 3000).await.iter().all(|ip| ip.is_loopback()));
         assert!(check_not_own_resolved("http://localhost:3000", &own).await.is_err());
         assert!(check_not_own_resolved("http://0x7f.1:3000", &own).await.is_err());
@@ -543,7 +587,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_check_of_a_proxy_in_use_is_kept_for_a_minute() {
-        let own = OwnAddresses { listeners: vec!["127.0.0.1:3999".parse().unwrap()], database: None };
+        let own = OwnAddresses {
+            listeners: vec!["127.0.0.1:3999".parse().unwrap()],
+            database: Vec::new(),
+            database_unknown: false,
+        };
         assert!(check_not_own_cached("http://localhost:3999", &own).await.is_err());
         assert!(check_not_own_cached("http://localhost:3998", &own).await.is_ok());
         let key = format!("http://localhost:3999 {own:?}");
@@ -562,7 +610,7 @@ mod tests {
         let mut config = crate::config::Config::default();
         config.database.url = Some("postgres://kalzit@0x7f000001:5432/kalzit".into());
         let own = OwnAddresses::of(&config);
-        assert_eq!(own.database, Some(("127.0.0.1".into(), 5432)));
+        assert_eq!(own.database, vec![("127.0.0.1".to_string(), 5432)]);
         assert!(check_not_own("http://localhost:5432", &own).is_err());
     }
 

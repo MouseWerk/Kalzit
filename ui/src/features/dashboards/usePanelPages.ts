@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DocumentSet, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { runAnalysis } from "../analyses/api";
 import { runQuery } from "../datasources/api";
 import { useSourceKinds } from "../datasources/useSourceKinds";
 import { runPanelQuery } from "./api";
+import { queryLimits } from "./queryLimits";
 import { appendPages, outcomesOf, type TargetOutcome } from "./results";
-import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
-import { type PanelQueryInput, panelRequest } from "./usePanelResults";
+import { type DistributionRoute, type PanelQueryInput, panelRequest } from "./usePanelResults";
 
 /** "Load more" for the document sets of a panel whose source has more (`nextCursor`). */
 export interface MoreDocuments {
@@ -55,11 +56,12 @@ const NONE: Pages = { of: undefined, request: null, pages: {}, loading: null, er
 /**
  * The panel's outcomes with the pages loaded after them, and the way to load the next one. A
  * stored panel continues through the panel route, which runs only the stored query of the target
- * (all a viewer may); a draft through the free route. The server binds each cursor to the caller
- * and the query, so a page always continues the answer it came from.
+ * (all a viewer may), a saved analysis through its own route (`route`); a draft through the free
+ * route. The server binds each cursor to the caller and the query, so a page always continues the
+ * answer it came from.
  */
 export function usePanelPages(
-  input: PanelQueryInput,
+  input: PanelQueryInput & { route?: DistributionRoute | undefined },
   answer: PanelAnswer,
 ): { outcomes: readonly TargetOutcome[]; more: MoreDocuments; pageCount: number } {
   const { t } = useI18n();
@@ -118,15 +120,25 @@ export function usePanelPages(
     const controller = new AbortController();
     abort.current = controller;
     const { range, variables, targets, graphSteps } = request;
-    const common = {
-      timeRange: range,
-      variables,
-      maxDataPoints: MAX_DATA_POINTS,
-      intervalMs: intervalFor(range),
-    };
+    // A later page asks with the same points and interval as the first one.
+    const { maxDataPoints, intervalMs } = queryLimits(input.panel, range);
+    const common = { timeRange: range, variables, maxDataPoints, intervalMs };
     try {
       let response: Awaited<ReturnType<typeof runQuery>>;
-      if (input.source === "stored") {
+      if (input.source === "stored" && input.route?.kind === "analysis") {
+        // An analysis has no variables; its route refuses any.
+        response = await runAnalysis(
+          input.orgId,
+          input.route.analysisId,
+          {
+            timeRange: range,
+            maxDataPoints,
+            intervalMs,
+            cursors: { [refId]: cursor },
+          },
+          controller.signal,
+        );
+      } else if (input.source === "stored") {
         response = await runPanelQuery(
           input.orgId,
           input.dashboardId,
@@ -182,14 +194,22 @@ export function usePanelPages(
     }
   }
 
-  return {
-    outcomes,
-    pageCount,
-    more: {
-      loading: current.loading,
-      error: current.error,
+  // The latest `load`, read when a page is asked for: `more` then stays the same object while
+  // nothing it shows changed, so typing in the editor does not draw the preview again.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  });
+  const { loading, error } = current;
+  const more = useMemo<MoreDocuments>(
+    () => ({
+      loading,
+      error,
       disabled,
-      load: (refId, cursor) => void load(refId, cursor),
-    },
-  };
+      load: (refId, cursor) => void loadRef.current(refId, cursor),
+    }),
+    [loading, error, disabled],
+  );
+
+  return { outcomes, pageCount, more };
 }

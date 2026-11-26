@@ -20,6 +20,8 @@ import { useEscapeLayer } from "../lib/layers";
 import { showErrorToast } from "../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
 import { usePreferenceChange } from "../preferences/preferences";
+import { Keys } from "../shortcuts/Keys";
+import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { THEMES, useTheme } from "../theme/theme";
 import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
@@ -57,8 +59,8 @@ interface PaletteItem {
   detail?: string | undefined;
   /** What kind of thing it is (Dashboard, Folder, ...), shown quietly on the right. */
   kind?: string | undefined;
-  /** Keys of the shortcut that does the same, one keycap each. */
-  keys?: readonly string[] | undefined;
+  /** The registry's shortcut that does the same, shown as key caps. */
+  shortcut?: ShortcutId | undefined;
   /** The current theme or language: marked with a check. */
   current?: boolean | undefined;
   icon: IconName;
@@ -106,9 +108,14 @@ const KIND_LABEL: Record<SearchHit["kind"], MessageKey> = {
 export function CommandPalette({
   onClose,
   onShowShortcuts,
+  focusMode,
+  onToggleFocusMode,
 }: {
   onClose: () => void;
   onShowShortcuts: () => void;
+  /** Whether focus mode hides the sidebar; undefined where the sidebar cannot hide (narrow). */
+  focusMode?: boolean | undefined;
+  onToggleFocusMode?: () => void;
 }) {
   const { t, language } = useI18n();
   const org = useCurrentOrg();
@@ -277,12 +284,23 @@ export function CommandPalette({
       run: () => change.mutate({ language: option }),
     });
   }
+  if (focusMode !== undefined && onToggleFocusMode !== undefined) {
+    actions.push({
+      key: "action:focus-mode",
+      label: t(focusMode ? "shell.palette.action.focusOff" : "shell.palette.action.focusOn"),
+      icon: "sidebar",
+      group: "appearance",
+      shortcut: "sidebar.focus",
+      score: 0,
+      run: onToggleFocusMode,
+    });
+  }
   actions.push({
     key: "action:shortcuts",
     label: t("shell.palette.action.shortcuts"),
     icon: "keyboard",
     group: "help",
-    keys: ["?"],
+    shortcut: "help.toggle",
     score: 0,
     run: onShowShortcuts,
   });
@@ -450,6 +468,7 @@ export function CommandPalette({
         id={optionId(index)}
         role="option"
         aria-selected={index === current}
+        {...(item.shortcut === undefined ? {} : shortcutProps(item.shortcut))}
         className="palette__option"
         onPointerMove={() => setActive(index)}
         onClick={() => runAt(index)}
@@ -465,11 +484,7 @@ export function CommandPalette({
         )}
         <span className="palette__meta">
           {item.kind === undefined ? null : <span className="palette__kind">{item.kind}</span>}
-          {item.keys?.map((key) => (
-            <kbd key={key} className="kbd">
-              {key}
-            </kbd>
-          ))}
+          {item.shortcut === undefined ? null : <Keys id={item.shortcut} />}
           {item.current === true ? (
             <>
               <Icon name="check" className="palette__check" />
@@ -517,9 +532,7 @@ export function CommandPalette({
             }}
             onKeyDown={onKeyDown}
           />
-          <span className="kbd" aria-hidden="true">
-            Esc
-          </span>
+          <Keys id="layer.close" className="palette__esc" />
         </div>
         <div
           ref={listRef}
@@ -567,7 +580,18 @@ export function CommandPalette({
           {status}
         </p>
         <p className="palette__hint" aria-hidden="true">
-          {t("shell.palette.hint")}
+          <span className="palette__hint-part">
+            <Keys id="palette.move" />
+            {t("shell.palette.hintMove")}
+          </span>
+          <span className="palette__hint-part">
+            <Keys id="palette.run" />
+            {t("shell.palette.hintOpen")}
+          </span>
+          <span className="palette__hint-part">
+            <Keys id="layer.close" />
+            {t("shell.palette.hintClose")}
+          </span>
         </p>
       </div>
     </div>,

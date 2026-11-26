@@ -67,7 +67,7 @@ export function AppearanceSection({
               <SettingRow
                 key={row}
                 setting={setting}
-                note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
+                note={row === "appearance.default_theme_dark" ? <OwnThemeNote /> : undefined}
                 rowId={row}
                 changes={changes}
                 canWrite
@@ -93,14 +93,16 @@ export function AppearanceSection({
 }
 
 /**
- * A theme chosen in the profile wins over the default, so changing the default does nothing for
- * its owner; this says so instead of letting the control seem broken.
+ * A theme or variant chosen in the profile wins over the default, so changing the default does
+ * nothing for its owner; this says so, under the last of the three theme rows (board Themes,
+ * frame 7), instead of letting the controls seem broken.
  */
 function OwnThemeNote() {
   const { t } = useI18n();
   const { me } = appRoute.useRouteContext();
   const preferences = useQuery(preferencesQuery(me.id));
-  if (preferences.data?.theme == null) {
+  const own = preferences.data;
+  if (own === undefined || (own.theme ?? own.themeLight ?? own.themeDark) === null) {
     return null;
   }
   return (

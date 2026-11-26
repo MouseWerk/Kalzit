@@ -29,7 +29,7 @@ wird: Das nächste Anwenden überschreibt sie mit dem Stand der Datei und sperrt
 
 In der Oberfläche trägt ein verwaltetes Dashboard, eine Datenquelle, Alert-Regel oder Rolle für
 Personen mit `provisioning:read` die Kennzeichnung **Aus Dateien verwaltet**; sie öffnet Satz,
-Datei und letzte Anwendung und enthält das Entsperren. **Verwaltung > Provisioning** zeigt die
+Datei und letzte Anwendung und enthält das Entsperren. [**Verwaltung > Provisioning**](app:/admin/provisioning) zeigt die
 Sätze, die verwalteten Ressourcen, die Anwendungen aus dem Audit-Log und wo der Server von den
 Dateien abweicht.
 

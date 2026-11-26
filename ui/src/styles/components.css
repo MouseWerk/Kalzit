@@ -15,6 +15,320 @@
     vertical-align: middle;
   }
 
+  /* 12 px: the simpler drawings of arrows and close, with a wider stroke so they keep their weight. */
+  .icon--small {
+    width: var(--icon-size-small);
+    height: var(--icon-size-small);
+    stroke-width: var(--icon-stroke-small);
+  }
+
+  /* The lit facet: one face tinted with the text color; never the only carrier of a meaning. */
+  .icon__facet {
+    fill-opacity: var(--icon-facet-opacity);
+    stroke: none;
+  }
+
+  @media (forced-colors: active) {
+    .icon__facet {
+      display: none;
+    }
+  }
+
+  /*
+   * Icons in motion (board Icons.dc.html, frames 4 and 9). Only the moving part of an icon moves
+   * (`icon__part`, Icon.tsx), once, by a transform or by drawing the check's stroke: never a
+   * color, never the layout. Each motion sets its keyframes, duration and curve on the icon; the
+   * blocks below say when it plays: a hover or keyboard focus in the navigation and in toolbars,
+   * a press, a one-time change of state, loading. Never on page load, never in tables, lists,
+   * menus or running text, and with reduced motion not at all (every trigger sits in the
+   * no-preference block and the durations drop to zero). Triggers are wrapped in :where(), so
+   * the stop for tables and lists below always wins.
+   */
+  .icon__body,
+  .icon__part {
+    transform-box: view-box;
+    transform-origin: 12px 12px;
+  }
+
+  .icon__part {
+    animation-duration: var(--icon-duration, var(--duration-icon));
+    animation-timing-function: var(--icon-easing, var(--easing-icon-return));
+  }
+
+  .icon[data-motion="lift"] {
+    --icon-keyframes: icon-lift;
+  }
+
+  .icon[data-motion="turn"] {
+    --icon-keyframes: icon-turn;
+    --icon-duration: var(--duration-icon-long);
+  }
+
+  .icon[data-motion="ring"] {
+    --icon-keyframes: icon-ring;
+    --icon-duration: var(--duration-icon-long);
+  }
+
+  /* Knobs slide one after the other: 360 ms each, 440 ms in all. */
+  .icon[data-motion="slide"] {
+    --icon-keyframes: icon-slide;
+    --icon-duration: var(--duration-icon-step);
+    --icon-stagger: var(--duration-icon-stagger-short);
+  }
+
+  /* The middle knob slides the other way. */
+  .icon[data-motion="slide"] .icon__part:nth-of-type(2) {
+    --icon-keyframes: icon-slide-back;
+  }
+
+  .icon[data-motion="glint"] {
+    --icon-keyframes: icon-glint;
+    --icon-duration: var(--duration-icon-glint);
+  }
+
+  .icon[data-motion="nod"] {
+    --icon-keyframes: icon-nod;
+  }
+
+  /* Nodes tilt one after the other like crystals: 360 ms each, 540 ms in all. */
+  .icon[data-motion="tilt"] {
+    --icon-keyframes: icon-tilt;
+    --icon-duration: var(--duration-icon-step);
+    --icon-stagger: var(--duration-icon-stagger);
+  }
+
+  .icon[data-motion="drop"] {
+    --icon-keyframes: icon-drop;
+  }
+
+  .icon[data-motion="quarter"] {
+    --icon-keyframes: icon-quarter;
+    --icon-duration: var(--duration-icon-short);
+    --icon-easing: var(--easing-icon);
+  }
+
+  .icon[data-motion="spin"] {
+    --icon-keyframes: icon-spin;
+    --icon-duration: var(--duration-icon-long);
+    --icon-easing: var(--easing-icon);
+  }
+
+  .icon[data-motion="draw"] {
+    --icon-keyframes: icon-draw;
+    --icon-duration: var(--duration-icon-draw);
+    --icon-easing: var(--easing-icon);
+  }
+
+  .icon[data-motion="fill"] {
+    --icon-keyframes: icon-fill;
+    --icon-easing: var(--easing-icon);
+  }
+
+  /* The bell swings from its crown; a glint and the graph's nodes turn about their own middle. */
+  .icon[data-motion="ring"] .icon__part {
+    transform-origin: 12px 4.5px;
+  }
+
+  .icon:is([data-motion="glint"], [data-motion="tilt"]) .icon__part {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  /* Parts that move one after the other (knobs, nodes). */
+  .icon:is([data-motion="slide"], [data-motion="tilt"]) .icon__part:nth-of-type(2) {
+    animation-delay: var(--icon-stagger);
+  }
+
+  .icon:is([data-motion="slide"], [data-motion="tilt"]) .icon__part:nth-of-type(3) {
+    animation-delay: calc(var(--icon-stagger) * 2);
+  }
+
+  /* The check is a dash as long as its path (pathLength 1): drawn at rest, drawn in by motion. */
+  .icon[data-motion="draw"] .icon__part path {
+    stroke-dasharray: 1;
+  }
+
+  @keyframes icon-lift {
+    45% {
+      transform: translateY(-1.25px);
+    }
+  }
+
+  @keyframes icon-turn {
+    40% {
+      transform: rotate(35deg);
+    }
+
+    75% {
+      transform: rotate(-8deg);
+    }
+  }
+
+  @keyframes icon-ring {
+    20% {
+      transform: rotate(14deg);
+    }
+
+    45% {
+      transform: rotate(-10deg);
+    }
+
+    70% {
+      transform: rotate(5deg);
+    }
+  }
+
+  @keyframes icon-slide {
+    50% {
+      transform: translateX(-3px);
+    }
+  }
+
+  @keyframes icon-slide-back {
+    50% {
+      transform: translateX(3px);
+    }
+  }
+
+  /*
+   * Light crosses the glass (4.5 units), shrinking away only at the end of its way, then grows
+   * back where it was.
+   */
+  @keyframes icon-glint {
+    40% {
+      transform: translate(3.5px, 3.5px);
+    }
+
+    55% {
+      transform: translate(4.5px, 4.5px) scale(0);
+    }
+
+    56% {
+      transform: scale(0);
+    }
+  }
+
+  @keyframes icon-nod {
+    50% {
+      transform: translateY(-1.25px);
+    }
+  }
+
+  @keyframes icon-tilt {
+    to {
+      transform: rotate(90deg);
+    }
+  }
+
+  /* The top layer rises and settles back into place; it starts at rest, so nothing jumps. */
+  @keyframes icon-drop {
+    30% {
+      transform: translateY(-2.5px);
+    }
+  }
+
+  @keyframes icon-quarter {
+    to {
+      transform: rotate(90deg);
+    }
+  }
+
+  @keyframes icon-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @keyframes icon-draw {
+    from {
+      stroke-dashoffset: 1;
+    }
+  }
+
+  @keyframes icon-fill {
+    from {
+      transform: scale(0.6);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /*
+     * Shell: an entry of the navigation and its sub-page toggle, on hover and keyboard focus. The
+     * check and the star only play on a change of state, never on a hover.
+     */
+    :where(
+        .shell__sidebar
+          :is(.nav-link, .nav-group__toggle):is(:hover, :focus-visible)
+          .icon:not([data-motion="draw"], [data-motion="fill"])
+      )
+      .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    /*
+     * Toolbars: quiet icon buttons, the buttons of a page's, a dashboard's or alerting's toolbar
+     * and of the top bar, on hover and keyboard focus.
+     */
+    :where(
+        :is(
+            .icon-button,
+            .toolbar .button,
+            .dash-toolbar .button,
+            .page__actions .button,
+            .alert-toolbar .button,
+            .top-bar :is(a[href], button)
+          ):is(:hover, :focus-visible)
+          .icon:not([data-motion="draw"], [data-motion="fill"])
+      )
+      .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    /* A press, in every button and link: the icon gives way to 90 % and comes back. */
+    .icon__body {
+      transition: scale var(--duration-icon-press) var(--easing-icon);
+    }
+
+    :where(button:not(:disabled, [aria-disabled="true"]):active, a[href]:active, summary:active)
+      .icon__body {
+      scale: 0.9;
+    }
+
+    /*
+     * Status: a change of state the person caused plays once (`play`, dropped again when the
+     * motion ends): a check after a test or a copy, a star when it is starred, a new alert.
+     */
+    :where(.icon[data-play]) .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    /*
+     * Loading: refresh turns in eight facet steps, 800 ms a turn, while its button is busy and
+     * before the app (`icon--busy`). It waits a moment first, so a short request shows nothing.
+     * It outranks every timing above and is the one motion allowed in tables and lists.
+     */
+    :is(button[aria-busy="true"] > .icon, .icon--busy)[data-motion="spin"] .icon__part {
+      animation: icon-spin var(--duration-spin) steps(8, end) var(--duration-normal) infinite;
+    }
+
+    /* Never in tables, lists, trees, menus or running text; loading excepted. */
+    :is(
+        table,
+        [role="grid"],
+        [role="treegrid"],
+        [role="tree"],
+        [role="listbox"],
+        [role="menu"],
+        main li,
+        p
+      )
+      .icon:not(.icon--busy, [aria-busy="true"] > .icon)
+      :is(.icon__body, .icon__part) {
+      animation-name: none;
+      scale: none;
+    }
+  }
+
   /* Skip link: hidden until it receives keyboard focus. */
 
   .skip-link {
@@ -344,8 +658,14 @@
     min-height: 100dvh;
   }
 
-  .shell[data-sidebar="collapsed"] {
+  /* The rail keeps its narrow column also while the full sidebar peeks over the page. */
+  .shell[data-layout="rail"] {
     grid-template-columns: var(--sidebar-rail-width) minmax(0, 1fr);
+  }
+
+  /* Focus mode: no column at all; the sidebar waits outside the window (shellUx.css). */
+  .shell[data-layout="hidden"] {
+    grid-template-columns: 0 minmax(0, 1fr);
   }
 
   .shell__sidebar {
@@ -553,22 +873,28 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Group headings: small capitals, so they never read as links. */
+  /*
+   * A group of sub-pages is a block: a hairline above, its name as a quiet heading in normal
+   * case, and its pages one step further in, so the name reads as a heading and not as a page.
+   */
+  .nav-sub__group {
+    margin-block-start: var(--space-1);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
   .nav-sub__title {
-    padding: var(--space-3) var(--space-2) var(--space-1);
+    padding: var(--space-2) var(--space-2) var(--space-1);
     color: var(--text-muted);
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: var(--letter-spacing-caps);
     line-height: var(--line-height-tight);
-    text-transform: uppercase;
   }
 
   .nav-sub__list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
-    padding: 0;
+    padding: 0 0 0 var(--space-3);
     list-style: none;
   }
 
@@ -641,6 +967,13 @@
   .shell__main {
     min-width: 0;
     padding: var(--space-page-top) var(--space-gutter) var(--space-page-bottom);
+  }
+
+  /* The page keeps the second column while the sidebar floats out of the grid (peek, focus mode). */
+  .shell[data-layout="rail"] > .shell__main,
+  .shell[data-layout="hidden"] > .shell__main {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   /*

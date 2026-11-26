@@ -2,6 +2,8 @@ import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
+import { Keys } from "../shortcuts/Keys";
+import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
 import "../shell/shellUx.css";
@@ -18,8 +20,8 @@ export type ToolbarMenuEntry =
       /** Deletes or discards: the label in the danger text color. */
       danger?: boolean | undefined;
       disabled?: boolean | undefined;
-      /** Shown at the end of the item: "t ←". */
-      shortcut?: string | undefined;
+      /** The registry's shortcut that does the same: its keys at the end of the item. */
+      shortcut?: ShortcutId | undefined;
     }
   | { kind: "radio"; key: string; label: string; checked: boolean; onSelect: () => void }
   | { kind: "separator"; key: string }
@@ -34,6 +36,11 @@ interface ToolbarMenuProps {
   entries: readonly ToolbarMenuEntry[];
   shortcut?: ShortcutKeys | undefined;
   className?: string | undefined;
+  /**
+   * `button`: a secondary button showing `text` (the visible name) and a chevron, without a
+   * tooltip, for menus a page header or toolbar names in words ("Import", "Sort: Name").
+   */
+  appearance?: "icon" | "button" | undefined;
 }
 
 /**
@@ -43,7 +50,15 @@ interface ToolbarMenuProps {
  * scrolls never clips it. It is portaled to the end of the page's main landmark when the button
  * sits in it (else to the end of the body), so its content stays inside a landmark.
  */
-export function ToolbarMenu({ label, icon, text, entries, shortcut, className }: ToolbarMenuProps) {
+export function ToolbarMenu({
+  label,
+  icon,
+  text,
+  entries,
+  shortcut,
+  className,
+  appearance = "icon",
+}: ToolbarMenuProps) {
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const onMenuKeyDown = useFloatingMenu(menu);
@@ -51,34 +66,51 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
   const [host, setHost] = useState<Element | null>(null);
   const pickHost = (button: HTMLElement) => setHost(button.closest("main") ?? document.body);
 
-  return (
-    <div className="menu-anchor toolbar-menu" ref={anchorRef}>
-      <WithTooltip label={label} shortcut={shortcut}>
-        <button
-          ref={buttonRef}
-          type="button"
-          className={
-            className === undefined
-              ? "button button--ghost icon-button"
-              : `button button--ghost icon-button ${className}`
-          }
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-controls={open ? menuId : undefined}
-          aria-label={label}
-          onClick={(event) => {
-            pickHost(event.currentTarget);
-            menu.toggle();
-          }}
-          onKeyDown={(event) => {
-            pickHost(event.currentTarget);
-            menu.onButtonKeyDown(event);
-          }}
-        >
+  const base =
+    appearance === "button"
+      ? "button button--secondary toolbar-menu__button"
+      : "button button--ghost icon-button";
+  const button = (
+    <button
+      ref={buttonRef}
+      type="button"
+      className={className === undefined ? base : `${base} ${className}`}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      aria-controls={open ? menuId : undefined}
+      aria-label={label}
+      onClick={(event) => {
+        pickHost(event.currentTarget);
+        menu.toggle();
+      }}
+      onKeyDown={(event) => {
+        pickHost(event.currentTarget);
+        menu.onButtonKeyDown(event);
+      }}
+    >
+      {appearance === "button" ? (
+        <>
+          {text}
+          <Icon name="chevronDown" />
+        </>
+      ) : (
+        <>
           <Icon name={icon} />
           {text === undefined ? null : <span className="icon-button__text">{text}</span>}
-        </button>
-      </WithTooltip>
+        </>
+      )}
+    </button>
+  );
+
+  return (
+    <div className="menu-anchor toolbar-menu" ref={anchorRef}>
+      {appearance === "button" ? (
+        button
+      ) : (
+        <WithTooltip label={label} shortcut={shortcut}>
+          {button}
+        </WithTooltip>
+      )}
       {open
         ? createPortal(
             <div
@@ -132,6 +164,7 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
                         // aria-disabled, not disabled: the item stays in the arrow-key order,
                         // so its name and that it is unavailable are still announced.
                         aria-disabled={entry.disabled === true ? true : undefined}
+                        {...(entry.shortcut === undefined ? {} : shortcutProps(entry.shortcut))}
                         onClick={() => {
                           if (entry.disabled === true) {
                             return;
@@ -147,7 +180,7 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
                         )}
                         <span className="toolbar-menu__label">{entry.label}</span>
                         {entry.shortcut === undefined ? null : (
-                          <kbd className="kbd toolbar-menu__key">{entry.shortcut}</kbd>
+                          <Keys id={entry.shortcut} className="toolbar-menu__key" />
                         )}
                       </button>
                     );

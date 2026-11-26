@@ -18,8 +18,11 @@ import { writeRegionsCsv, writeSalesDatabase } from "./support/fixture-db";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_DIR = resolve(UI_DIR, "..");
-/** Report, traces and the server log; CI uploads this folder when a run fails. */
-export const OUTPUT_DIR = join(UI_DIR, "e2e", ".output");
+/**
+ * Report, traces and the server log; CI uploads this folder when a run fails. `KALZIT_E2E_OUTPUT`
+ * moves it, as in playwright.config.ts.
+ */
+export const OUTPUT_DIR = process.env.KALZIT_E2E_OUTPUT || join(UI_DIR, "e2e", ".output");
 const EXE = process.platform === "win32" ? "kalzit.exe" : "kalzit";
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 15_000;
@@ -235,7 +238,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const binary = locateBinary();
   const run = prepareRunDir();
   mkdirSync(OUTPUT_DIR, { recursive: true });
-  const logPath = join(OUTPUT_DIR, "server.log");
+  // A run after the e2e tests in the same checkout (the visual comparison) keeps their log.
+  const logPath = join(OUTPUT_DIR, process.env.KALZIT_E2E_SERVER_LOG ?? "server.log");
   const logFile = createWriteStream(logPath);
   let child: ChildProcess | undefined;
   const cleanUp = async () => {

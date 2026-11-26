@@ -13,7 +13,7 @@ import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { pickOption, waitForOption } from "../test/select";
-import { getTheme } from "../theme/theme";
+import { DARK_VARIANT_STORAGE_KEY, getTheme, setDarkVariant } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
 import { SETUP_DISMISSED_KEY } from "./setupSteps";
@@ -26,7 +26,9 @@ async function chooseBeforeSignIn(
   option: string,
 ) {
   await user.click(await screen.findByRole("button", { name: menu }));
-  await user.click(screen.getByRole("menuitemradio", { name: option }));
+  const [first] = screen.getAllByRole("menuitemradio", { name: option });
+  if (first === undefined) throw new Error(`no menu item ${option}`);
+  await user.click(first);
 }
 
 function asRole(role: string) {
@@ -196,12 +198,20 @@ describe("search with /", () => {
     expect(screen.getByRole("navigation", { name: "Main navigation" }).contains(search)).toBe(
       false,
     );
-    expect(search.getAttribute("aria-keyshortcuts")).toBe("/ Control+K");
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("Control+K /");
     expect(search.textContent).toContain("Ctrl+K");
+    // Drawn as key caps: one per key, the "+" between them is not a cap.
+    expect(Array.from(search.querySelectorAll("kbd")).map((key) => key.textContent)).toEqual([
+      "Ctrl",
+      "K",
+    ]);
     // The tooltip is in the page only while it shows, above the page instead of inside the bar.
     expect(document.querySelector(".tip")).toBeNull();
     await user.hover(search);
-    expect(document.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
+    expect(document.querySelector(".tip")?.textContent).toBe("SearchCtrl+Kor/");
+    expect(Array.from(document.querySelectorAll(".tip kbd")).map((key) => key.textContent)).toEqual(
+      ["Ctrl", "K", "/"],
+    );
     expect(search.closest(".top-bar")?.querySelector(".tip")).toBeNull();
     await user.click(search);
     // The press takes it away: it would lie over the palette the press opened.
@@ -281,16 +291,57 @@ describe("keyboard shortcuts help", () => {
     const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
     for (const area of [
       "Everywhere",
-      "Sidebar and account menu",
+      "Menus, lists and tabs",
       "Command palette",
-      "Dashboards",
+      "Time range",
+      "Edit dashboard",
+      "Panel editor",
       "Explore",
       "Query editors",
+      "Charts",
+      "Graph",
+      "Traces",
+      "Analyses",
+      "Alerting: policies",
+      "Ask",
     ]) {
-      expect(within(dialog).getByRole("heading", { name: area })).toBeTruthy();
+      expect(within(dialog).getByRole("heading", { name: new RegExp(`^${area}`) })).toBeTruthy();
     }
-    expect(within(dialog).getByText("Open the command palette")).toBeTruthy();
+    expect(within(dialog).getByText("Open or close the command palette")).toBeTruthy();
+    // The focus starts in the search; keys are read by their names, never as signs.
+    const search = within(dialog).getByRole("searchbox", { name: "Search shortcuts or keys" });
+    expect(document.activeElement).toBe(search);
+    expect(within(dialog).getByText("Control plus K, or Slash")).toBeTruthy();
+    // The search finds rows by key names too; Escape clears it first, then closes.
+    fireEvent.change(search, { target: { value: "ctrl k" } });
+    expect(within(dialog).queryByText("Show or close the keyboard shortcuts")).toBeNull();
+    expect(within(dialog).getByText("Open or close the command palette")).toBeTruthy();
+    // The words found stand in full weight.
+    fireEvent.change(search, { target: { value: "palette" } });
+    expect(within(dialog).getAllByText("palette", { selector: "mark" }).length).toBeGreaterThan(0);
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes again with ? from outside its search, and ignores a held key", async () => {
+    setup();
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    fireEvent.keyDown(document.body, { key: "?" });
+    const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    // Held down, the key repeats: the help stays open.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "?", repeat: true });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBe(dialog);
+    // In the search field "?" is a character to search for.
+    const search = within(dialog).getByRole("searchbox");
+    fireEvent.keyDown(search, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBe(dialog);
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "?" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
@@ -632,8 +683,8 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    const theme = await within(section).findByLabelText("Theme");
-    await pickOption(user, theme, "contrast");
+    const mode = await within(section).findByRole("radiogroup", { name: "Mode" });
+    await user.click(within(mode).getByRole("radio", { name: "High contrast" }));
     expect(getTheme()).toBe("contrast");
     await waitFor(() => expect(server.state.preferences.theme).toBe("contrast"));
     expect(await screen.findByText("Theme saved.")).toBeTruthy();
@@ -648,6 +699,29 @@ describe("preferences", () => {
     renderApp("/");
     await waitFor(() => expect(getLanguage()).toBe("de"));
     expect(await screen.findByRole("navigation", { name: "Hauptnavigation" })).toBeTruthy();
+  });
+
+  it("keeps a light and a dark variant and lets all three follow the default again", async () => {
+    const server = setup();
+    const { user } = renderApp("/account");
+    const section = await screen.findByRole("region", { name: "Preferences" });
+    const light = await within(section).findByRole("group", { name: /^Light variant/ });
+    await user.click(within(light).getByRole("radio", { name: /^Paper/ }));
+    expect(document.documentElement.dataset.light).toBe("paper");
+    await waitFor(() => expect(server.state.preferences.themeLight).toBe("paper"));
+    expect(await screen.findByText("Light variant saved.")).toBeTruthy();
+    // System, so the line beside each row says when it applies.
+    expect(within(light).getByText("applies when your device is light")).toBeTruthy();
+    const dark = within(section).getByRole("group", { name: /^Dark variant/ });
+    await user.click(within(dark).getByRole("radio", { name: /^Night/ }));
+    await waitFor(() => expect(server.state.preferences.themeDark).toBe("night"));
+    expect(server.state.preferences.theme).toBeNull();
+
+    await user.click(within(section).getByRole("button", { name: /^Use the default/ }));
+    await waitFor(() => expect(server.state.preferences.themeLight).toBeNull());
+    expect(server.state.preferences.themeDark).toBeNull();
+    expect(document.documentElement.dataset.light).toBe("light");
+    expect(document.documentElement.dataset.dark).toBe("dark");
   });
 
   it("chooses time zone, week start and start dashboard", async () => {
@@ -688,9 +762,9 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    const theme = await within(section).findByLabelText("Theme");
+    const mode = await within(section).findByRole("radiogroup", { name: "Mode" });
     server.failNext("/api/me/preferences", 422, "validation", "PATCH");
-    await pickOption(user, theme, "dark");
+    await user.click(within(mode).getByRole("radio", { name: "Dark" }));
     expect((await screen.findByText(/did not accept/)).closest('[role="alert"]')).not.toBeNull();
     await waitFor(() => expect(getTheme()).toBe("system"));
   });
@@ -705,6 +779,15 @@ describe("language and theme chosen before signing in", () => {
     const { user } = renderApp("/login");
     await chooseBeforeSignIn(user, /^Language:/, "Deutsch");
     await chooseBeforeSignIn(user, /^Darstellung:/, "Dunkel");
+    // Only the mode before sign-in: the variants are chosen in the account settings alone.
+    await user.click(screen.getByRole("button", { name: /^Darstellung:/ }));
+    expect(screen.getAllByRole("menuitemradio").map((item) => item.textContent?.trim())).toEqual([
+      "System",
+      "Hell",
+      "Dunkel",
+      "Hoher Kontrast",
+    ]);
+    await user.keyboard("{Escape}");
     await user.click(screen.getByLabelText("E-Mail-Adresse"));
     await user.paste(TEST_USER.email);
     await user.click(screen.getByLabelText("Passwort"));
@@ -712,12 +795,32 @@ describe("language and theme chosen before signing in", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(server.state.preferences.language).toBe("de"));
     expect(server.state.preferences.theme).toBe("dark");
+    expect(server.state.preferences.themeLight).toBeUndefined();
+    expect(server.state.preferences.themeDark).toBeUndefined();
     expect(getLanguage()).toBe("de");
     const adoptions = server.calls.filter(
       (call) => call.method === "PATCH" && call.path === "/api/me/preferences",
     );
     expect(adoptions).toHaveLength(1);
     expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
+  });
+
+  it("show the server's default variants, not one an account left in this browser", async () => {
+    const server = setup();
+    server.state.signedIn = false;
+    server.state.branding.defaultThemeDark = "night";
+    setDarkVariant("graphite");
+    // The tests route in memory; the theme reads the page's address, as in a browser.
+    window.history.replaceState(null, "", "/login");
+    try {
+      renderApp("/login");
+      await waitFor(() => expect(document.documentElement.dataset.dark).toBe("night"));
+      // The account's own variant stays stored for its next visit.
+      expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("graphite");
+    } finally {
+      window.history.replaceState(null, "", "/");
+      setDarkVariant("dark");
+    }
   });
 
   it("are not what the browser applied for someone: the server's default applies", async () => {
@@ -773,11 +876,14 @@ describe("time zone", () => {
     const server = setup();
     server.state.preferences.timeZone = "UTC";
     renderApp("/dashboards");
-    // The fake dashboards were last saved on 2026-10-01 at 00:00 UTC.
-    expect(await screen.findAllByText(/Oct 1, 2026, 12:00\s?AM/)).not.toHaveLength(0);
+    // The fake dashboards were last saved on 2026-10-01 at 00:00 UTC. The list says how long
+    // ago and names the exact time on the time element.
+    const exactTimes = () =>
+      [...document.querySelectorAll("time[title]")].map((time) => time.getAttribute("title"));
+    await waitFor(() => expect(exactTimes().join("|")).toMatch(/Oct 1, 2026, 12:00\s?AM/));
     act(() => setTimeZone("Asia/Tokyo"));
-    expect(await screen.findAllByText(/Oct 1, 2026, 9:00\s?AM/)).not.toHaveLength(0);
-    expect(screen.queryByText(/Oct 1, 2026, 12:00\s?AM/)).toBeNull();
+    await waitFor(() => expect(exactTimes().join("|")).toMatch(/Oct 1, 2026, 9:00\s?AM/));
+    expect(exactTimes().join("|")).not.toMatch(/Oct 1, 2026, 12:00\s?AM/);
   });
 });
 

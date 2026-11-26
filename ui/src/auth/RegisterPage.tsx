@@ -2,11 +2,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason, reasonText } from "../features/datasources/reasons";
 import { hasMessage, type Translate, useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice, LinkState } from "./AccessLayout";
+import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
 import { forgetToken } from "./linksApi";
 import { PasswordField } from "./PasswordField";
 import {
@@ -27,7 +28,6 @@ import {
   validateResetEmail,
 } from "./validation";
 import "./auth.css";
-import "./links.css";
 
 /** Seconds until "Send the link again" is offered again. */
 const RESEND_WAIT = 60;
@@ -43,16 +43,16 @@ function refusal(t: Translate, error: unknown): string {
 }
 
 const toSignIn = (t: Translate) => (
-  <Link to="/login" className="button button--primary">
+  <Link to="/login" className="button button--primary button--block">
     {t("access.toLogin")}
   </Link>
 );
 
 /**
- * Self-registration for visitors (board Settings075.dc.html, frame 4), on the calm backdrop of
- * the sign-in pages: ask for a link with an address of an allowed domain, check the inbox, then
- * choose name and password behind the link. With admin approval the account waits for a decision.
- * The page never says whether an address already has an account.
+ * Registration for visitors (board Auth.dc.html, frame 9; the rules of Settings075.dc.html, frame
+ * 4): ask for a link with an address of an allowed domain, check the inbox, then choose name and
+ * password behind the link. With admin approval the account waits for a decision. The page never
+ * says whether an address already has an account.
  */
 export function RegisterPage() {
   const { t } = useI18n();
@@ -68,9 +68,8 @@ export function RegisterPage() {
     body = offered.data.available ? (
       <Start offered={offered.data} />
     ) : (
-      <LinkState
-        tone="info"
-        icon="link"
+      <AccessEnd
+        icon="members"
         title={t("serverAdmin.visitor.closedTitle")}
         text={t("serverAdmin.visitor.closedText")}
         action={toSignIn(t)}
@@ -78,11 +77,11 @@ export function RegisterPage() {
     );
   } else if (offered.isError) {
     body = (
-      <LinkState
+      <AccessEnd
         tone="danger"
-        icon="link"
-        title={refusal(t, offered.error)}
-        text=""
+        icon="alert"
+        title={t("access.signup.title")}
+        text={refusal(t, offered.error)}
         action={toSignIn(t)}
       />
     );
@@ -119,31 +118,47 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
   const failed = start.error === null || atField ? null : refusal(t, start.error);
 
   if (sentTo !== null) {
+    // The wait runs on the button and is not announced every second.
     return (
-      <div className="access__card link-state" role="status">
-        <AccessNotice
-          tone="info"
+      <>
+        <AccessEnd
           icon="check"
           title={t("serverAdmin.visitor.sentTitle")}
-          detail={t("serverAdmin.visitor.sentText", { email: sentTo })}
-          heading
+          text={t("serverAdmin.visitor.sentText", { email: sentTo })}
+          status
+          action={
+            <>
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-disabled={wait > 0 || start.isPending}
+                onClick={() => {
+                  if (wait <= 0 && !start.isPending) start.mutate(sentTo);
+                }}
+              >
+                <span aria-live="off" className={wait > 0 ? "access__wait" : undefined}>
+                  {wait > 0
+                    ? t("serverAdmin.visitor.resendIn", { seconds: wait })
+                    : t("serverAdmin.visitor.resend")}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => {
+                  start.reset();
+                  setSentTo(null);
+                }}
+              >
+                {t("serverAdmin.visitor.otherAddress")}
+              </button>
+            </>
+          }
         />
         <AccessAlert>
           {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
         </AccessAlert>
-        <button
-          type="button"
-          className="button button--secondary"
-          aria-disabled={wait > 0 || start.isPending}
-          onClick={() => {
-            if (wait <= 0 && !start.isPending) start.mutate(sentTo);
-          }}
-        >
-          {wait > 0
-            ? t("serverAdmin.visitor.resendIn", { seconds: wait })
-            : t("serverAdmin.visitor.resend")}
-        </button>
-      </div>
+      </>
     );
   }
 
@@ -159,13 +174,7 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
     start.mutate(trimWhitespace(email));
   }
   return (
-    <form
-      className="access__card"
-      noValidate
-      aria-label={t("access.signup.title")}
-      onSubmit={onSubmit}
-      onKeyDown={preventComposingSubmit}
-    >
+    <>
       <div className="access__head">
         <h1>{t("access.signup.title")}</h1>
         <p className="access__lead">
@@ -177,45 +186,58 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
           })}
         </p>
       </div>
-      <AccessAlert>
-        {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
-      </AccessAlert>
-      <TextField
-        ref={ref}
-        label={t("access.login.email")}
-        type="email"
-        name="email"
-        autoComplete="email"
-        required
-        readOnly={start.isPending}
-        value={email}
-        onValueChange={(value) => {
-          setEmail(value);
-          setErrors({});
-          start.reset();
-        }}
-        error={
-          errors.email !== undefined
-            ? t(errors.email.key, errors.email.params)
-            : atField
-              ? refusal(t, start.error)
-              : undefined
-        }
-      />
-      <button
-        type="submit"
-        className="button button--primary button--block access__submit"
-        aria-disabled={start.isPending}
+      <form
+        className="access__form"
+        noValidate
+        aria-label={t("access.signup.title")}
+        onSubmit={onSubmit}
+        onKeyDown={preventComposingSubmit}
       >
-        {start.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
-        {t("access.signup.title")}
-      </button>
+        <AccessAlert>
+          {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
+        </AccessAlert>
+        <TextField
+          ref={ref}
+          label={t("access.login.email")}
+          hint={t("serverAdmin.visitor.emailHint")}
+          type="email"
+          name="email"
+          autoComplete="username"
+          inputMode="email"
+          autoCapitalize="none"
+          spellCheck={false}
+          required
+          readOnly={start.isPending}
+          value={email}
+          onValueChange={(value) => {
+            setEmail(value);
+            setErrors({});
+            start.reset();
+          }}
+          error={
+            errors.email !== undefined
+              ? t(errors.email.key, errors.email.params)
+              : atField
+                ? refusal(t, start.error)
+                : undefined
+          }
+        />
+        <button
+          type="submit"
+          className="button button--primary button--block access__submit"
+          aria-disabled={start.isPending}
+        >
+          {start.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
+          {t("access.signup.send")}
+        </button>
+      </form>
       <p className="access__below">
-        <Link to="/login" className="access__quiet-link">
-          {t("serverAdmin.visitor.haveAccount")}
+        {t("serverAdmin.visitor.haveAccount")}{" "}
+        <Link to="/login" className="access__link">
+          {t("access.login.submit")}
         </Link>
       </p>
-    </form>
+    </>
   );
 }
 
@@ -246,14 +268,17 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
 
   if (invalid) {
     return (
-      <LinkState
-        tone="danger"
+      <AccessEnd
         icon="link"
         title={t("access.confirm.invalidTitle")}
         text={t("serverAdmin.visitor.linkGone")}
         action={
-          <button type="button" className="button button--primary" onClick={onStartOver}>
-            {t("access.signup.title")}
+          <button
+            type="button"
+            className="button button--primary button--block"
+            onClick={onStartOver}
+          >
+            {t("access.reset.newLink")}
           </button>
         }
       />
@@ -261,8 +286,7 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
   }
   if (done) {
     return (
-      <LinkState
-        tone="info"
+      <AccessEnd
         icon={confirm.data === "approved" ? "check" : "clock"}
         title={t(
           confirm.data === "approved"
@@ -301,57 +325,59 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
       ? null
       : refusal(t, confirm.error);
   return (
-    <form
-      className="access__card"
-      noValidate
-      aria-label={t("access.signup.title")}
-      onSubmit={onSubmit}
-      onKeyDown={preventComposingSubmit}
-    >
+    <>
       <div className="access__head">
-        <h1>{t("access.signup.title")}</h1>
+        <h1>{t("serverAdmin.visitor.confirmTitle")}</h1>
         <p className="access__lead">{t("serverAdmin.visitor.confirmLead")}</p>
       </div>
-      <AccessAlert>
-        {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
-      </AccessAlert>
-      <TextField
-        ref={refs.name}
-        label={t("access.invite.name")}
-        name="name"
-        autoComplete="name"
-        required
-        readOnly={confirm.isPending}
-        value={name}
-        onValueChange={(value) => {
-          setName(value);
-          setErrors(({ name: _, ...rest }) => rest);
-        }}
-        error={fieldError("name")}
-      />
-      <PasswordField
-        ref={refs.password}
-        label={t("access.invite.password")}
-        name="new-password"
-        autoComplete="new-password"
-        showStrength
-        showRules
-        readOnly={confirm.isPending}
-        value={password}
-        onValueChange={(value) => {
-          setPassword(value);
-          setErrors(({ password: _, ...rest }) => rest);
-        }}
-        error={fieldError("password")}
-      />
-      <button
-        type="submit"
-        className="button button--primary button--block access__submit"
-        aria-disabled={confirm.isPending}
+      <form
+        className="access__form"
+        noValidate
+        aria-label={t("serverAdmin.visitor.confirmTitle")}
+        onSubmit={onSubmit}
+        onKeyDown={preventComposingSubmit}
       >
-        {confirm.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
-        {t("access.signup.title")}
-      </button>
-    </form>
+        <AccessAlert>
+          {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
+        </AccessAlert>
+        <TextField
+          ref={refs.name}
+          label={t("access.invite.name")}
+          name="name"
+          autoComplete="name"
+          required
+          readOnly={confirm.isPending}
+          value={name}
+          onValueChange={(value) => {
+            setName(value);
+            setErrors(({ name: _, ...rest }) => rest);
+          }}
+          error={fieldError("name")}
+        />
+        <PasswordField
+          ref={refs.password}
+          label={t("access.invite.password")}
+          name="new-password"
+          autoComplete="new-password"
+          showStrength
+          showRules
+          readOnly={confirm.isPending}
+          value={password}
+          onValueChange={(value) => {
+            setPassword(value);
+            setErrors(({ password: _, ...rest }) => rest);
+          }}
+          error={fieldError("password")}
+        />
+        <button
+          type="submit"
+          className="button button--primary button--block access__submit"
+          aria-disabled={confirm.isPending}
+        >
+          {confirm.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
+          {t("access.signup.title")}
+        </button>
+      </form>
+    </>
   );
 }

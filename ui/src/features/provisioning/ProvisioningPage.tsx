@@ -6,7 +6,7 @@ import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
 import { STACK_ROLES } from "../../components/stackTable";
-import { GUIDE_URL } from "../../help/docs";
+import { HandbookLink } from "../../help/handbook";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { withBase } from "../../lib/basePath";
 import { zoneOption } from "../../lib/timeSettings";
@@ -161,7 +161,6 @@ export function ProvisioningPage() {
     );
   const named = (record: Provisioned) =>
     record.name === "" ? t("provisioning.list.gone") : record.name;
-  const guide = `${GUIDE_URL}${language === "de" ? "de/" : ""}provisioning.md`;
   // The address the command line reaches this server under, for the first commands to copy.
   const server = new URL(withBase("/"), window.location.origin).href.replace(/\/$/, "");
 
@@ -171,15 +170,9 @@ export function ProvisioningPage() {
       lead="admin.provisioning.lead"
       allowed={allowedWhen(access, allowed)}
       actions={
-        <a
-          className="button button--secondary"
-          href={guide}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
+        <HandbookLink className="button button--secondary" target={{ page: "provisioning" }}>
           {t("provisioning.guide")}
-          <Icon name="external" />
-        </a>
+        </HandbookLink>
       }
     >
       {records.data === undefined ? (

@@ -1,6 +1,8 @@
 import { useId, useState } from "react";
 import { ConfirmDialog } from "../../features/dashboards/ui/Dialog";
 import { useI18n } from "../../i18n/i18n";
+import { Keys } from "../../shortcuts/Keys";
+import { shortcutAria } from "../../shortcuts/registry";
 import { type Direction, MAX_EXPAND_LIMIT } from "./adapter";
 import { countText } from "./plural";
 import type { Explorer, StepSettings } from "./useExplorer";
@@ -119,17 +121,14 @@ export function ExplorerBar({
             type="button"
             className="button button--ghost button--small"
             disabled={steps.length === 0 && pending === null}
-            aria-keyshortcuts="Control+Z"
+            aria-keyshortcuts={shortcutAria("graph.undo")}
             onClick={() => {
               const had = steps.length;
               explorer.undo();
               if (pending === null && had > 0) onBack(1);
             }}
           >
-            {t("graph.steps.undo")}{" "}
-            <span className="kbd" aria-hidden="true">
-              {t("graph.steps.undoKey")}
-            </span>
+            {t("graph.steps.undo")} <Keys id="graph.undo" />
           </button>
           <button
             type="button"

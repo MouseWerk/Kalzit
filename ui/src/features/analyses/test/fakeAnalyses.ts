@@ -351,10 +351,17 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
         datasourceId: string;
         query: unknown;
       }[];
+      // As the server: with cursors, only the targets they name run, each continuing its set.
+      const cursors = (body.cursors ?? {}) as Record<string, string>;
+      const continued = Object.keys(cursors).length > 0;
       for (const target of targets) {
+        const cursor = cursors[target.refId];
+        if (continued && cursor === undefined) {
+          continue;
+        }
         results[target.refId] = await answerQuery(
           areas.datasources,
-          target,
+          { ...target, ...(cursor === undefined ? {} : { cursor }) },
           body.timeRange as TimeRange,
         );
       }

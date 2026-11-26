@@ -242,7 +242,7 @@ function CopyWell({ text, os }: { text: string; os?: string }) {
         aria-label={t("access.copyLabel", { text })}
         onClick={() => void copy()}
       >
-        <Icon name={copied ? "check" : "copy"} />
+        <Icon name={copied ? "check" : "copy"} play={copied} />
         <span className="code-well__copy-text" aria-live="polite">
           {copied ? t("access.copied") : t("access.copy")}
         </span>

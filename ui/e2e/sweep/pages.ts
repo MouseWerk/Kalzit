@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { Api, fixturesDir, SQL, unique } from "../support/api";
+import { Api, fixtureNow, fixturesDir, SQL, unique } from "../support/api";
 import { t } from "../support/i18n";
 import { MAIN_PAGES, type MainPage } from "../support/pages";
 import { expect, type World } from "../support/test";
@@ -191,7 +191,9 @@ export async function seedExtras(world: World): Promise<Extras> {
     });
     await created(link, "create public link");
     const publicToken = ((await link.json()) as { token: string }).token;
-    const now = Date.now();
+    // The frozen results cover the fixture data, which lies around a fixed moment in the runs
+    // that show it on a fixed clock.
+    const now = fixtureNow();
     const snapshot = await owner.context.post(org(`/dashboards/${world.dashboardId}/snapshots`), {
       data: {
         title: unique("Stand für die Filialen im Norden"),

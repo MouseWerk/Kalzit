@@ -257,6 +257,7 @@ export function UpdatesPage() {
             disabled={
               data === undefined || (data.job.phase !== "idle" && data.job.phase !== "failed")
             }
+            aria-busy={data?.job.phase === "checking" || undefined}
             onClick={() => run(checkUpdates)}
           >
             <Icon name="refresh" />

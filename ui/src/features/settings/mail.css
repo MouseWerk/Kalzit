@@ -1,6 +1,6 @@
 @layer components {
   /*
-   * Verwaltung > E-Mail: the mail server's form card in the rows of the settings board, one
+   * Einstellungen > E-Mail: the mail server's form card in the rows of the settings board, one
    * explicit Save at the bottom after a test mail. States are text and quiet tints only.
    */
   .mail-field {
@@ -17,11 +17,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-  }
-
-  .mail-fixed {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
   }
 
   /* Inside the form card only; a notice above the cards lines up with them instead. */

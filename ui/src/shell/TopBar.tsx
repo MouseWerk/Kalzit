@@ -3,12 +3,13 @@ import { useRef } from "react";
 import { Icon } from "../components/Icon";
 import { WithTooltip } from "../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
-import { DOCS_URL } from "../help/docs";
+import { REPOSITORY_URL } from "../help/docs";
+import { HANDBOOK_START, handbookLocation, useHandbookEnabled } from "../help/handbook";
 import { useI18n } from "../i18n/i18n";
 import { useOrgPermissions } from "../org/useOrg";
+import { Keys } from "../shortcuts/Keys";
+import { shortcutAria, shortcutText } from "../shortcuts/registry";
 import { setOverlay } from "./overlay";
-import { paletteShortcut } from "./ShortcutsHelp";
-import { sidebarShortcut } from "./sidebarState";
 import { useHeightVar } from "./useHeightVar";
 import "./shellUx.css";
 
@@ -31,8 +32,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   const { t } = useI18n();
   const navigate = useNavigate();
   const permissions = useOrgPermissions();
-  const palette = paletteShortcut();
-  const toggle = sidebarShortcut();
+  const handbook = useHandbookEnabled();
   // The bar stays at the top while the page scrolls; what sticks below it starts at its height.
   const barRef = useRef<HTMLDivElement>(null);
   useHeightVar(barRef, "--top-bar-height");
@@ -71,23 +71,34 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
     });
   }
 
-  const help: ToolbarMenuEntry[] = [
-    {
-      key: "shortcuts",
-      label: t("shell.top.shortcuts"),
-      icon: "keyboard",
-      shortcut: "?",
-      onSelect: () => setOverlay("shortcuts"),
-    },
-    {
-      key: "docs",
-      label: t("shell.top.docs"),
-      icon: "help",
+  // Help: the built-in handbook, the shortcuts and, as the one link outside, the repository. With
+  // the handbook turned off (Administration > Appearance) only the shortcuts stay (decision 8).
+  const help: ToolbarMenuEntry[] = [];
+  if (handbook) {
+    help.push({
+      key: "handbook",
+      label: t("shell.top.handbook"),
+      icon: "documents",
+      onSelect: () => void navigate(handbookLocation(HANDBOOK_START)),
+    });
+  }
+  help.push({
+    key: "shortcuts",
+    label: t("shell.top.shortcuts"),
+    icon: "keyboard",
+    shortcut: "help.toggle",
+    onSelect: () => setOverlay("shortcuts"),
+  });
+  if (handbook) {
+    help.push({
+      key: "github",
+      label: t("shell.top.github"),
+      icon: "external",
       onSelect: () => {
-        window.open(DOCS_URL, "_blank", "noopener,noreferrer");
+        window.open(REPOSITORY_URL, "_blank", "noopener,noreferrer");
       },
-    },
-  ];
+    });
+  }
 
   return (
     <div ref={barRef} className="shell__header top-bar" data-sticky-bar="">
@@ -98,8 +109,11 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
           aria-label={t("nav.sidebar")}
           aria-expanded={!rail}
           aria-controls={sidebarId}
-          aria-keyshortcuts={toggle.aria}
-          title={t("nav.sidebarHint", { shortcut: toggle.label })}
+          aria-keyshortcuts={shortcutAria("sidebar.toggle")}
+          title={t("nav.sidebarHint", {
+            shortcut: shortcutText("sidebar.toggle"),
+            focus: shortcutText("sidebar.focus"),
+          })}
           onClick={onToggleSidebar}
         >
           <Icon name="sidebar" />
@@ -107,17 +121,17 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
       ) : null}
       <div ref={crumbSlot} className="shell__crumbs" />
       <div className="top-bar__tools">
-        <WithTooltip label={t("shell.search.hint", { shortcut: palette.label })}>
+        <WithTooltip label={t("shell.top.searchPlaceholder")} shortcut="palette.open">
           <button
             type="button"
             className="top-bar__search"
-            aria-keyshortcuts={`/ ${palette.aria}`}
+            aria-keyshortcuts={shortcutAria("palette.open")}
             onClick={() => setOverlay("palette")}
           >
             <Icon name="search" />
             <span className="top-bar__search-label">{t("shell.top.searchPlaceholder")}</span>
             <span className="top-bar__search-key" aria-hidden="true">
-              <kbd className="kbd">{palette.label}</kbd>
+              <Keys id="palette.key" />
             </span>
           </button>
         </WithTooltip>

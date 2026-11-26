@@ -4,7 +4,7 @@ import { LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
-import { THEME_STORAGE_KEY } from "../theme/theme";
+import { DARK_VARIANT_STORAGE_KEY, THEME_STORAGE_KEY } from "../theme/theme";
 
 /** What the sign-in page may ask without a session. */
 const PUBLIC_PATHS = new Set(["/api/me", "/api/setup", "/api/branding"]);
@@ -265,7 +265,10 @@ describe("user menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]'));
+    // Four modes, two languages, the account, two sign-outs; the variants are only in the settings.
     expect(items).toHaveLength(9);
+    expect(within(menu).queryByRole("group", { name: "Light variant" })).toBeNull();
+    expect(within(menu).queryByRole("group", { name: "Dark variant" })).toBeNull();
     expect(document.activeElement).toBe(items[0]);
 
     await user.keyboard("{ArrowDown}");
@@ -323,20 +326,37 @@ describe("user menu", () => {
   it("applies and remembers the theme", async () => {
     const { user, menuButton } = await openShell();
     await user.click(menuButton);
-    const dark = screen.getByRole("menuitemradio", { name: "Dark" });
+    const modes = () => within(screen.getByRole("group", { name: "Theme" }));
+    const dark = modes().getByRole("menuitemradio", { name: "Dark" });
     expect(dark.getAttribute("aria-checked")).toBe("false");
-    expect(screen.getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
+    expect(
+      modes().getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked"),
+    ).toBe("true");
     await user.click(dark);
 
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
     expect(document.activeElement).toBe(menuButton);
     await user.click(menuButton);
-    expect(screen.getByRole("menuitemradio", { name: "Dark" }).getAttribute("aria-checked")).toBe(
+    expect(modes().getByRole("menuitemradio", { name: "Dark" }).getAttribute("aria-checked")).toBe(
       "true",
     );
+  });
+
+  it("applies and remembers a dark variant apart from the mode, in the account settings", async () => {
+    const { user, menuButton, server } = await openShell();
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Your account" }));
+    const section = await screen.findByRole("region", { name: "Preferences" });
+    const variants = within(await within(section).findByRole("group", { name: /^Dark variant/ }));
+    expect(variants.getByRole("radio", { name: /^Dark/ })).toHaveProperty("checked", true);
+    await user.click(variants.getByRole("radio", { name: /^Night/ }));
+
+    expect(document.documentElement.dataset.dark).toBe("night");
+    expect(document.documentElement.dataset.theme).toBe("system");
+    expect(window.localStorage.getItem(DARK_VARIANT_STORAGE_KEY)).toBe("night");
+    await waitFor(() => expect(server.state.preferences.themeDark).toBe("night"));
+    expect(server.state.preferences.theme).toBeNull();
   });
 
   it("switches the language everywhere and remembers it", async () => {

@@ -235,6 +235,11 @@ pub async fn linked_panel(db: &AnyPool, org_id: &str, slot: &model::Panel) -> Ap
     panel.id = slot.id.clone();
     panel.grid = slot.grid;
     panel.title = slot.title.clone();
+    // The query options belong to the slot, as its look does: the analysis has none.
+    panel.max_data_points = slot.max_data_points;
+    panel.min_interval.clone_from(&slot.min_interval);
+    panel.cache_timeout.clone_from(&slot.cache_timeout);
+    panel.hide_time_note = slot.hide_time_note;
     Ok(panel)
 }
 

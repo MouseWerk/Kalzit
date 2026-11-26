@@ -5,6 +5,7 @@ import { isApiError } from "../../../api/client";
 import { Icon } from "../../../components/Icon";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import { writeClipboard } from "../../../lib/clipboard";
+import { KEYS_SLOT, KeysInText } from "../../../shortcuts/Keys";
 import { errorReason } from "../../datasources/reasons";
 import { adminKeys, listTeams, MAX_PAGE_SIZE } from "../api";
 import { roleLabel } from "../catalog";
@@ -449,7 +450,10 @@ export function InviteDialog({
             </p>
           )}
           <p className="field__hint" id={ids.hint}>
-            {t("admin.invitations.emailsHint")}
+            <KeysInText
+              text={t("admin.invitations.emailsHint", { keys: KEYS_SLOT })}
+              id="field.confirm"
+            />
           </p>
         </div>
         <div className="invitations__pair">

@@ -18,6 +18,18 @@ export function textWidth(text: string, font: string): number | undefined {
   return context.measureText(text).width;
 }
 
+/**
+ * The root font size in px, for sizes given in rem. It reads the computed style, which restyles
+ * the page first when anything changed since: call it where layout is current (useElementSize
+ * hands it out with a box's size), never while rendering.
+ */
+export function rootRem(): number {
+  if (typeof document === "undefined") {
+    return 16;
+  }
+  return Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+}
+
 /** About one character of a small label in px, where text cannot be measured. */
 const PX_PER_CHAR = 7;
 
@@ -25,6 +37,32 @@ const PX_PER_CHAR = 7;
 export function labelWidth(text: string, font: string | null): number {
   const measured = font === null ? undefined : textWidth(text, font);
   return measured ?? text.length * PX_PER_CHAR;
+}
+
+/**
+ * The text as it fits `maxWidth` px: whole when it fits, else cut with an ellipsis at the end
+ * (empty when not even the ellipsis fits). The full text stays in the tooltip.
+ */
+export function shortenText(text: string, maxWidth: number, font: string | null): string {
+  if (labelWidth(text, font) <= maxWidth) {
+    return text;
+  }
+  const chars = Array.from(text);
+  let low = 0;
+  let high = chars.length;
+  // The longest start that fits together with the ellipsis.
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (labelWidth(`${chars.slice(0, mid).join("").trimEnd()}…`, font) <= maxWidth) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (low === 0) {
+    return labelWidth("…", font) <= maxWidth ? "…" : "";
+  }
+  return `${chars.slice(0, low).join("").trimEnd()}…`;
 }
 
 /**
