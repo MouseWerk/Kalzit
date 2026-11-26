@@ -169,8 +169,9 @@ four setup steps and Explore with each result shape.
   with fixed names; the fixture data lies around a fixed moment and the pages run on a clock
   fixed to it; times the server stamps during the run are moved to that moment; counters that
   grow with the run (page views of public links, the query activity of data sources, recent
-  dashboards, the Explore history, usage and cache counts) are held still in the answers of
-  their own endpoints; animations, the caret and hover are off. Text that differs by machine or
+  dashboards, the Explore history, usage and cache counts) and the next run of a report (the
+  server reckons it from the real clock, any number of hours ahead) are held still in the
+  answers of their own endpoints; animations, the caret and hover are off. Text that differs by machine or
   run (run-folder paths, the server's port, the host name, ids, the commit and build date,
   measured times, free disk space) is replaced by a placeholder in the places of the UI that
   show it. Text is drawn in grayscale, scroll positions are whole pixels, and the font stacks end
