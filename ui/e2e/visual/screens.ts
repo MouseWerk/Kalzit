@@ -51,6 +51,24 @@ const OVERRIDES: Readonly<Record<string, Partial<Screen>>> = {
   },
 };
 
+/**
+ * Steps after a sweep page reached its state. The CORS check's result is scrolled into view by
+ * the page, which left the window at a position that differed by a pixel from run to run; here
+ * the window is scrolled to a whole-pixel position worked out from the layout: the result's top
+ * a fixed distance below the window's top.
+ */
+const AFTER: Readonly<Record<string, (page: Page) => Promise<void>>> = {
+  "cors in use": async (page) => {
+    await page.evaluate(() => {
+      const result = document.querySelector(".s75-code");
+      if (result !== null) {
+        const top = result.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo(0, Math.max(0, Math.round(top) - 240));
+      }
+    });
+  },
+};
+
 /** The Neo4j source's answers: the fake graph of the UI tests, and its schema. */
 async function graphAnswers(page: Page): Promise<void> {
   await page.route(/\/api\/orgs\/[^/]+\/query$/, async (route) => {
@@ -103,6 +121,18 @@ const EXTRA: Screen[] = [
 ];
 
 export const SCREENS: readonly Screen[] = [
-  ...SWEEP_PAGES.map((page) => ({ ...fromSweep(page), ...OVERRIDES[page.name] })),
+  ...SWEEP_PAGES.map((page) => {
+    const screen: Screen = { ...fromSweep(page), ...OVERRIDES[page.name] };
+    const after = AFTER[page.name];
+    return after === undefined
+      ? screen
+      : {
+          ...screen,
+          ready: async (opened: Page, seed: Seed, language: Language) => {
+            await screen.ready(opened, seed, language);
+            await after(opened);
+          },
+        };
+  }),
   ...EXTRA,
 ];

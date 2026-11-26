@@ -226,6 +226,12 @@ export async function settle(page: Page): Promise<void> {
     // until the sidebar is no longer pushed, it stays at the top.
     const page = document.scrollingElement;
     const sidebar = document.querySelector(".shell__sidebar");
+    // The sidebar itself shows from its top: a focus or a scroll into view may have moved it.
+    for (const scrolled of [sidebar, ...(sidebar?.querySelectorAll("*") ?? [])]) {
+      if (scrolled !== null && scrolled.scrollTop !== 0) {
+        scrolled.scrollTop = 0;
+      }
+    }
     if (page !== null && sidebar !== null && getComputedStyle(sidebar).position === "sticky") {
       for (let step = 0; step < 8 && page.scrollTop > 0; step++) {
         if (sidebar.getBoundingClientRect().top >= 0) {
