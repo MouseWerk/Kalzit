@@ -461,11 +461,14 @@ const PROBE_MARGIN: Duration = Duration::from_secs(5);
 pub mod tests {
     use super::*;
 
-    /// A port on the loopback interface where nothing listens: bound and released again.
+    /// A port on the loopback interface where nothing listens: bound but never listening, and
+    /// kept bound for the rest of the test run. A port that is bound and released again can be
+    /// taken by another test's listener in between, which then answers instead of refusing.
     pub async fn closed_port() -> std::net::SocketAddr {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = socket.local_addr().unwrap();
+        std::mem::forget(socket);
         addr
     }
 
