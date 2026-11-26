@@ -74,7 +74,12 @@ export function shiftTimes(
  *
  * - public links and snapshots count each page load of a public page;
  * - a data source shows the hours of the last day with queries and its last use, which depend
- *   on which pages ran queries before.
+ *   on which pages ran queries before;
+ * - a report's next run is the next time of its schedule after the server's real now, any number
+ *   of hours away (the seeded weekly report at 07:00 runs 10 hours after a run at 20:00 and 14
+ *   hours after one at 16:00), so moving it to whole days from the fixed moment gave a different
+ *   day depending on the time of day and the weekday of the run. It is held one day after the
+ *   fixed moment, as the approved pictures show it.
  */
 const HELD: readonly { path: RegExp; keys: Readonly<Record<string, unknown>> }[] = [
   {
@@ -84,6 +89,10 @@ const HELD: readonly { path: RegExp; keys: Readonly<Record<string, unknown>> }[]
   {
     path: /\/api\/orgs\/[^/]+\/datasources(\/[^/]+)?$/,
     keys: { latency: [], lastUsedAt: undefined },
+  },
+  {
+    path: /\/api\/orgs\/[^/]+\/reports(\/[^/]+)?$/,
+    keys: { nextRunAt: VISUAL_NOW + DAY_MS },
   },
 ];
 
