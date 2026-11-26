@@ -279,6 +279,20 @@ describe("the dashboard settings page", () => {
     });
   }, 20_000);
 
+  it("asks for no preview while a query variable's query is still empty", async () => {
+    const { server, stored } = setup("editor");
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [{ name: "city", type: "query", datasourceId: PG_ID, query: { sql: "" } }],
+    };
+    renderApp("/dashboards/d-main/settings?section=variables");
+    const section = await screen.findByRole("region", { name: "Variables" });
+    await within(section).findByRole("region", { name: "Preview of the values" });
+    // Longer than the pause the preview waits for after typing.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(server.areas.datasources.variablePreviews).toHaveLength(0);
+  });
+
   it("offers constant and interval variables and saves them", async () => {
     const { stored } = setup("editor");
     const { user } = renderApp("/dashboards/d-main/settings?section=variables");
