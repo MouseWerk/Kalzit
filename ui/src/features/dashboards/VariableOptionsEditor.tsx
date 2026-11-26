@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { Select } from "../../components/Select";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { hasQuery } from "../datasources/queryKinds";
 import { previewVariableOptions } from "./api";
 import {
   ALL_VALUE,
@@ -219,6 +220,7 @@ export function VariablePreview({
   orgId,
   dashboardId,
   variable,
+  kind,
   timeRange,
   values,
   onRegexError,
@@ -226,16 +228,25 @@ export function VariablePreview({
   orgId: string;
   dashboardId?: string | undefined;
   variable: VariableModel;
+  /** The kind of the variable's data source, which tells what a whole query of it is. */
+  kind?: string | undefined;
   timeRange: TextRange;
   /** The other variables' start values, as sent. */
   values: VariableValues;
   onRegexError: (message: string | undefined) => void;
 }) {
   const { t } = useI18n();
-  const clean = useSettled(JSON.stringify(cleanVariable(variable)), 400);
+  // The variable and its source's kind as they were when typing paused: the preview asks for
+  // that, and only once its query is whole, so a source picked before the query is typed does
+  // not send an empty one (the server refuses it).
+  const settled = useSettled(
+    JSON.stringify({ variable: cleanVariable(variable), kind: kind ?? null }),
+    400,
+  );
+  const asked = JSON.parse(settled) as { variable: VariableModel; kind: string | null };
   const inputs = Object.fromEntries(Object.entries(values).filter(([n]) => n !== variable.name));
   const preview = useQuery({
-    queryKey: ["variable-preview", orgId, clean, timeRange.from, timeRange.to, inputs],
+    queryKey: ["variable-preview", orgId, settled, timeRange.from, timeRange.to, inputs],
     queryFn: async ({ signal }) => {
       const resolved = resolveRange(timeRange, Date.now());
       const range = resolved.ok ? resolved.range : { from: Date.now() - 3_600_000, to: Date.now() };
@@ -243,7 +254,7 @@ export function VariablePreview({
       const answer = await previewVariableOptions(
         orgId,
         {
-          variable: JSON.parse(clean),
+          variable: asked.variable,
           timeRange: range,
           variables: inputs,
           ...(dashboardId !== undefined && anyAll(inputs) ? { dashboardId } : {}),
@@ -252,11 +263,14 @@ export function VariablePreview({
       );
       return { answer, ms: Math.round(performance.now() - started) };
     },
-    // A data source variable lists sources of its kind; any other kind runs its query.
+    // A data source variable lists sources of its kind; any other kind runs its query, once it
+    // is whole.
     enabled:
-      variable.type === "datasource"
-        ? variable.datasourceKind !== undefined && variable.datasourceKind !== ""
-        : variable.datasourceId !== undefined && variable.datasourceId !== "",
+      asked.variable.type === "datasource"
+        ? asked.variable.datasourceKind !== undefined && asked.variable.datasourceKind !== ""
+        : asked.variable.datasourceId !== undefined &&
+          asked.variable.datasourceId !== "" &&
+          hasQuery(asked.variable.query, asked.kind ?? undefined),
     retry: false,
   });
   const regexRefused =
