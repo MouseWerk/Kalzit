@@ -8,6 +8,8 @@
   server can send mail.
 - Settings > Storage and retention: "Data source trash (days)" sets how long deleted data sources
   stay in the trash (default 30). The trash shows the date each source is deleted for good.
+- Fewer trash days apply only to data sources deleted afterwards: nothing already in the trash is
+  deleted sooner. More days also extend the sources already in the trash.
 - The plugin folder can live outside the data folder (`paths.plugins_dir` in `kalzit.toml` or
   `KALZIT_PATHS_PLUGINS_DIR`); an existing folder moves there at the next start, and Settings >
   Storage and retention shows the folder in use. The folder must be missing, empty or Kalzit's

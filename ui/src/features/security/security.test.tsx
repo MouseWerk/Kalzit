@@ -212,6 +212,14 @@ describe("account: sign-in and security", () => {
     expect(await screen.findByText(/did not ask for your sign-in again/)).toBeTruthy();
   });
 
+  it("says when the sign-in at the provider ran out", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.reauthProvider = { slug: "mueller-sso", name: "Müller SSO" };
+    renderApp("/settings/account-security?reauth=expired");
+    expect(await screen.findByText(/took too long/)).toBeTruthy();
+  });
+
   it("sets up the app right after a sign-in when the account has no password", async () => {
     const server = installFakeServer({ signedIn: true });
     server.security.hasPassword = false;

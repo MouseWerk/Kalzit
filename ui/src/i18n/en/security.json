@@ -147,6 +147,7 @@
   "security.reauth.cancelled": "The sign-in at your provider was cancelled.",
   "security.reauth.stale": "Your provider did not ask for your sign-in again. Ask an admin to check that the provider honors max_age.",
   "security.reauth.unavailable": "Your provider cannot be reached right now. Try again later.",
+  "security.reauth.expired": "The sign-in at your provider took too long. Start it again.",
   "security.reauth.failed": "The sign-in at your provider did not work. Try again.",
   "security.dialog.settingText": "Who must have a second factor, and which methods people may set up, change for everyone at once; so Kalzit asks for your own second factor first.",
   "security.dialog.passwordText": "A new password weakens what protects your account, so Kalzit asks for your second factor first.",

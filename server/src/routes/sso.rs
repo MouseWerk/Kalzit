@@ -272,7 +272,11 @@ pub async fn callback(
         Ok(response) => response,
         Err(e) => {
             let r = record_failure(&state, &info, None, None, "sso.internal", &e.message).await;
-            see_other(&sign_in_page("unavailable", &slug, Some(&r)), vec![clear_binding(info.https)])
+            let page = match reauth_return(&state, &info, &headers, &query).await {
+                Some(return_to) => reauth_page(&return_to, "unavailable"),
+                None => sign_in_page("unavailable", &slug, Some(&r)),
+            };
+            see_other(&page, vec![clear_binding(info.https)])
         }
     }
 }
@@ -319,6 +323,10 @@ async fn callback_inner(
     let Some(row) = row else {
         let r = record_failure(state, info, None, None, "sso.state_unknown", "the sign-in is unknown, used or expired")
             .await;
+        // A signed-in person whose re-authentication ran out goes back to where it started.
+        if let Some(return_to) = reauth_return(state, info, headers, query).await {
+            return Ok(see_other(&reauth_page(&return_to, "expired"), clear()));
+        }
         return Ok(expired(r));
     };
     let test = row.purpose == "test";
@@ -393,6 +401,29 @@ async fn callback_inner(
 
 /// The purpose of a sign-in again at the provider before the first second factor.
 const REAUTH: &str = "reauth";
+
+/// The page a re-authentication named by the callback's `state` started on, when the browser still
+/// holds the session that started it: a failed or expired one goes back there, not to the
+/// sign-in page. `None` for every other sign-in, and when anything is unclear.
+async fn reauth_return(
+    state: &AppState,
+    info: &RequestInfo,
+    headers: &HeaderMap,
+    query: &HashMap<String, String>,
+) -> Option<String> {
+    let state_param = query.get("state").filter(|s| s.len() <= 512)?;
+    let current = session::read_cookie(headers, info.https).map(|t| session::hash_token(&t))?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT return_to FROM sso_sign_ins WHERE state_hash = $1 AND purpose = $2 AND session_hash = $3",
+    )
+    .bind(hash(state_param))
+    .bind(REAUTH)
+    .bind(&current)
+    .fetch_optional(&state.db)
+    .await
+    .ok()?;
+    row.map(|(return_to,)| crate::sso::safe_return_to(Some(&return_to)))
+}
 
 /// Where a re-authentication ends: the page it started on, with its outcome (`reauth=done`,
 /// `failed`, `cancelled`, `stale`, `unavailable`, ...).

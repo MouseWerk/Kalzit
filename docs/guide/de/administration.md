@@ -299,7 +299,8 @@ Liste erlaubter Ziele, das Zeitlimit für Abfragen (30 s), das Zeilenlimit (100.
 Abfrage-Cache mit seinem Speicherlimit und **Cache leeren** ([Performance und
 Caching](performance.md)). Unter **Speicher und Aufbewahrung**: die Aufbewahrung des Audit-Logs, wie
 viele Dashboard-Versionen behalten werden (100; 0 behält jede Version), wie viele Tage gelöschte
-Datenquellen im Papierkorb bleiben (30), ob und wie lange Nutzung aufgezeichnet wird
+Datenquellen im Papierkorb bleiben (30; weniger Tage gelten nur für danach gelöschte Quellen, mehr
+Tage auch für die schon im Papierkorb), ob und wie lange Nutzung aufgezeichnet wird
 ([Nutzung](#nutzung)) und der Plugin-Ordner, dort nur lesbar, weil er in `kalzit.toml` steht
 ([Plugins](plugins.md#plugin-ordner)). Einstellungen können auch aus
 `KALZIT_SETTING_<KEY>`-Variablen kommen; jeder Schlüssel ist in

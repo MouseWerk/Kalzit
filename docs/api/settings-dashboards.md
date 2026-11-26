@@ -126,7 +126,7 @@ Server settings:
 | `datasources.max_response_bytes` | `134217728` (128 MiB) | whole number 1024 to 1 GiB; a memory budget: results count what they hold in memory, not their JSON text |
 | `datasources.cache_enabled` | `true` | `true`, `false`; the query cache (docs/api/datasources.md, "Query cache"); off lets go of every kept answer |
 | `datasources.cache_max_bytes` | `268435456` (256 MiB) | whole number 1 MiB to 64 GiB; the memory of all kept answers, counted as their serialized size |
-| `datasources.trash_retention_days` | `30` | whole number 1 to 3650; days a deleted data source stays in the trash with its secrets before the hourly job deletes it for good (docs/api/datasources.md, "Purge") |
+| `datasources.trash_retention_days` | `30` | whole number 1 to 3650; days a deleted data source stays in the trash with its secrets before the hourly job deletes it for good, fixed at its deletion: a shorter value applies only to sources deleted afterwards, a longer one also extends those in the trash (docs/api/datasources.md, "Purge") |
 | `audit.retention_days` | `365` | whole number 1 to 36500 |
 | `usage.enabled` | `true` | `true`, `false`; counts dashboard views and panel and data source queries for the usage insights (docs/api/usage.md), never per person; off counts nothing new and keeps what was counted |
 | `usage.retention_days` | `90` | whole number 1 to 90; usage buckets older than this are deleted every hour |

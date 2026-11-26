@@ -528,6 +528,7 @@ async fn snapshot(state: &AppState, work: &Path, name: &str, encrypt: bool) -> R
     }
     let data_dir = state.config.paths.data_dir.clone();
     let plugins_dir = state.config.plugins_dir();
+    let plugins_moved = state.config.plugins_dir_moved();
     let config_file = state.config.config_file.clone();
     let zip_path = work.join("backup.zip");
     let out_path = work.join(name);
@@ -544,8 +545,11 @@ async fn snapshot(state: &AppState, work: &Path, name: &str, encrypt: bool) -> R
             io::Write::write_all(&mut zip, POSTGRES_NOTE.as_bytes())?;
         }
         add_dir(&mut zip, &data_dir.join("acme"), "acme", &[])?;
-        // Only a folder that is Kalzit's own is packed, never a general one it points at.
-        crate::data_dir::check_plugins_dir_own(&plugins_dir).map_err(|e| io::Error::other(format!("{e:#}")))?;
+        // A moved plugin folder is packed only when it is Kalzit's own, never a general one
+        // `paths.plugins_dir` points at; `plugins` in the data directory is packed as it is.
+        if plugins_moved {
+            crate::data_dir::check_plugins_dir_own(&plugins_dir).map_err(|e| io::Error::other(format!("{e:#}")))?;
+        }
         add_dir(&mut zip, &plugins_dir, "plugins", &["run", "uploads"])?;
         // The configuration may hold secrets: only in an encrypted backup.
         if let Some(file) = config_file.filter(|f| encrypt && f.is_file()) {

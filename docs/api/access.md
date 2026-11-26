@@ -1204,7 +1204,9 @@ provider for 5 minutes (`sessions.provider_confirmed_at`, `SecurityStatus.provid
 which also stands in for the password of an account that has one, and the audit gets
 `user.provider_reauthenticated` (`userId`, `provider`). The browser returns to `returnTo` with
 `reauth=done`; a refusal returns with `reauth=stale` (no fresh `auth_time`), `reauth=cancelled`,
-`reauth=unavailable` or `reauth=failed` (another person, another session, an error) and is
+`reauth=unavailable`, `reauth=expired` (the start ran out before the provider answered; the browser
+still holds the session that started it) or `reauth=failed` (another person, another session, an
+error) and is
 audited as `auth.sso_failed` with reason `sso.reauth_stale`, `sso.reauth_other_person`,
 `sso.reauth_other_session` or `sso.reauth_invalid`. An account that has a method answers `409
 conflict` (`second_factor.has_factor`); a session from a password, SAML or a directory answers

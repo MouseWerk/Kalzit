@@ -450,6 +450,77 @@ async fn the_trash_retention_is_a_setting(t: TestApp) {
     assert_eq!(summary["trashDays"], json!(3), "{summary}");
 }
 
+/// The purge time of a source in the trash, as the trash lists it.
+async fn purge_at(t: &TestApp, id: &str) -> i64 {
+    let listed = t.get("/datasources?trash=true", &t.owner).await;
+    let item = listed.body["items"].as_array().unwrap().iter().find(|i| i["id"] == id).cloned();
+    item.and_then(|i| i["purgeAt"].as_i64()).unwrap_or_else(|| panic!("{id} in the trash: {}", listed.body))
+}
+
+/// The retention is fixed when a source is deleted: lowering the setting (and undoing that)
+/// purges nothing already in the trash sooner and applies to sources deleted afterwards; raising
+/// it extends the sources already in the trash.
+async fn changing_the_retention_never_shortens_the_trash(mut t: TestApp) {
+    const DAY: i64 = 24 * 3600 * 1000;
+    let early = t.source("Frueh").await;
+    t.trash(&early).await;
+    let early_deleted = purge_at(&t, &early).await - 30 * DAY;
+
+    // Lowered to 2 days after 5 days in the trash: the source keeps its 30 days.
+    t.clock.advance_ms(5 * DAY);
+    t.owner = t.session_for(&t.owner_id).await;
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(2)).await.status, StatusCode::OK);
+    assert_eq!(
+        kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(),
+        0,
+        "nothing in the trash goes sooner"
+    );
+    assert_eq!(purge_at(&t, &early).await, early_deleted + 30 * DAY);
+    // A source deleted now keeps the 2 days.
+    let late = t.source("Spaet").await;
+    t.trash(&late).await;
+    let late_deleted = purge_at(&t, &late).await - 2 * DAY;
+    assert!(late_deleted >= early_deleted + 5 * DAY);
+
+    // Undone to 30 days: the early source is where it was, the late one gets the longer time.
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(30)).await.status, StatusCode::OK);
+    assert_eq!(purge_at(&t, &early).await, early_deleted + 30 * DAY);
+    assert_eq!(purge_at(&t, &late).await, late_deleted + 30 * DAY);
+    // Lowered again: the late source falls back to its own 2 days, the early one keeps 30.
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(2)).await.status, StatusCode::OK);
+    assert_eq!(purge_at(&t, &late).await, late_deleted + 2 * DAY);
+    t.clock.advance_ms(2 * DAY + 1_000);
+    t.owner = t.session_for(&t.owner_id).await;
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &late).await, 0);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &early).await, 1);
+
+    // Raised to 40 days: the early source stays past its 30 days, until the 40.
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(40)).await.status, StatusCode::OK);
+    assert_eq!(purge_at(&t, &early).await, early_deleted + 40 * DAY);
+    t.clock.advance_ms(early_deleted + 30 * DAY + 1_000 - t.clock.now_ms());
+    t.owner = t.session_for(&t.owner_id).await;
+    assert_eq!(
+        kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(),
+        0,
+        "the longer retention extends the trash"
+    );
+    t.clock.advance_ms(early_deleted + 40 * DAY + 1_000 - t.clock.now_ms());
+    t.owner = t.session_for(&t.owner_id).await;
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &early).await, 0);
+
+    // A source restored and deleted again takes the retention in force at the new deletion.
+    let again = t.source("Wieder").await;
+    t.trash(&again).await;
+    let r = t.post(&format!("/datasources/{again}/restore"), json!({}), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(set_setting(&t, "datasources.trash_retention_days", json!(5)).await.status, StatusCode::OK);
+    t.trash(&again).await;
+    let deleted = purge_at(&t, &again).await - 5 * DAY;
+    assert!(deleted >= early_deleted + 40 * DAY, "{deleted}");
+}
+
 /// The retention and a restore at the same time: one wins, never both, and a restored source
 /// keeps its secrets.
 async fn the_retention_and_a_restore_end_in_one_state(t: TestApp) {
@@ -508,4 +579,5 @@ on_both_databases! {
     the_retention_skips_sources_in_use;
     the_retention_and_a_restore_end_in_one_state;
     the_trash_retention_is_a_setting;
+    changing_the_retention_never_shortens_the_trash;
 }

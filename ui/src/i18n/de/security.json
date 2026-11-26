@@ -147,6 +147,7 @@
   "security.reauth.cancelled": "Die Anmeldung bei deinem Anbieter wurde abgebrochen.",
   "security.reauth.stale": "Dein Anbieter hat nicht erneut nach deiner Anmeldung gefragt. Bitte einen Admin zu prüfen, ob der Anbieter max_age beachtet.",
   "security.reauth.unavailable": "Dein Anbieter ist gerade nicht erreichbar. Versuche es später noch einmal.",
+  "security.reauth.expired": "Die Anmeldung bei deinem Anbieter hat zu lange gedauert. Starte sie noch einmal.",
   "security.reauth.failed": "Die Anmeldung bei deinem Anbieter hat nicht geklappt. Versuche es noch einmal.",
   "security.dialog.settingText": "Wer einen zweiten Faktor braucht und welche Methoden man einrichten darf, ändert sich für alle auf einmal; deshalb fragt Kalzit zuerst nach deinem eigenen zweiten Faktor.",
   "security.dialog.passwordText": "Ein neues Passwort schwächt, was dein Konto schützt; deshalb fragt Kalzit zuerst nach deinem zweiten Faktor.",

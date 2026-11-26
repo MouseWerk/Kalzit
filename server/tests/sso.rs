@@ -1790,7 +1790,24 @@ async fn the_first_factor_needs_a_sign_in_again_at_the_provider() {
         assert!(reasons.iter().any(|r| r == reason), "{reason} in {reasons:?}");
     }
 
+    // A start that ran out goes back to the page it started on, not to the sign-in page; a browser
+    // without the session that started it gets the sign-in page.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    app.clock.advance_ms(11 * 60 * 1000);
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let later = app.clock.now_ms() / 1000;
+    let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(later)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=expired"));
+    let (r, _) = through_provider_with(&app, &idp, &url, &format!("kalzit_sso={binding}"), &lea, |c| {
+        c["auth_time"] = json!(later)
+    })
+    .await;
+    assert!(r.location().starts_with("/anmelden?sso=expired"), "{}", r.location());
+    let status = app.get("/api/me/security", &session).await;
+    assert_eq!(status.body["providerConfirmedUntil"], Value::Null, "{}", status.body);
+
     // Signed in again: the session is confirmed at the provider and sets up the app.
+    let now = app.clock.now_ms() / 1000;
     let (url, binding) = start_reauth(&app, &session, back).await;
     let cookies = format!("kalzit_sso={binding}; {session}");
     let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(now)).await;

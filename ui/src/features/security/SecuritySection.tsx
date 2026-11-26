@@ -626,6 +626,7 @@ const REAUTH_OUTCOMES: Record<string, MessageKey> = {
   cancelled: "security.reauth.cancelled",
   stale: "security.reauth.stale",
   unavailable: "security.reauth.unavailable",
+  expired: "security.reauth.expired",
 };
 
 /**

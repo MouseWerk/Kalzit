@@ -767,15 +767,45 @@ fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(windows) { a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase() } else { a == b }
 }
 
-/// Whether `path` is `folder` or lies inside it, as written or with links resolved (where both
-/// exist): a link in either path cannot move it out of view.
+/// Whether `path` is `folder` or lies inside it, as written or with links resolved, in every
+/// pairing: a link in either path cannot move it out of view, also when one of them does not exist
+/// yet (a new plugin folder under the real target of a linked data directory, or under a link to
+/// it). A missing path is resolved through its nearest existing parent.
 fn within(path: &Path, folder: &Path) -> bool {
     let forms = |p: &Path| {
         let fold = |p: PathBuf| if cfg!(windows) { PathBuf::from(p.to_string_lossy().to_lowercase()) } else { p };
-        [Some(fold(lexical(p))), std::fs::canonicalize(p).ok().map(fold)]
+        let written = lexical(p);
+        [Some(fold(written.clone())), resolved(&written).map(|c| fold(without_verbatim(c)))]
     };
     let (paths, folders) = (forms(path), forms(folder));
-    paths.iter().zip(&folders).any(|(p, f)| matches!((p, f), (Some(p), Some(f)) if p.starts_with(f)))
+    paths.iter().flatten().any(|p| folders.iter().flatten().any(|f| p.starts_with(f)))
+}
+
+/// `path` (already lexical) with links resolved: canonical where it exists, otherwise its nearest
+/// existing parent canonical with the missing rest added as written.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    let mut rest = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(current) {
+            return Some(rest.iter().rev().fold(canonical, |p: PathBuf, part| p.join(part)));
+        }
+        rest.push(current.file_name()?.to_os_string());
+        current = current.parent()?;
+    }
+}
+
+/// A canonical Windows path without its `\\?\` prefix (`\\?\C:\x` is `C:\x`, `\\?\UNC\s\x` is
+/// `\\s\x`), so it compares with a path as written; other paths stay as they are.
+fn without_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy().into_owned();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 /// System paths no folder of Kalzit's may be: views of the system (`/proc`, `/sys`, `/dev`,
@@ -1555,5 +1585,39 @@ mod tests {
         c.paths.data_dir = PathBuf::from(if cfg!(windows) { r"D:\data" } else { "/var/lib/kalzit" });
         c.paths.plugins_dir = Some(PathBuf::from(system[1]));
         assert!(c.check_plugins_dir().is_err());
+    }
+
+    /// A data directory reached through a link: a plugin folder that does not exist yet under its
+    /// real target is still inside it.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_data_directory_does_not_hide_a_new_plugin_folder_inside_it() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real-data");
+        std::fs::create_dir(&real).unwrap();
+        let link = root.path().join("data-link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut c = Config::default();
+        c.paths.data_dir = link.clone();
+        c.paths.plugins_dir = Some(real.join("other-plugins"));
+        let err = c.check_plugins_dir().unwrap_err().to_string();
+        assert!(err.contains("inside the data directory"), "{err}");
+        // The other way round: the link's own path, the folder missing.
+        c.paths.data_dir = real.clone();
+        c.paths.plugins_dir = Some(link.join("other-plugins"));
+        assert!(c.check_plugins_dir().is_err());
+        // A folder beside the data directory stays fine.
+        c.paths.plugins_dir = Some(root.path().join("plugins"));
+        c.check_plugins_dir().unwrap();
+    }
+
+    #[test]
+    fn canonical_windows_paths_compare_as_written() {
+        if cfg!(windows) {
+            assert_eq!(without_verbatim(PathBuf::from(r"\\?\C:\data")), PathBuf::from(r"C:\data"));
+            assert_eq!(without_verbatim(PathBuf::from(r"\\?\UNC\server\share\x")), PathBuf::from(r"\\server\share\x"));
+            assert_eq!(without_verbatim(PathBuf::from(r"\\?\Volume{1}\x")), PathBuf::from(r"\\?\Volume{1}\x"));
+        }
+        assert_eq!(without_verbatim(PathBuf::from("/var/lib/kalzit")), PathBuf::from("/var/lib/kalzit"));
     }
 }

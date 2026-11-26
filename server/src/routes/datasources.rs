@@ -136,7 +136,7 @@ struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
     /// Items of the trash: when the hourly purge deletes it for good at the earliest
-    /// (`datasources.trash_retention_days` after `deleted_at`).
+    /// (`purge_at`: the retention in force at the deletion, or a longer one set since).
     #[serde(skip_serializing_if = "Option::is_none")]
     purge_at: Option<i64>,
     access: DatasourceAccess,
@@ -260,7 +260,7 @@ async fn stored_models(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResul
 }
 
 /// id, name, kind, created_at, deleted_at, settings, updated_at.
-type ListRow = (String, String, String, i64, Option<i64>, String, i64);
+type ListRow = (String, String, String, i64, Option<i64>, String, i64, Option<i64>);
 
 /// Newest first (ids are UUIDv7, so id order is creation order); the cursor is the last id.
 async fn list(
@@ -336,7 +336,7 @@ async fn list(
         format!("AND id IN ({})", placeholders.join(", "))
     };
     let sql = format!(
-        "SELECT id, name, kind, created_at, deleted_at, settings, updated_at FROM datasources \
+        "SELECT id, name, kind, created_at, deleted_at, settings, updated_at, trash_days FROM datasources \
          WHERE org_id = $1 AND {deleted} {after} {only} ORDER BY id DESC LIMIT $2"
     );
     let mut q = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id).bind((limit + 1) as i64);
@@ -359,18 +359,22 @@ async fn list(
     } else {
         let sources: Vec<overview::SourceRow<'_>> = rows
             .iter()
-            .map(|(id, _, _, _, _, settings, updated_at)| overview::SourceRow { id, settings, updated_at: *updated_at })
+            .map(|(id, _, _, _, _, settings, updated_at, _)| overview::SourceRow {
+                id,
+                settings,
+                updated_at: *updated_at,
+            })
             .collect();
         let mut conn = state.db.acquire().await?;
         overview::details(&mut conn, &ctx, &index, &sources, state.clock.now_ms()).await?
     };
-    let keep_ms = if trash { trash_days(&state).await?.saturating_mul(DAY_MS) } else { 0 };
+    let current_days = if trash { trash_days(&state).await? } else { TRASH_DAYS };
     let items = rows
         .into_iter()
-        .map(|(id, name, kind, created_at, deleted_at, _, _)| {
+        .map(|(id, name, kind, created_at, deleted_at, _, _, kept_days)| {
             let access = access(&ctx, index.datasource(&id));
             let details = details.remove(&id);
-            let purge_at = deleted_at.map(|at| at.saturating_add(keep_ms));
+            let purge_at = deleted_at.map(|at| purge_at(at, kept_days, current_days));
             ListItem { id, name, kind, created_at, deleted_at, purge_at, access, details }
         })
         .collect();
@@ -1001,16 +1005,19 @@ async fn delete(
     managed_check(&state, &ctx, &ds.id).await?;
     let expected = query.expected_updated_at.unwrap_or(ds.updated_at);
     let now = state.clock.now_ms().max(ds.updated_at + 1);
+    // The retention in force now fixes when the purge may take it at the earliest (`purge_at`).
+    let keep_days = trash_days(&state).await?;
     let mut tx = crate::db::begin(&state.db).await?;
     managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     let updated = sqlx::query(
-        "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+        "UPDATE datasources SET deleted_at = $1, updated_at = $1, trash_days = $5 \
          WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
     )
     .bind(now)
     .bind(&ds.id)
     .bind(&ctx.org_id)
     .bind(expected)
+    .bind(keep_days)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -1040,7 +1047,7 @@ async fn restore(
     // Purging locks the organization too: a source is either restored or purged, never both.
     managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     let restored = sqlx::query(
-        "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
+        "UPDATE datasources SET deleted_at = NULL, updated_at = $1, trash_days = NULL \
          WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
     )
     .bind(now)
@@ -1115,6 +1122,8 @@ async fn bulk(
     }
     let now = state.clock.now_ms();
     let count = sources.len();
+    // A deletion keeps the retention in force now with each source (`purge_at`).
+    let keep_days = if trash { Some(trash_days(&state).await?) } else { None };
     let mut tx = crate::db::begin(&state.db).await?;
     // Purging locks the organization too: a source is either restored or purged, never both. The
     // lock also keeps an apply from managing a source between this check and the change.
@@ -1123,23 +1132,24 @@ async fn bulk(
     }
     let (sql, action) = if trash {
         (
-            "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+            "UPDATE datasources SET deleted_at = $1, updated_at = $1, trash_days = $4 \
              WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL",
             "datasource.deleted",
         )
     } else {
         (
-            "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
+            "UPDATE datasources SET deleted_at = NULL, updated_at = $1, trash_days = NULL \
              WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
             "datasource.restored",
         )
     };
     for ds in &sources {
         let at = now.max(ds.updated_at + 1);
-        let changed = sqlx::query(sql)
-            .bind(at)
-            .bind(&ds.id)
-            .bind(&ctx.org_id)
+        let mut query = sqlx::query(sql).bind(at).bind(&ds.id).bind(&ctx.org_id);
+        if let Some(days) = keep_days {
+            query = query.bind(days);
+        }
+        let changed = query
             .execute(&mut *tx)
             .await
             // Two restored sources of the same name.
@@ -1387,6 +1397,19 @@ pub async fn trash_days(state: &AppState) -> ApiResult<i64> {
     Ok(value.as_i64().filter(|d| *d >= 1).unwrap_or(TRASH_DAYS))
 }
 
+/// The days a source deleted with `kept_days` in force stays in the trash while `current_days` is
+/// the setting: the retention is fixed at the deletion, so lowering the setting applies only to
+/// sources deleted afterwards (and an undo of it changes nothing), while raising it extends the
+/// sources already in the trash. Sources deleted before the setting existed kept `TRASH_DAYS`.
+fn keep_days(kept_days: Option<i64>, current_days: i64) -> i64 {
+    kept_days.filter(|d| *d >= 1).unwrap_or(TRASH_DAYS).max(current_days)
+}
+
+/// When the purge may take a source deleted at `deleted_at` at the earliest (`keep_days`).
+fn purge_at(deleted_at: i64, kept_days: Option<i64>, current_days: i64) -> i64 {
+    deleted_at.saturating_add(keep_days(kept_days, current_days).saturating_mul(DAY_MS))
+}
+
 /// Purges the data sources that have been in the trash for longer than `trash_days`, each in its
 /// own transaction with the same checks as a purge by hand (`purge_in`) and an audit entry
 /// without an actor. A source still in use is skipped with a warning and tried again on the next
@@ -1397,16 +1420,22 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
 
 async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let now = state.clock.now_ms();
-    let days = trash_days(state).await?;
-    let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
-    let expired: Vec<(String, String)> = sqlx::query_as(
-        "SELECT org_id, id FROM datasources WHERE deleted_at IS NOT NULL AND deleted_at < $1 ORDER BY deleted_at",
+    let current_days = trash_days(state).await?;
+    // No source leaves the trash before a day; the rest is decided per source (`keep_days`).
+    let candidates: Vec<(String, String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT org_id, id, deleted_at, trash_days FROM datasources WHERE deleted_at IS NOT NULL AND deleted_at < $1 \
+         ORDER BY deleted_at",
     )
-    .bind(cutoff)
+    .bind(now.saturating_sub(DAY_MS))
     .fetch_all(db)
     .await?;
     let mut purged = 0;
-    for (org_id, id) in expired {
+    for (org_id, id, deleted_at, kept_days) in candidates {
+        let days = keep_days(kept_days, current_days);
+        let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
+        if deleted_at >= cutoff {
+            continue;
+        }
         let mut tx = crate::db::begin(db).await?;
         match purge_in(&mut tx, &org_id, &id, Some(cutoff)).await? {
             Purge::Done { name, kind } => {
