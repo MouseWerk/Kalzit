@@ -1462,6 +1462,7 @@
     align-items: center;
     gap: var(--space-1);
     min-width: 0;
+    min-height: var(--size-target-min);
     padding: var(--space-half) var(--space-1);
     border: 0;
     border-radius: var(--radius-sm);
@@ -1477,8 +1478,11 @@
     text-overflow: ellipsis;
   }
 
+  /* Short parts (an operator, the remove cross) still get a whole target to hit. */
   .filter-chip__operator {
     flex: none;
+    justify-content: center;
+    min-width: var(--size-target-min);
     color: var(--text-muted);
   }
 
@@ -1488,6 +1492,8 @@
 
   .filter-chip__remove {
     flex: none;
+    justify-content: center;
+    min-width: var(--size-target-min);
     color: var(--text-muted);
   }
 
