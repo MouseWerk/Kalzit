@@ -348,4 +348,5 @@ cat "$logs/summary.txt"
 exit "$overall"
 }
 
-main "$@"
+# exit: bash must not read on past this line, even when the file was replaced during the run.
+main "$@"; exit

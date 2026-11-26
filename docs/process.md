@@ -146,9 +146,9 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
 - **Statuses.** Each leg posts one status to the PR's head commit, naming the tested tree and
   the `main` commit it ran on (`passed gate tree ...` or `passed tree ...`). `merge.sh` merges
   only when a merge would make exactly that tree. A `--ref` run names its tree last
-  (`passed at <commit> as it is, tree ...`) and never counts as a pull request's pass; a
-  GitHub run without a result (cancelled, timed out) posts `error`, and `merge.sh` runs the CI
-  again.
+  (`passed at <commit> as it is, [gate ]tree ...`) and never counts as a pull request's pass;
+  a GitHub run without a result (cancelled, timed out, not finished after 8 hours) posts
+  `error`, and `merge.sh` runs the CI again.
 - **Not covered locally.** `packages (arm64)`; the release workflow still builds and checks
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.

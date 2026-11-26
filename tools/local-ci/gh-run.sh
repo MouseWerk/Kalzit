@@ -23,8 +23,9 @@
 #
 # On GitHub the pushed commit's own ci.yml runs, so a batch that changes .github/ or
 # tools/local-ci would be judged by its own rules: it is refused (run it locally) unless
-# GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed. A run that is cancelled, times out
-# or does not finish posts `error` (no result; merge.sh runs the CI again), not `failure`.
+# GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed. Only a run that fails posts
+# `failure`; one that is cancelled, times out, ends otherwise without a result or does not finish
+# (it is cancelled then) posts `error` (no result; merge.sh runs the CI again).
 
 set -euo pipefail
 
@@ -130,15 +131,19 @@ while [ $((SECONDS - start)) -lt 28800 ]; do
   [ "$state" = completed ] && break
 done
 took=$(( (SECONDS - start + 30) / 60 ))
+# A run still going after eight hours is stopped, so it posts nothing and holds no runner.
+if [ "$state" != completed ]; then
+  gh run cancel "$run" --repo "$REPO_SLUG" > /dev/null 2>&1 || true
+fi
 if [ "$conclusion" = success ]; then
   status success "passed $base in $took min, GitHub run $run"
   echo "PASSED in $took min: $url" | tee -a "$logs/github.txt"
   exit 0
 fi
-# A run that was cancelled, timed out or never finished says nothing about the code: an error,
-# which merge.sh treats as no result (it runs the CI again), not as a failure of this tree.
-if [ "$state" != completed ] || [ "$conclusion" = cancelled ] || [ "$conclusion" = timed_out ] \
-    || [ "$conclusion" = startup_failure ]; then
+# Only a run whose conclusion is failure judged the code. Every other end (cancelled, timed out,
+# startup failure, skipped, neutral, stale, action required, or not finished) says nothing about
+# it: an error, which merge.sh treats as no result (it runs the CI again), not a failure.
+if [ "$state" != completed ] || [ "$conclusion" != failure ]; then
   status error "no result for $base: GitHub run $run ($state, $conclusion)"
   echo "NO RESULT ($state, $conclusion) after $took min; $url" | tee -a "$logs/github.txt"
   exit 1
@@ -150,4 +155,5 @@ echo "FAILED ($conclusion) after $took min: ${failed:-}; $url" | tee -a "$logs/g
 exit 1
 }
 
-main "$@"
+# exit: bash must not read on past this line, even when the file was replaced during the run.
+main "$@"; exit

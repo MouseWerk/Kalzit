@@ -44,16 +44,18 @@ main=""
 tree=""
 
 # Predicts the trees of merging the heads onto the current main, one after another. Returns 3
-# when a pull request does not merge cleanly.
+# when a pull request does not merge cleanly, 1 when git fails. It runs as `predict || ...`,
+# where set -e is off, so every step checks its own result.
 predict() {
-  git fetch --quiet origin main
-  main="$(git rev-parse origin/main)"
+  git fetch --quiet origin main || return 1
+  main="$(git rev-parse origin/main)" || return 1
   heads=()
   steps=()
-  local n cur="$main" step
+  local n h cur="$main" step
   for n in "${prs[@]}"; do
-    git fetch --quiet origin "+refs/pull/$n/head:refs/local-ci/pr-$n"
-    heads+=("$(git rev-parse "refs/local-ci/pr-$n")")
+    git fetch --quiet origin "+refs/pull/$n/head:refs/local-ci/pr-$n" || return 1
+    h="$(git rev-parse "refs/local-ci/pr-$n")" || return 1
+    heads+=("$h")
   done
   local i
   for i in "${!prs[@]}"; do
@@ -64,13 +66,15 @@ predict() {
     steps+=("$step")
     # One parent, as GitHub's squash commit has: the next merge then finds the merge base the
     # real one finds (for stacked pull requests or shared commits, a two-parent merge would not).
-    cur="$(git commit-tree "$step" -p "$cur" -m "predicted squash of PR ${prs[$i]}")"
+    cur="$(git commit-tree "$step" -p "$cur" -m "predicted squash of PR ${prs[$i]}")" || return 1
   done
   tree=${steps[-1]}
 }
 
 # 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed; 3: the
-# only failure of that tree is one leg that died (no job failed), and one rerun is allowed.
+# only failure of that tree is one leg that died (no job failed), and one rerun is allowed; 4:
+# the statuses could not be read (it runs as `check || ...`, where set -e is off, so a failed
+# call must not pass for "no failure").
 LEG_DIED=": the leg itself"
 LEG_RERUN_NOTE="rerun after a failed leg"
 check() {
@@ -82,7 +86,8 @@ check() {
       --jq ".[] | select(.context == \"local/linux\" or .context == \"local/windows\")
         | select(.state == \"failure\" or .state == \"error\")
         | select(.description | startswith(\"failed tree ${tree:0:12} \") or startswith(\"failed gate tree ${tree:0:12} \"))
-        | \"\(.context): \(.description)\"")"
+        | \"\(.context): \(.description)\"")" \
+      || { echo "reading the statuses of PR ${prs[$i]} failed" >&2; return 4; }
     tests_failed="$(printf '%s\n' "$failures" | sed '/^$/d' | grep -vF "$LEG_DIED" || true)"
     legs_died="$(printf '%s\n' "$failures" | grep -cF "$LEG_DIED" || true)"
     if [ -n "$tests_failed" ] || [ "$legs_died" -gt 1 ]; then
@@ -98,7 +103,8 @@ check() {
     fi
     for context in local/linux local/windows; do
       line="$(gh api "repos/$REPO_SLUG/commits/${heads[$i]}/status" \
-        --jq ".statuses[] | select(.context == \"$context\") | \"\(.state) \(.description)\"" | head -1)"
+        --jq "[.statuses[] | select(.context == \"$context\")][0] // empty | \"\(.state) \(.description)\"")" \
+        || { echo "reading the status $context of PR ${prs[$i]} failed" >&2; return 4; }
       case "$line" in
         "success passed tree ${tree:0:12} "* | "success passed gate tree ${tree:0:12} "*) ;;
         "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=$want ;;
@@ -112,6 +118,10 @@ check() {
 predict || exit 1
 verdict=0
 check || verdict=$?
+if [ "$verdict" -eq 4 ]; then
+  echo "The statuses could not be read; not merging." >&2
+  exit 1
+fi
 if [ "$verdict" -eq 2 ]; then
   echo "The CI failed for exactly this content; not merging." >&2
   exit 1
@@ -180,4 +190,5 @@ echo "Merged tree ${tree:0:12}, tested as such."
 tell_main_watch "${prs[*]}"
 }
 
-main "$@"
+# exit: bash must not read on past this line, even when the file was replaced during the run.
+main "$@"; exit
