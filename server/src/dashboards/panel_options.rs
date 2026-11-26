@@ -531,10 +531,11 @@ struct FooterColumn {
 /// Columns a footer names one by one.
 const MAX_FOOTER_COLUMNS: usize = 100;
 
-/// The calculations that reduce many values to one, by the names the legend, the footer and the
-/// steps share (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and
-/// `lastRow` take the row, `stddev` and `variance` are the sample measures, `p1` to `p99`.
-const CALCS: &[&str] = &[
+/// The calculations a table footer takes, by the names the legend, the footer and the steps share
+/// (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and `lastRow` take the
+/// row, `stddev` and `variance` are the sample measures, `p1` to `p99`. The legend's own list
+/// (`CALCS`) adds `maxTime`, which a footer row has no place for.
+const FOOTER_CALCS: &[&str] = &[
     "last",
     "min",
     "max",
@@ -554,8 +555,8 @@ const CALCS: &[&str] = &[
     "firstRow",
 ];
 
-fn is_calc(text: &str) -> bool {
-    CALCS.contains(&text)
+fn is_footer_calc(text: &str) -> bool {
+    FOOTER_CALCS.contains(&text)
         || text.strip_prefix('p').is_some_and(|n| {
             !n.starts_with('0') && n.len() <= 2 && n.parse::<u8>().is_ok_and(|p| (1..=99).contains(&p))
         })
@@ -564,7 +565,7 @@ fn is_calc(text: &str) -> bool {
 fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
     let Some(footer) = footer else { return Ok(()) };
     if let Some(calc) = &footer.numbers
-        && !is_calc(calc)
+        && !is_footer_calc(calc)
     {
         return Err(format!("options.footer.numbers: {calc} is not a calculation"));
     }
@@ -580,7 +581,7 @@ fn check_footer(footer: Option<&TableFooter>) -> Result<(), String> {
         if !seen.insert(c.column.as_str()) {
             return Err(format!("options.footer.columns[{i}]: {} has a calculation already", c.column));
         }
-        if !is_calc(&c.calc) {
+        if !is_footer_calc(&c.calc) {
             return Err(format!("options.footer.columns[{i}].calc: {} is not a calculation", c.calc));
         }
     }

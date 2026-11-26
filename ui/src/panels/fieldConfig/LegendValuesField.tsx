@@ -46,7 +46,7 @@ export function LegendValuesField({
 
   const name = (calc: Calc | "percentile") =>
     calc === "percentile"
-      ? t("panels.calc.percentile")
+      ? t("panels.calc.percentileEntry")
       : percentileOf(calc) === null
         ? t(`panels.calc.${calc}` as MessageKey)
         : calcLabel(t, calc);
