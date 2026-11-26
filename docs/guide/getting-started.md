@@ -85,6 +85,8 @@ lasts as long as the server's session settings allow.
 The bar on top has **Language**, **Theme** and **Help**. A language or theme you choose there
 becomes your preference when you sign in, unless you already have one. **Help** opens this page
 and [Installation](installation.md); both ship with Kalzit and can be read without an account.
+Once you are signed in, **Help > Handbook** opens the whole guide inside Kalzit, in English and
+German and with a search; it is part of the program and works without internet.
 
 ### Forgot your password
 

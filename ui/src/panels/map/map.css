@@ -471,7 +471,7 @@
     overflow: auto;
   }
 
-  @container (inline-size < 420px) {
+  @container (inline-size < 26.25rem) {
     .map-panel__body--right {
       flex-direction: column;
     }
@@ -488,7 +488,7 @@
     display: none;
   }
 
-  @container (inline-size < 420px) {
+  @container (inline-size < 26.25rem) {
     .map__corner {
       max-width: 100%;
     }

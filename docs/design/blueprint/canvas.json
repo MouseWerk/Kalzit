@@ -53,7 +53,7 @@
     "Settings.dc.html": {
       "expand": "fill",
       "h": 1000,
-      "title": "Server settings",
+      "title": "Server settings (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 4400
@@ -61,7 +61,7 @@
     "Start.dc.html": {
       "expand": "fill",
       "h": 1040,
-      "title": "Start page",
+      "title": "Start page (superseded)",
       "w": 1440,
       "x": 1520,
       "y": 2360
@@ -249,6 +249,62 @@
       "w": 1440,
       "x": 31920,
       "y": 0
+    },
+    "ParityEditors.dc.html": {
+      "expand": "fill",
+      "h": 15550,
+      "title": "Parity: editor additions",
+      "w": 1440,
+      "x": 33440,
+      "y": 0
+    },
+    "Logs.dc.html": {
+      "expand": "fill",
+      "h": 10050,
+      "title": "Logs",
+      "w": 1440,
+      "x": 34960,
+      "y": 0
+    },
+    "XYMapTrend.dc.html": {
+      "expand": "fill",
+      "h": 9600,
+      "title": "XY chart, map, trend",
+      "w": 1440,
+      "x": 36480,
+      "y": 0
+    },
+    "StartRedesign.dc.html": {
+      "expand": "fill",
+      "h": 14000,
+      "title": "Start, redesigned",
+      "w": 1440,
+      "x": 38000,
+      "y": 0
+    },
+    "MobileNav.dc.html": {
+      "expand": "fill",
+      "h": 5160,
+      "title": "Navigation on narrow screens",
+      "w": 1440,
+      "x": 39520,
+      "y": 0
+    },
+    "Panels.dc.html": {
+      "expand": "fill",
+      "h": 8960,
+      "title": "Panels: box, menu, Inspect, single view",
+      "w": 1440,
+      "x": 41040,
+      "y": 0
+    },
+    "SettingsRedesign.dc.html": {
+      "expand": "fill",
+      "h": 13920,
+      "title": "Settings: Verwaltung and Konto",
+      "w": 1440,
+      "x": 42560,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -300,7 +356,14 @@
     "Shortcuts.dc.html",
     "Auth.dc.html",
     "Themes.dc.html",
-    "Mails.dc.html"
+    "Mails.dc.html",
+    "ParityEditors.dc.html",
+    "Logs.dc.html",
+    "XYMapTrend.dc.html",
+    "StartRedesign.dc.html",
+    "MobileNav.dc.html",
+    "Panels.dc.html",
+    "SettingsRedesign.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

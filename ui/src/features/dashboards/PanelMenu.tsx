@@ -24,9 +24,18 @@ export interface PanelMenuItem {
  * its content; it follows the menu button pattern of the account menu (arrow keys, Home, End,
  * Escape and Tab close, focus returns to the button).
  */
-export function PanelMenu({ title, items }: { title: string; items: readonly PanelMenuItem[] }) {
+export function PanelMenu({
+  title,
+  items,
+  onOpen,
+}: {
+  title: string;
+  items: readonly PanelMenuItem[];
+  /** Called as the menu opens (edit mode selects the panel whose menu it is). */
+  onOpen?: (() => void) | undefined;
+}) {
   const { t } = useI18n();
-  const menu = useMenuButton();
+  const menu = useMenuButton(onOpen === undefined ? {} : { onOpen });
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   // Where the button stood when the menu was placed at it.
   const placedAt = useRef<DOMRect | null>(null);

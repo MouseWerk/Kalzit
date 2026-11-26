@@ -295,13 +295,15 @@ async fn content_of(
         Err(e) => return unavailable("steps.invalid", e),
     };
     let order: Vec<String> = run.items.iter().map(|i| i.ref_id.clone()).collect();
+    // The panel's query options apply in reports as on the dashboard.
+    let (interval_ms, max_data_points) = run.limits.apply(range, None, Some(MAX_DATA_POINTS));
     let mut response = crate::datasources::run_queries_with(
         state,
         ctx,
         run.items,
         range,
-        None,
-        Some(MAX_DATA_POINTS),
+        interval_ms,
+        max_data_points,
         &run.variables,
         Some(&run.identifiers),
     )

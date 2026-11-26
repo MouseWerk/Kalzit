@@ -167,6 +167,7 @@ describe("keys of a deferred area", () => {
       "features/plugins/apps/PluginAppCard.tsx",
       "features/plugins/apps/parts.tsx",
     ],
+    handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
     map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
   };
 
@@ -181,6 +182,8 @@ describe("keys of a deferred area", () => {
     traces: 4,
     serverAdmin: 5,
     apps: 5,
+    // The handbook is one page behind one gate.
+    handbook: 1,
     // The map's panel and its editor.
     map: 2,
   };

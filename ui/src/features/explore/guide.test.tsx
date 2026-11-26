@@ -122,8 +122,8 @@ describe("Explore's start panel", () => {
     // AI is off in the fake server: no entry, no placeholder.
     expect(within(start).queryByRole("link", { name: "Ask in plain language" })).toBeNull();
     expect(
-      within(start).getByRole("link", { name: /Guide to PostgreSQL for beginners/ }),
-    ).toHaveProperty("href", expect.stringContaining("query-languages.md#postgresql"));
+      within(start).getByRole("link", { name: /In the handbook: PostgreSQL for beginners/ }),
+    ).toHaveProperty("href", expect.stringMatching(/\/handbook\/query-languages#postgresql$/));
   });
 });
 

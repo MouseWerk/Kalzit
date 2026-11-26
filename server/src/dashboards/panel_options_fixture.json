@@ -1243,7 +1243,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -1257,7 +1262,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1311,7 +1321,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1329,7 +1344,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1406,7 +1426,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1476,7 +1501,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "customer",
-      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "footer": {
+        "show": false,
+        "over": "all",
+        "columns": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -3808,7 +3838,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -3849,7 +3881,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -3930,7 +3964,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -3975,7 +4011,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4079,7 +4117,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4176,7 +4216,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4217,7 +4259,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4258,7 +4302,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4299,7 +4345,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4340,7 +4388,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4394,7 +4444,9 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4435,7 +4487,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4476,7 +4530,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4557,7 +4613,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4602,7 +4660,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4706,7 +4766,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {
@@ -4803,7 +4865,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4844,7 +4908,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4885,7 +4951,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4926,7 +4994,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -4967,7 +5037,9 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},
@@ -5021,7 +5093,9 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "pinned": [],
+      "infoCard": {}
     },
     "fieldConfig": {
       "defaults": {},

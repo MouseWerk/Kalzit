@@ -82,6 +82,7 @@ describe("catalogs", () => {
     // Names, units, technical terms and words that are the same in both languages. Add a word
     // here only when it is really used as is in German; translate everything else.
     const same = new Set([
+      "Lasso",
       "Server",
       "Admin",
       "Passkey",
@@ -106,6 +107,9 @@ describe("catalogs", () => {
       "Median",
       "Minimum",
       "Maximum",
+      // The calculations' short names in both languages (ParityEditors board, frame 18).
+      "Min",
+      "Max",
       "JSON",
       "Format",
       "Text",
@@ -257,6 +261,7 @@ describe("catalogs", () => {
       "TraceQL",
       "Operation",
       "Tag",
+      "Tags",
       // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
       "CORS",
       "Apps",
@@ -269,6 +274,11 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // Logs keep the names the sources use, as do the level words (board Logs.dc.html).
+      "Logs",
+      "Level",
+      "Info",
+      "Debug",
       // The map's term for a place given as a geohash cell (board XYMapTrend.dc.html).
       "Geohash",
     ]);
@@ -316,6 +326,7 @@ describe("catalogs", () => {
   it("keep the visible text inside the accessible name of a named control", () => {
     // Named controls whose visible text is a shared key rather than the key without "Named".
     const visibleKey: Record<string, string> = {
+      "graphCanvas.table.pinNamed": "graph.pin.add",
       "admin.members.removeNamed": "admin.common.removeAsk",
       "admin.teams.deleteNamed": "admin.common.deleteAsk",
       "admin.teams.removeMemberNamed": "admin.common.removeAsk",
