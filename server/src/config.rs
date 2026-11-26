@@ -246,7 +246,7 @@ pub struct SmtpConfig {
     pub host: String,
     /// 0: the usual port of `security` (587 for STARTTLS, 465 for TLS, 25 without).
     pub port: u16,
-    /// "starttls", "tls" or "none". "none" only for a relay on this machine (loopback).
+    /// "starttls", "tls" or "none" (plain SMTP for a trusted relay in the own network).
     pub security: String,
     pub username: String,
     pub password: String,

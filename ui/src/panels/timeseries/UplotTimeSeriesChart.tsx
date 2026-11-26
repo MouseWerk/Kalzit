@@ -63,6 +63,17 @@ const EMPTY_STACK: StackedData = {
   percent: false,
 };
 
+/** Where uPlot put the plot area, in CSS pixels. */
+function plotArea(chart: uPlot): PlotArea {
+  const { left, top, width, height } = chart.bbox;
+  return {
+    left: left / uPlot.pxRatio,
+    width: width / uPlot.pxRatio,
+    top: top / uPlot.pxRatio,
+    height: height / uPlot.pxRatio,
+  };
+}
+
 function aligned(data: ChartData): uPlot.AlignedData {
   return [data.x, ...data.stacked.ys] as uPlot.AlignedData;
 }
@@ -111,7 +122,7 @@ export function UplotTimeSeriesChart({
   const builtFor = useRef<{
     series: readonly unknown[];
     scales: string;
-    axisFormat: (value: number) => string;
+    axisFormat: (value: number, ticks: readonly number[]) => string;
   } | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the chart is built from `structure`; themeVersion only triggers a redraw
@@ -187,7 +198,7 @@ export function UplotTimeSeriesChart({
           ...axisStyle,
           grid: { stroke: grid, width: 1 },
           size: (_u, values) => valueAxisSize(values, font),
-          values: (_u, values) => values.map((v) => live.current.axisFormat(v)),
+          values: (_u, values) => values.map((v) => live.current.axisFormat(v, values)),
         },
       ],
       series: [
@@ -218,7 +229,7 @@ export function UplotTimeSeriesChart({
     const chart = new uPlot(options, aligned(data), target);
     chartRef.current = chart;
     builtFor.current = { series, scales, axisFormat };
-    setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+    setPlot(plotArea(chart));
     setBuilt((count) => count + 1);
     return () => {
       chart.destroy();
@@ -246,7 +257,7 @@ export function UplotTimeSeriesChart({
       stackRef.current = data.stacked;
       chart.setData(aligned(data));
     }
-    setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+    setPlot(plotArea(chart));
   }, [series, scales, axisFormat, styles]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
@@ -254,7 +265,7 @@ export function UplotTimeSeriesChart({
     const chart = chartRef.current;
     if (chart !== null && (chart.width !== width || chart.height !== height)) {
       chart.setSize({ width: Math.max(width, 10), height: Math.max(height, 10) });
-      setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+      setPlot(plotArea(chart));
     }
   }, [width, height, built]);
 

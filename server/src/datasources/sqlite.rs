@@ -99,6 +99,7 @@ fn failed(e: sqlx::Error) -> SourceError {
             SourceError::failed("query.stopped", "the query was stopped (time limit or cancelled)")
         }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        other if super::connect::is_protocol_error(&other) => super::connect::protocol(other),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -213,6 +214,7 @@ impl DataSourcePlugin for Sqlite {
         // Columns typed by their values (expressions, NUMERIC, DECIMAL) may widen later.
         let inferred: Vec<bool> = columns.iter().map(|c| c.field_type.is_none()).collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
         for bind in prepared.binds {
@@ -510,6 +512,31 @@ mod tests {
             query.fetch_all(&pool).await.unwrap().iter().map(|r| r.get::<String, _>("detail")).collect();
         assert!(plan.iter().any(|d| d.contains("INDEX e_am")), "{plan:?}");
         assert!(!plan.iter().any(|d| d.starts_with("SCAN e")), "{plan:?}");
+    }
+
+    /// Times before 1970 round down to whole seconds and buckets, in seconds and milliseconds.
+    #[tokio::test]
+    async fn time_macros_round_down_before_1970() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // -60.5 s, and -100,000,000.5 s written in milliseconds.
+        sqlx::raw_sql("CREATE TABLE e (am); INSERT INTO e VALUES (-60.5), (-100000000500);")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let variables = std::collections::BTreeMap::new();
+        let ctx = sql::Context {
+            range: crate::shapes::TimeRange { from: 0, to: 1 },
+            interval_ms: 1000,
+            variables: &variables,
+            identifiers: None,
+            identifier_variables: None,
+        };
+        let sql = "SELECT $__timeEpoch(am), $__timeGroup(am, 1m) AS g FROM e ORDER BY am DESC";
+        let prepared = sql::prepare(sql, Engine::Sqlite, &ctx).unwrap();
+        assert!(prepared.binds.is_empty());
+        let rows: Vec<(i64, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(prepared.sql)).fetch_all(&pool).await.unwrap();
+        assert_eq!(rows, [(-61, "1969-12-31 23:58:00".to_string()), (-100_000_001, "1966-10-31 14:13:00".to_string())]);
     }
 
     #[test]

@@ -44,7 +44,9 @@ impl Admin {
         admin_http()
             .post(url)
             .basic_auth(&self.user, Some(&self.password))
-            .json(&json!({ "statement": statement, "readonly": readonly }))
+            // request_plus: the primary index must include every write made before this statement,
+            // otherwise a count right after the setup script can miss its documents.
+            .json(&json!({ "statement": statement, "readonly": readonly, "scan_consistency": "request_plus" }))
             .send()
             .await
             .unwrap()

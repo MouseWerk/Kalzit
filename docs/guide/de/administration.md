@@ -201,8 +201,13 @@ Passwort-Links verschickt. Ohne ihn erscheinen Einladungen als Links zum Kopiere
 Passwörter unter **Benutzer**.
 
 - **Mailserver einrichten**, dann **Server** (Host und Port), **Verschlüsselung** (STARTTLS,
-  meist Port 587, oder TLS, meist Port 465), **Benutzer** und **Passwort**, wenn der Server eine
-  Anmeldung verlangt, **Absendername**, **Absenderadresse** und optional **Antwort an** eingeben.
+  meist Port 587, TLS, meist Port 465, oder **Keine Verschlüsselung**, meist Port 25),
+  **Benutzer** und **Passwort**, wenn der Server eine Anmeldung verlangt, **Absendername**,
+  **Absenderadresse** und optional **Antwort an** eingeben.
+- **Keine Verschlüsselung** ist einfaches SMTP, zum Beispiel zu einem internen Mail-Relay in
+  deinem Netz; Kalzit wechselt dort nie zu STARTTLS. Mails und die Serveradresse gehen
+  unverschlüsselt durchs Netz, mit Benutzer auch das Passwort; die Seite sagt das neben der Wahl.
+  Nimm das nur für ein vertrauenswürdiges Relay in deinem eigenen Netz.
 - Die Felder hängen voneinander ab, darum werden sie zusammen gespeichert: **Testmail senden**
   schickt eine Mail mit den Werten im Formular und zeigt, was der Server geantwortet hat, wie lange
   es gedauert hat, die TLS-Version und bis wann sein Zertifikat gilt. **Speichern** wartet auf eine
@@ -213,14 +218,15 @@ Passwörter unter **Benutzer**.
   lass das Feld leer, um es zu behalten. Ein anderer Server oder Benutzer braucht das Passwort
   erneut.
 - Der Mailserver ist ein Ziel wie eine Datenquelle: Die erlaubten Ziele gelten, und
-  Metadaten-Adressen sowie Kalzits eigene Adresse und Datenbank werden abgelehnt. Zugangsdaten gehen
-  nur über TLS, und dem Zertifikat des Servers muss der Computer vertrauen, auf dem Kalzit läuft.
+  Metadaten-Adressen sowie Kalzits eigene Adresse und Datenbank werden abgelehnt. Mit STARTTLS oder
+  TLS gehen Zugangsdaten nur über TLS, und dem Zertifikat des Servers muss der Computer vertrauen,
+  auf dem Kalzit läuft.
 - `[smtp]` in `kalzit.toml` oder `KALZIT_SMTP_HOST`, `KALZIT_SMTP_PORT`, `KALZIT_SMTP_SECURITY`,
   `KALZIT_SMTP_USERNAME`, `KALZIT_SMTP_PASSWORD`, `KALZIT_SMTP_FROM_NAME`,
   `KALZIT_SMTP_FROM_ADDRESS` und `KALZIT_SMTP_REPLY_TO` legen den Mailserver stattdessen fest; dann
   zeigt die Seite ihn nur lesbar mit seiner Quelle, und die Testmail funktioniert trotzdem. Gib das
-  Passwort lieber in der Umgebung an als in der Datei. `security = "none"` (keine Verschlüsselung)
-  ist nur dort möglich, und nur für ein Relay auf demselben Computer (`localhost`).
+  Passwort lieber in der Umgebung an als in der Datei. `security = "none"` ist dort dasselbe
+  einfache SMTP wie **Keine Verschlüsselung** auf der Seite.
 - **Mailserver entfernen** kehrt zu Links zum Kopieren zurück. Jede Änderung steht im Audit-Log.
 
 ### Darstellung und Marke

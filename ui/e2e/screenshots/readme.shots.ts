@@ -168,7 +168,10 @@ test("dashboards", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
   await page.goto("/dashboards");
-  await expect(page.getByRole("link", { name: demo.dashboardTitle })).toBeVisible();
+  // The table's link: a dashboard opened before is also among the recently opened above it.
+  await expect(
+    page.getByRole("table").getByRole("link", { name: demo.dashboardTitle }),
+  ).toBeVisible();
   await shoot(page, "dashboards");
   await page.context().close();
 });

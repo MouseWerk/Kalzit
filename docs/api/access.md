@@ -601,6 +601,25 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
 
+## Administration overview
+
+`GET /api/orgs/{orgId}/admin/summary` (any member) gives the numbers on the administration's
+overview in one request. Each number is present only when the caller may open its section, by the
+permission that section's own list checks; the others are left out.
+
+| Field | Present with | Counts |
+| --- | --- | --- |
+| `members` | `users:read` | People in the organization (service accounts not counted) |
+| `teams` | `teams:read` | Teams of the organization |
+| `roles` | `roles:read` | The fixed roles and the organization's own |
+| `serviceAccounts` | `serviceaccounts:write` | Service accounts of the organization |
+| `users` | server administrator | People on the server |
+| `orgs` | server administrator | Organizations on the server |
+
+```json
+{ "members": 12, "teams": 3, "roles": 6, "serviceAccounts": 1 }
+```
+
 ## Service accounts
 
 Accounts for scripts and other systems (`server/src/routes/service_accounts.rs`,

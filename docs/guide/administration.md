@@ -191,8 +191,13 @@ password links with. Without one, invitations appear as links to copy and admins
 under **Users**.
 
 - **Set up mail server**, then enter **Server** (host and port), **Encryption** (STARTTLS, usually
-  port 587, or TLS, usually port 465), **User** and **Password** if the server wants a sign-in,
-  **Sender name**, **Sender address** and optionally **Reply to**.
+  port 587, TLS, usually port 465, or **No encryption**, usually port 25), **User** and
+  **Password** if the server wants a sign-in, **Sender name**, **Sender address** and optionally
+  **Reply to**.
+- **No encryption** is plain SMTP, for example to an internal mail relay in your network; Kalzit
+  never switches to STARTTLS there. Mails and the server address travel unencrypted, and so does
+  the password when you enter a user, which the page says next to the choice. Use it only for a
+  trusted relay in your own network.
 - The fields depend on each other, so they are saved together: **Send test mail** sends one mail
   with the values in the form and shows what the server answered, how long it took, the TLS
   version and until when its certificate is valid. **Save** waits for a successful test mail with
@@ -202,14 +207,14 @@ under **Users**.
 - The password is stored encrypted with the secrets key and never shown again; leave the field
   empty to keep it. Changing the server or user needs the password again.
 - The mail server is a target like a data source: the allowed targets apply, and metadata
-  addresses and Kalzit's own address and database are refused. Credentials only go over TLS, and
-  the server's certificate must be trusted by the computer Kalzit runs on.
+  addresses and Kalzit's own address and database are refused. With STARTTLS or TLS, credentials
+  only go over TLS, and the server's certificate must be trusted by the computer Kalzit runs on.
 - `[smtp]` in `kalzit.toml` or `KALZIT_SMTP_HOST`, `KALZIT_SMTP_PORT`, `KALZIT_SMTP_SECURITY`,
   `KALZIT_SMTP_USERNAME`, `KALZIT_SMTP_PASSWORD`, `KALZIT_SMTP_FROM_NAME`,
   `KALZIT_SMTP_FROM_ADDRESS` and `KALZIT_SMTP_REPLY_TO` set the mail server instead; then the page
   shows it read-only with its source, and the test mail still works. Give the password in the
-  environment rather than the file. `security = "none"` (no encryption) is possible only there,
-  and only for a relay on the same computer (`localhost`).
+  environment rather than the file. `security = "none"` there is the same plain SMTP as **No
+  encryption** on the page.
 - **Remove mail server** goes back to links to copy. Every change is in the audit log.
 
 ### Appearance and brand

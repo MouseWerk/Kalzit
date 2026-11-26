@@ -47,6 +47,14 @@ for i in $(seq 1 60); do
 done
 
 query "INSERT INTO kalzit (KEY, VALUE) VALUES ('ada', {'name': 'Ada', 'land': 'Österreich'}), ('bo', {'name': 'Bo', 'land': 'Schweiz'}), ('cy', {'name': 'Cy', 'land': 'Österreich'})" > /dev/null
+# Wait until the primary index holds the three documents, so the tests see them at once.
+for i in $(seq 1 60); do
+  count=$(curl -fsS -u "$admin" http://127.0.0.1:8093/query/service \
+    --data-urlencode "statement=SELECT RAW COUNT(*) FROM kalzit" --data-urlencode scan_consistency=request_plus | tr -d ' \r\n\t' || true)
+  case "$count" in *'"results":[3]'*) break;; esac
+  if [ "$i" = 60 ]; then echo "the index did not show the three documents: $count" >&2; exit 1; fi
+  sleep 2
+done
 
 if curl -fsS -u "$admin" -X PUT "$base/settings/rbac/users/local/leser" \
      -d password=kalzit-ci-leser -d 'roles=query_select[kalzit],data_reader[kalzit]' > /dev/null 2>&1; then

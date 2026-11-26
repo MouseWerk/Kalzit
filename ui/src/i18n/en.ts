@@ -14,9 +14,11 @@ import enDatasources from "./en/datasources.json";
 import enDocuments from "./en/documents.json";
 import enExplore from "./en/explore.json";
 import enGraph from "./en/graph.json";
+import enGraphCanvas from "./en/graphCanvas.json";
 import enHelp from "./en/help.json";
 import enLibraryPanels from "./en/libraryPanels.json";
 import enLive from "./en/live.json";
+import enLogs from "./en/logs.json";
 import enPanelPlugins from "./en/panelPlugins.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
@@ -48,6 +50,7 @@ export const en = {
   ...enAnalyses,
   ...enPanels,
   ...enGraph,
+  ...enGraphCanvas,
   ...enShell,
   ...enShortcuts,
   ...enSettings,
@@ -61,6 +64,7 @@ export const en = {
   ...enPanelPlugins,
   ...enSecurity,
   ...enUsage,
+  ...enLogs,
   ...enSso,
   ...enHelp,
 };

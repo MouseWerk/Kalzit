@@ -596,8 +596,14 @@ mod tests {
         let d = e.unwrap_err().detail();
         assert_eq!(d.reason, "source.connect_refused", "{d:?}");
         assert_eq!(d.params["address"], closed.to_string());
-        let e = c.send(Method::GET, Url::parse("http://does-not-exist.invalid/").unwrap(), HeaderMap::new()).await;
-        assert_eq!(e.unwrap_err().detail().reason, "target.unresolvable");
+        // A name without addresses, answered by the test hosts: the system's resolver may take
+        // longer than the client's timeout to say a name is unknown when its DNS servers do not
+        // answer. `targets` tests the system resolver's own answer for an unknown name.
+        crate::datasources::targets::test_hosts::pin("unknown.http-test.invalid", &[]);
+        let e = c.send(Method::GET, Url::parse("http://unknown.http-test.invalid/").unwrap(), HeaderMap::new()).await;
+        let d = e.unwrap_err().detail();
+        assert_eq!(d.reason, "target.unresolvable", "{d:?}");
+        assert_eq!(d.params["host"], "unknown.http-test.invalid");
     }
 
     #[tokio::test]
