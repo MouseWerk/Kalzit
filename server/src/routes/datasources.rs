@@ -363,7 +363,7 @@ async fn list(
     } else {
         let sources: Vec<overview::SourceRow<'_>> = rows
             .iter()
-            .map(|(id, _, _, _, _, settings, updated_at, _)| overview::SourceRow {
+            .map(|(id, _, _, _, _, settings, updated_at, _, _)| overview::SourceRow {
                 id,
                 settings,
                 updated_at: *updated_at,
