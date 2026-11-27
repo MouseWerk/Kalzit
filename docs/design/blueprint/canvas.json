@@ -313,6 +313,14 @@
       "w": 1440,
       "x": 44080,
       "y": 0
+    },
+    "Graph083.dc.html": {
+      "expand": "fill",
+      "h": 24100,
+      "title": "Graph: pattern search, schema, TigerGraph (M8, 0.8.3)",
+      "w": 1440,
+      "x": 45600,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -372,7 +380,8 @@
     "MobileNav.dc.html",
     "Panels.dc.html",
     "SettingsRedesign.dc.html",
-    "Graph082.dc.html"
+    "Graph082.dc.html",
+    "Graph083.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
