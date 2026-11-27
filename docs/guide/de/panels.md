@@ -336,6 +336,44 @@ Die Optionen sind wie im Panel-Editor gruppiert:
 - **Datenlinks**: Links aus einer Property eines Knotens oder einer Kante, siehe
   [Datenlinks](#datenlinks-aus-feldern-knoten-und-kanten).
 
+### Stilregeln
+
+**Stil** (im Panel-Editor und als Knopf im Panel-Kopf) ist eine Liste von Regeln über der
+Grundlage oben (Farbe nach Label, Größe nach Grad, Form je Label), die überall gilt, wo keine Regel
+das Ziel setzt. Jede Regel liest sich als Satz: wann, für welches Label oder welchen Kantentyp,
+dann was.
+
+- **Wann**: **Immer**; eine **Bedingung** auf einer Property (Zahlen: gleich, kleiner, größer, im
+  Bereich, vorhanden; Text: gleich, enthält, beginnt mit, vorhanden, ohne Groß- und
+  Kleinschreibung, außer **Groß- und Kleinschreibung beachten** ist an; Datum: am, vor, nach,
+  zwischen, in den letzten N Tagen; Wahrheitswerte: ist wahr, ist falsch); oder **Je eindeutigem
+  Wert** einer Property, mit ehrlicher Zählung („12 von 48 Werten“): die acht Farben der Palette,
+  danach dieselben Farben mit anderer Form bis zu zwölf Werten, der Rest als „Andere“ in einem
+  neutralen Ton. Ein Wert behält seine Farbe, wenn sich das Ergebnis ändert.
+- **Dann** für Knoten: Farbe, Größe, Form (Kreis, Quadrat, Raute, Dreieck, Sechseck), Icon, Rahmen
+  (durchgezogen oder gestrichelt, immer neutral), Beschriftung (Text mit `{property}`) und
+  Abzeichen (höchstens sechs Zeichen). Für Kanten: Farbe, Breite, Strichart (durchgezogen,
+  gestrichelt, gepunktet), Beschriftung und Pfeil.
+- **Farben** kommen aus der Datenpalette (acht), zwei neutralen Tönen und Gut, Warnung, Kritisch;
+  nie die Akzentfarbe. Bei einer Zustandsfarbe bittet der Editor um ein zweites Zeichen
+  (Abzeichen, Form oder Icon).
+- **Reihenfolge**: Regeln gelten von oben nach unten; setzen zwei dasselbe Ziel, gewinnt die
+  untere. Alt+Pfeil hoch und Alt+Pfeil runter verschieben eine Regel. Eine Regel lässt sich
+  ausschalten, ruht (und sagt warum), solange ihre Property im Ergebnis fehlt, und nennt die
+  Regeln darunter, die sie überschreiben.
+- Höchstens 50 Regeln je Panel. **Regeln von anderem Panel übernehmen** kopiert die Regeln eines
+  anderen Panels des Dashboards; verknüpft wird nichts.
+
+Die Legende unter der Zeichnung nennt jede Regel in Worten mit ihren Treffern; ein Klick wählt sie
+aus. Der Knopf **Stil** im Panel-Kopf öffnet dieselbe Liste an der Seite: beim Ansehen eines
+Dashboards gilt eine Änderung dort nur für deine Ansicht, gespeichert wird im Bearbeiten-Modus.
+Tabellen aus einem Graphen (Knoten- oder Kanten-Tabellen) nehmen dieselben Regeln: die Farbe als
+Punkt vor dem Wert, der sie bestimmt, Icon und Abzeichen an der Beschriftung, eine
+Beschriftungs-Regel ersetzt den Text; dort gewinnt eine Regel vor Farbschema, Schwellenwerten und
+Wertzuordnungen der Spalte, und das Panel sagt es. Die Icons sind eine Auswahl von rund 360
+[Lucide](https://lucide.dev)-Icons (ISC), aufgeführt in den Hinweisen zu Dritten. Bei erzwungenen
+Farben fallen die Farben der Regeln weg; Form, Rahmen, Icon, Abzeichen und Beschriftung bleiben.
+
 Einen Knoten auszuwählen öffnet seine Details neben der Zeichnung (in schmalen Panels darüber):
 Labels, typisierte Properties, Kanten und Komponente sowie seine Nachbarn, gruppiert nach
 Kantentyp und Richtung, mit **Nachbarn laden** und **$variable setzen**. Die Auswahl wird ruhig
@@ -385,11 +423,29 @@ den nächsten Nachbarn eines Knotens weiter. **Als Abfrage in Explore öffnen** 
 Gezeigten eine lesende Cypher-Abfrage im Editor von Explore. Nachbarn zu laden braucht
 Abfragezugriff auf die Datenquelle; für TigerGraph-Quellen gibt es den Explorer nicht.
 
+Das Menü **Layout** eines Netzwerks bietet Kräfte, Hierarchie und fünf weitere Layouts, jedes mit
+einem kurzen Satz dazu, was es tut oder warum es für dieses Ergebnis nicht geht: **Radial** (Ringe
+um die gewählten Knoten oder, wenn nichts gewählt ist, um den Knoten mit den meisten Kanten),
+**Kreis**, **Raster**, **Koordinaten** (zwei Zahl-Properties oder eine `point`-Property) und
+**Zeitachse** (Knoten nach einer Zeit-Property, eine Bahn je Label oder eine für alle). Kreis und
+Raster ordnen die Knoten nach Label, Name oder Anzahl der Kanten. Alle Layouts rechnen in einem
+Web Worker, zeigen den Fortschritt mit **Abbrechen** und kommen bei gleichem Ergebnis immer gleich
+heraus. **Neu anordnen** (Umschalt+L) gibt es, wo das Ergebnis anders ausfallen kann: Kräfte
+beginnen an einer anderen Stelle, und Radial ordnet um die jetzt gewählten Knoten an; die anderen
+Layouts stehen durch ihre Eingabe fest. Ruhige Linien hinter dem Graphen zeigen Ringe, Achsen und
+Bahnen, und Knoten, für die ein Layout keinen Platz hat (kein Wert, keine Zeit), stehen in einem
+eigenen Streifen mit ihrer Zahl und dem Grund. Die Hilfslinien sind eine Sehhilfe: Sie gehören
+nicht zu einem exportierten Bild. Zeiten werden als Unix-Zeit oder aus Datumstext gelesen: Ein
+Datum allein (2021-03-14) gilt als Mitternacht UTC, ein Datum mit Uhrzeit, aber ohne Zone als Zeit
+in der Zone deines Browsers. Ein Ergebnis, das für die Hierarchie zu groß ist, bietet **Gruppen
+schließen** an. Angeheftete Knoten bleiben an ihrem Platz, und ein Wechsel des Layouts löst sie.
+Im Panel-Editor wird die Wahl mit dem Panel gespeichert.
+
 ![Explorer-Modus: die Bestellungen eines Kunden als Schritt in der Zeile Schritte geladen](../../screenshots/graph-explorer-dark.png)
 
-Eine **Hierarchie** ordnet höchstens 2.000 Knoten an; ein größeres Ergebnis bietet **Als Netzwerk
-zeigen** an. Kanten, die einen Kreis schließen, werden vermerkt. Standardmäßig nutzt sie das
-eigene Schichten-Layout von Kalzit. Unter **Layout** kannst du stattdessen **ELK geschichtet**
+Eine **Hierarchie** ordnet höchstens 10.000 gezeichnete Knoten an (geschlossene Gruppen zählen als
+ein Knoten); ein größeres Ergebnis bietet **Als Netzwerk zeigen** an. Kanten, die einen Kreis
+schließen, werden vermerkt. Standardmäßig nutzt sie das eigene Schichten-Layout von Kalzit. Unter **Layout** kannst du stattdessen **ELK geschichtet**
 wählen (den Eclipse Layout Kernel), mit seiner **Richtung** (von oben nach unten, von links nach
 rechts, von unten nach oben, von rechts nach links), **Knotenabstand** und **Schichtabstand** in px
 und der **Kantenführung** (rechtwinklig oder Polylinie; Kanten werden trotzdem gerade gezeichnet,

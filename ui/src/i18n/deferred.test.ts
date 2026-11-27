@@ -167,6 +167,24 @@ describe("keys of a deferred area", () => {
       "features/plugins/apps/PluginAppCard.tsx",
       "features/plugins/apps/parts.tsx",
     ],
+    // The graph panels and the rule code of tables load behind the gate (network, hierarchy and
+    // table panels).
+    graphStyle: [
+      "panels/graph/GraphPanels.tsx",
+      "panels/graph/GraphPanel.tsx",
+      // The path panel's options take the variable options of the graph editor.
+      "panels/path/PathPanel.tsx",
+      "panels/graph/GraphEditor.tsx",
+      "panels/graph/GraphToolbar.tsx",
+      "panels/graph/style/describe.ts",
+      "panels/graph/style/IconPicker.tsx",
+      "panels/graph/style/StyleEditor.tsx",
+      "panels/graph/style/StyleLegend.tsx",
+      "panels/graph/style/StyleSection.tsx",
+      "panels/graph/style/StyleSheet.tsx",
+      "panels/graph/style/tableStyle.tsx",
+      "panels/graph/style/usePanelStyle.tsx",
+    ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
   };
 
@@ -211,6 +229,7 @@ describe("keys of a deferred area", () => {
     serverAdmin: 5,
     apps: 5,
     handbook: 1,
+    graphStyle: 8,
   };
 
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
