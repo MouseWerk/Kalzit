@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { CRYSTAL, ECHO, SCENE, type Scene, TIERS, VIEW } from "./doppelbrechung";
 import { registerPicture } from "./signInLight";
+import "./auth.css";
 
 /**
  * The picture in the panel of the pages before the app (board Auth.dc.html, frames 3A and 13,
