@@ -28,8 +28,17 @@ Kalzit asks for one of these.
 Your first method asks for your password first, so that nobody who took over a signed-in
 browser of yours can set up a second factor of their own. If you sign in only through a provider
 or directory and have no password, it asks you to sign in again first unless you signed in within
-the last five minutes. Setting it up signs you out on every
-other device and browser; sign in there again with the new second factor.
+the last five minutes. If that provider is an OpenID Connect provider (such as Keycloak, Entra ID
+or Authentik), choose **Sign in at** and the provider's name instead: the provider asks for your
+sign-in again even when you are still signed in there, then sends you back to this page, and you
+have five minutes to set up the method. A browser left signed in at the provider is not enough.
+Setting it up signs you out on every other device and browser; sign in there again with the new
+second factor.
+
+When someone enters your password wrongly three times in a row in a signed-in browser (when
+changing the password or confirming it for a second factor), Kalzit writes it to the audit log
+and, when it can send mail, tells you by mail. If that was not you, end the sessions you do not
+know under **Settings > Sign-in and security** and change your password.
 
 Removing a method, making new recovery codes, adding another method and changing your password
 first ask you to confirm with a method you have (a passkey, a code from the app or a recovery

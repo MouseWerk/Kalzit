@@ -20,6 +20,37 @@
   }
 
   /*
+   * Every box that scrolls (the page, panels, tables, menus, editors, dialogs) gets the same
+   * calm scrollbar: thin, from the scrollbar tokens. Every box under the pointer, the one it
+   * points at and each box around it (:hover matches all of them), shows its thumb stronger.
+   * Set per element rather than inherited, so a hovered page does not light up the scrollbars
+   * of the boxes inside it that the pointer is not over.
+   */
+  * {
+    scrollbar-width: var(--scrollbar-width);
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  :hover {
+    scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
+  }
+
+  /*
+   * Only the app's main area next to the sidebar keeps room for its scrollbar (components.css).
+   * Pages that scroll as a whole (sign-in, setup, mail links, help, public links, the app on a
+   * phone) reserve none: their frames stay even on both sides, and phones draw overlay
+   * scrollbars anyway.
+   */
+
+  /* Forced colors: the system draws its own scrollbars. */
+  @media (forced-colors: active) {
+    *,
+    :hover {
+      scrollbar-color: auto;
+    }
+  }
+
+  /*
    * The boot state (index.html, #boot): the canvas color and the Kalzit mark from the first
    * paint, with a quiet bar that runs while the app loads; src/app/boot.ts removes it once the
    * first page has rendered. The mark shows a moment later, so a fast load shows only the

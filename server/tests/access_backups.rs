@@ -857,7 +857,42 @@ async fn an_unencrypted_backup_restores_into_a_stopped_server() {
     let pool = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
     let (email,): (String,) = sqlx::query_as("SELECT email FROM users").fetch_one(&pool).await.unwrap();
     assert_eq!(email, "jonas@example.com");
+    // A change after the restore, to see whether a later restore touches the database.
+    sqlx::query("UPDATE users SET email = 'nach@example.com'").execute(&pool).await.unwrap();
     pool.close().await;
+
+    // The same backup with plugins in it, into a plugin folder that holds someone else's file:
+    // refused before anything is touched, the database and the folder stay as they were.
+    let with_plugins = outside.path().join("with-plugins.zip");
+    {
+        let mut source = zip::ZipArchive::new(std::fs::File::open(&file).unwrap()).unwrap();
+        let mut out = zip::ZipWriter::new(std::fs::File::create(&with_plugins).unwrap());
+        for i in 0..source.len() {
+            out.raw_copy_file(source.by_index(i).unwrap()).unwrap();
+        }
+        out.start_file("plugins/packages/demo/plugin.js", zip::write::SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut out, b"// demo").unwrap();
+        out.finish().unwrap();
+    }
+    let general = common::private_tempdir();
+    let plugins = general.path().join("tools");
+    std::fs::create_dir(&plugins).unwrap();
+    std::fs::write(plugins.join("notes.txt"), "mine").unwrap();
+    config.paths.plugins_dir = Some(plugins.clone());
+    let Err(err) = kalzit::backups::restore::restore(&config, &with_plugins, 2) else {
+        panic!("the restore went through")
+    };
+    assert!(format!("{err:#}").contains("not Kalzit's"), "{err:#}");
+    let pool = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
+    let (email,): (String,) = sqlx::query_as("SELECT email FROM users").fetch_one(&pool).await.unwrap();
+    assert_eq!(email, "nach@example.com", "the refused restore left the database as it was");
+    pool.close().await;
+    assert_eq!(std::fs::read_to_string(plugins.join("notes.txt")).unwrap(), "mine");
+    let beside: Vec<String> = std::fs::read_dir(general.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(beside, vec!["tools".to_string()], "nothing moved aside");
 }
 
 #[tokio::test]

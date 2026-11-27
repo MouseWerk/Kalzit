@@ -947,6 +947,7 @@ impl Converter<'_> {
                     notes.push(note("table_sort", "the table's starting sort order is not taken over"));
                 }
             }
+            "map" => out = geomap_options(&o, panel, notes),
             "text" => {
                 let content = o.get("content").or_else(|| panel.get("content")).and_then(Value::as_str).unwrap_or("");
                 let mode = o.get("mode").or_else(|| panel.get("mode")).and_then(Value::as_str).unwrap_or("markdown");
@@ -1191,6 +1192,7 @@ impl Converter<'_> {
                 notes.push(note("node_graph", "the node graph became a network panel; it needs a graph-shaped result"));
                 "network"
             }
+            "geomap" => "map",
             other => {
                 let why = if other.is_empty() {
                     note("panel_no_type", "the panel has no type")
@@ -1746,6 +1748,119 @@ impl Converter<'_> {
             }
         }
     }
+}
+
+/// Kalzit's map options for a Grafana geomap: marker layers become point layers with their
+/// place, size and colour; the base map becomes the bundled outlines; layers Kalzit does not
+/// draw yet are named in a note each.
+fn geomap_options(o: &Value, panel: &Value, notes: &mut Vec<ImportNote>) -> Map<String, Value> {
+    let mut out = Map::new();
+    let field = |v: Option<&Value>| {
+        v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(|s| truncate(s, 100))
+    };
+    // The base map: Grafana's default and every tile layer draw pictures from a map service.
+    notes.push(note("geomap_basemap", "the base map became Kalzit's bundled outlines; map images are not taken over"));
+    let ref_ids: Vec<String> = panel
+        .get("targets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(i, t)| text(t, "refId").unwrap_or_else(|| ((b'A' + (i % 26) as u8) as char).to_string()))
+        .collect();
+    let mut layers = Vec::new();
+    for layer in o.get("layers").and_then(Value::as_array).into_iter().flatten() {
+        let kind = text(layer, "type").unwrap_or_default();
+        if kind != "markers" {
+            let why = match kind.as_str() {
+                "heatmap" => "the heatmap layer is not taken over yet; Kalzit's density layer follows",
+                "route" | "network" => "the route layer is not taken over yet; Kalzit's lines layer follows",
+                "geojson" => "the GeoJSON layer is not taken over; own areas from GeoJSON follow",
+                _ => "this layer type has no Kalzit counterpart",
+            };
+            notes.push(note("geomap_layer", format!("layer {kind}: {why}")).with("type", &kind));
+            continue;
+        }
+        if layers.len() == 4 {
+            notes.push(
+                note("geomap_layers_cut", "a map has at most four layers; the rest were left out").with("max", 4),
+            );
+            break;
+        }
+        let mut out_layer = Map::new();
+        out_layer.insert("kind".into(), json!("points"));
+        let location = layer.get("location").cloned().unwrap_or(Value::Null);
+        match text(&location, "mode").as_deref() {
+            Some("coords") => {
+                out_layer.insert("place".into(), json!("coords"));
+                if let Some(lat) = field(location.get("latitude")) {
+                    out_layer.insert("latField".into(), json!(lat));
+                }
+                if let Some(lon) = field(location.get("longitude")) {
+                    out_layer.insert("lonField".into(), json!(lon));
+                }
+            }
+            Some("geohash") => {
+                out_layer.insert("place".into(), json!("geohash"));
+                if let Some(hash) = field(location.get("geohash")) {
+                    out_layer.insert("geohashField".into(), json!(hash));
+                }
+            }
+            Some("lookup") => {
+                out_layer.insert("place".into(), json!("lookup"));
+                if let Some(key) = field(location.get("lookup")) {
+                    out_layer.insert("keyField".into(), json!(key));
+                }
+                let gazetteer = text(&location, "gazetteer").unwrap_or_default();
+                if !gazetteer.is_empty() && !gazetteer.contains("countries") {
+                    notes.push(
+                        note(
+                            "geomap_gazetteer",
+                            format!("the lookup list {gazetteer} is not built in; Kalzit looks up country codes"),
+                        )
+                        .with("list", &gazetteer),
+                    );
+                }
+            }
+            _ => {}
+        }
+        let style = layer.get("config").and_then(|c| c.get("style"));
+        let size = style.and_then(|s| s.get("size"));
+        let color_field = field(style.and_then(|s| s.get("color")).and_then(|c| c.get("field")));
+        if let Some(by) = field(size.and_then(|s| s.get("field"))).or_else(|| color_field.clone()) {
+            out_layer.insert("valueField".into(), json!(by));
+        }
+        let px = |key: &str| {
+            size.and_then(|s| s.get(key)).and_then(Value::as_f64).map(|v| v.round().clamp(2.0, 40.0) as u32)
+        };
+        if let (Some(from), Some(to)) = (px("min"), px("max")) {
+            out_layer.insert("sizeFrom".into(), json!(from.min(to)));
+            out_layer.insert("sizeTo".into(), json!(from.max(to)));
+        }
+        out_layer.insert("color".into(), json!(if color_field.is_some() { "scale" } else { "single" }));
+        let filter = layer.get("filterData");
+        if filter.and_then(|f| text(f, "id")).as_deref() == Some("byRefId")
+            && let Some(ref_id) = filter.and_then(|f| text(f, "options"))
+            && let Some(at) = ref_ids.iter().position(|r| *r == ref_id)
+        {
+            out_layer.insert("result".into(), json!(at + 1));
+        }
+        layers.push(Value::Object(out_layer));
+    }
+    if !layers.is_empty() {
+        out.insert("layers".into(), Value::Array(layers));
+    }
+    match o.get("view").and_then(|v| text(v, "id")).as_deref() {
+        Some("zero") => {
+            out.insert("fit".into(), json!("world"));
+        }
+        None | Some("fit") => {}
+        Some(_) => notes.push(note("geomap_view", "the fixed map view was not taken over; the map fits to the data")),
+    }
+    if o.get("tooltip").and_then(|t| text(t, "mode")).as_deref() == Some("none") {
+        out.insert("tooltip".into(), json!({ "mode": "hidden" }));
+    }
+    out
 }
 
 /// The comparisons the server applies as ad hoc filters for a kind the import converts: label
@@ -3127,6 +3242,61 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn geomaps_become_maps_with_their_marker_layers() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Sites",
+            "panels": [
+                { "id": 7, "type": "geomap", "title": "Umsatz je Stadt", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 9 },
+                  "datasource": { "type": "postgres", "uid": "Postgres" },
+                  "targets": [{ "refId": "A", "rawSql": "SELECT 1" }, { "refId": "B", "rawSql": "SELECT 2" }],
+                  "options": {
+                    "view": { "id": "coords", "lat": 51, "lon": 10, "zoom": 5 },
+                    "basemap": { "type": "default", "name": "Basemap" },
+                    "tooltip": { "mode": "none" },
+                    "layers": [
+                      { "type": "markers", "name": "Cities",
+                        "location": { "mode": "coords", "latitude": "lat", "longitude": "lon" },
+                        "config": { "style": { "size": { "field": "umsatz", "min": 1, "max": 99 },
+                                               "color": { "fixed": "green" } } },
+                        "filterData": { "id": "byRefId", "options": "B" } },
+                      { "type": "markers", "name": "Lands",
+                        "location": { "mode": "lookup", "lookup": "land", "gazetteer": "public/gazetteer/usa-states.json" },
+                        "config": { "style": { "color": { "field": "umsatz" } } } },
+                      { "type": "heatmap", "name": "Heat" },
+                      { "type": "route", "name": "Ways" }
+                    ]
+                  } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let panel = &c.model["panels"][0];
+        assert_eq!(panel["type"], "map");
+        assert_eq!(
+            panel["options"],
+            json!({
+                "layers": [
+                    { "kind": "points", "place": "coords", "latField": "lat", "lonField": "lon",
+                      "valueField": "umsatz", "sizeFrom": 2, "sizeTo": 40, "color": "single", "result": 2 },
+                    { "kind": "points", "place": "lookup", "keyField": "land", "valueField": "umsatz",
+                      "color": "scale" },
+                ],
+                "tooltip": { "mode": "hidden" },
+            })
+        );
+        let it = item(&c.report, "panel 7 \"Umsatz je Stadt\"");
+        assert_eq!(it.status, ItemStatus::Approximated);
+        let codes: Vec<&str> = it.notes.iter().map(|n| n.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["geomap_basemap", "geomap_gazetteer", "geomap_layer", "geomap_layer", "geomap_view"],
+            "{:#?}",
+            it.notes
+        );
+        assert_eq!(it.notes[2].params["type"], "heatmap");
+        assert!(crate::dashboards::panel_options::check("map", &panel["options"], &panel["fieldConfig"]).is_ok());
     }
 
     #[test]

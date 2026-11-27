@@ -114,6 +114,8 @@ function Handbook() {
     if (!isTypingTarget(document.activeElement)) {
       titleRef.current?.focus({ preventScroll: true });
     }
+    // The page scrolls in the main area next to the sidebar, and in the window on a phone.
+    document.getElementById("main")?.scrollTo?.({ top: 0 });
     window.scrollTo?.({ top: 0 });
   }, [blocks, resolved]);
 

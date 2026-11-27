@@ -73,6 +73,7 @@ pub fn person(config: &LdapConfig, entry: &DirEntry, groups: Vec<String>, mapped
         name: entry.name.clone(),
         groups,
         mfa_done: false,
+        auth_time: None,
     })
 }
 

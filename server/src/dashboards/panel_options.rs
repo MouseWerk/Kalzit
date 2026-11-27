@@ -119,6 +119,17 @@ pub const MIN_ELK_LAYER_SPACING: u32 = 10;
 pub const MAX_ELK_LAYER_SPACING: u32 = 400;
 /// The deepest level from which a trace panel's waterfall may start closed.
 pub const MAX_TRACE_COLLAPSE_DEPTH: u32 = 50;
+/// Layers of one map (`MAX_LAYERS` in `ui/src/panels/map/options.ts`).
+pub const MAX_MAP_LAYERS: usize = 4;
+/// The result a map layer reads: 0 for all of them, else the n-th (`MAX_RESULT` in the UI).
+pub const MAX_MAP_RESULT: u32 = 20;
+/// Code pairs of one map layer (`MAX_ALIASES` in the UI).
+pub const MAX_MAP_ALIASES: usize = 50;
+/// Point sizes of a map layer in px (`POINT_SIZE` in the UI).
+pub const MIN_MAP_POINT_SIZE: u32 = 2;
+pub const MAX_MAP_POINT_SIZE: u32 = 40;
+/// The distance in px below which the map bundles near points (`CLUSTER_DISTANCE` in the UI).
+pub const MAX_MAP_CLUSTER_DISTANCE: u32 = 80;
 /// Point sizes of the XY chart in px (`XY_SIZE` in the UI).
 pub const MIN_XY_POINT_SIZE: u32 = 1;
 pub const MAX_XY_POINT_SIZE: u32 = 40;
@@ -149,6 +160,7 @@ pub const PANEL_TYPES: &[&str] = &[
     "network",
     "hierarchy",
     "path",
+    "map",
     "trace",
 ];
 
@@ -401,6 +413,12 @@ choice!(NodeShape { Circle = "circle", Square = "square", Diamond = "diamond" })
 choice!(ClickAction { Details = "details", Variable = "variable", Expand = "expand" });
 choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
 choice!(HierarchyLayout { Kalzit = "kalzit", Elk = "elk" });
+choice!(MapLayerKind { Points = "points", Areas = "areas" });
+choice!(MapPlace { Auto = "auto", Coords = "coords", Geohash = "geohash", Lookup = "lookup" });
+choice!(MapColor { Single = "single", Scale = "scale", Thresholds = "thresholds" });
+choice!(MapOutlines { Regions = "regions", Countries = "countries", None = "none" });
+choice!(MapFit { Data = "data", World = "world" });
+choice!(MapEdges { Straight = "straight", None = "none" });
 choice!(ElkDirection { Down = "down", Right = "right", Up = "up", Left = "left" });
 choice!(ElkEdgeRouting { Orthogonal = "orthogonal", Polyline = "polyline" });
 choice!(GraphLayout {
@@ -871,6 +889,90 @@ struct PathOptions {
     variable: Option<String>,
     variable_property: Option<String>,
     data_links: Option<Vec<DataLink>>,
+}
+
+/// One layer of the map panel (`MapLayer` in `ui/src/panels/map/options.ts`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct MapLayer {
+    kind: Option<MapLayerKind>,
+    result: Option<u32>,
+    place: Option<MapPlace>,
+    lat_field: Option<String>,
+    lon_field: Option<String>,
+    point_field: Option<String>,
+    geohash_field: Option<String>,
+    key_field: Option<String>,
+    value_field: Option<String>,
+    color: Option<MapColor>,
+    size_from: Option<u32>,
+    size_to: Option<u32>,
+    caption: Option<String>,
+    /// A key of the data and the ISO 3166-1 code it stands for (`UK` to `GB`).
+    aliases: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// The map panel (`ui/src/panels/map/options.ts`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct MapOptions {
+    layers: Option<Vec<MapLayer>>,
+    outlines: Option<MapOutlines>,
+    fit: Option<MapFit>,
+    edges: Option<MapEdges>,
+    cluster_distance: Option<u32>,
+    legend: Option<Legend>,
+    tooltip: Option<Tooltip>,
+}
+
+fn check_map(o: &MapOptions) -> Result<(), String> {
+    check_legend(o.legend.as_ref())?;
+    check_range("options.clusterDistance", o.cluster_distance, 0, MAX_MAP_CLUSTER_DISTANCE)?;
+    let layers = o.layers.as_deref().unwrap_or_default();
+    if layers.len() > MAX_MAP_LAYERS {
+        return Err(format!("options.layers takes at most {MAX_MAP_LAYERS} layers"));
+    }
+    for (i, layer) in layers.iter().enumerate() {
+        let at = |name: &str| format!("options.layers[{i}].{name}");
+        for (name, text) in [
+            ("latField", &layer.lat_field),
+            ("lonField", &layer.lon_field),
+            ("pointField", &layer.point_field),
+            ("geohashField", &layer.geohash_field),
+            ("keyField", &layer.key_field),
+            ("valueField", &layer.value_field),
+            ("caption", &layer.caption),
+        ] {
+            if let Some(text) = text {
+                check_text(&at(name), text, MAX_GRAPH_TEXT_CHARS, false)?;
+            }
+        }
+        check_range(&at("result"), layer.result, 0, MAX_MAP_RESULT)?;
+        check_range(&at("sizeFrom"), layer.size_from, MIN_MAP_POINT_SIZE, MAX_MAP_POINT_SIZE)?;
+        check_range(&at("sizeTo"), layer.size_to, MIN_MAP_POINT_SIZE, MAX_MAP_POINT_SIZE)?;
+        if let (Some(from), Some(to)) = (layer.size_from, layer.size_to)
+            && from > to
+        {
+            return Err(format!("{} must not be above {}", at("sizeFrom"), at("sizeTo")));
+        }
+        if let Some(aliases) = &layer.aliases {
+            if aliases.len() > MAX_MAP_ALIASES {
+                return Err(format!("{} takes at most {MAX_MAP_ALIASES} pairs", at("aliases")));
+            }
+            for (key, code) in aliases {
+                if key.trim().is_empty() {
+                    return Err(format!("{} takes no empty key", at("aliases")));
+                }
+                check_text(&at("aliases"), key, MAX_GRAPH_TEXT_CHARS, false)?;
+                if !(2..=3).contains(&code.len()) || !code.bytes().all(|b| b.is_ascii_uppercase()) {
+                    return Err(format!("{} maps to codes of two or three capital letters", at("aliases")));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse<T: DeserializeOwned>(what: &str, value: &Value) -> Result<T, String> {
@@ -1413,6 +1515,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             }
             Ok(())
         }
+        "map" => check_map(&parse::<MapOptions>("options", options)?),
         "path" => {
             let o: PathOptions = parse("options", options)?;
             check_data_links(o.data_links.as_ref(), MAX_GRAPH_TEXT_CHARS)?;
@@ -1554,6 +1657,49 @@ mod tests {
     #[test]
     fn unknown_panel_types_are_left_alone() {
         assert!(check("plugin-chart", &json!({ "anything": 1 }), &json!({ "free": true })).is_ok());
+    }
+
+    #[test]
+    fn map_panels_check_their_layers() {
+        let good = json!({
+            "layers": [
+                { "kind": "points", "place": "geohash", "geohashField": "zelle", "valueField": "umsatz",
+                  "color": "scale", "sizeFrom": 4, "sizeTo": 16, "result": 1 },
+                { "kind": "areas", "place": "lookup", "keyField": "land", "color": "thresholds",
+                  "aliases": { "UK": "GB", "Deutschland": "DEU" } },
+            ],
+            "outlines": "countries",
+            "fit": "world",
+            "edges": "none",
+            "clusterDistance": 0,
+            "legend": { "mode": "hidden", "placement": "bottom", "values": [] },
+            "tooltip": { "mode": "single" },
+        });
+        assert_eq!(check("map", &good, &json!({})), Ok(()));
+        let long = "x".repeat(MAX_GRAPH_TEXT_CHARS + 1);
+        let five: Vec<Value> = (0..5).map(|_| json!({ "kind": "points" })).collect();
+        let many: serde_json::Map<String, Value> =
+            (0..=MAX_MAP_ALIASES).map(|i| (format!("k{i}"), json!("DE"))).collect();
+        for (options, place) in [
+            (json!({ "layers": five }), "options.layers"),
+            (json!({ "layers": [{ "kind": "lines" }] }), "options"),
+            (json!({ "layers": [{ "place": "gazetteer" }] }), "options"),
+            (json!({ "layers": [{ "tiles": "https://example.org" }] }), "options"),
+            (json!({ "layers": [{ "result": MAX_MAP_RESULT + 1 }] }), "options.layers[0].result"),
+            (json!({ "layers": [{ "sizeFrom": 1 }] }), "options.layers[0].sizeFrom"),
+            (json!({ "layers": [{ "sizeFrom": 20, "sizeTo": 10 }] }), "options.layers[0].sizeFrom"),
+            (json!({ "layers": [{ "keyField": long }] }), "options.layers[0].keyField"),
+            (json!({ "layers": [{ "aliases": { "UK": "gb" } }] }), "options.layers[0].aliases"),
+            (json!({ "layers": [{ "aliases": { "UK": "GBRX" } }] }), "options.layers[0].aliases"),
+            (json!({ "layers": [{ "aliases": { " ": "GB" } }] }), "options.layers[0].aliases"),
+            (json!({ "layers": [{ "aliases": many }] }), "options.layers[0].aliases"),
+            (json!({ "clusterDistance": MAX_MAP_CLUSTER_DISTANCE + 1 }), "options.clusterDistance"),
+            (json!({ "outlines": "tiles" }), "options"),
+            (json!({ "tileUrl": "https://example.org/{z}/{x}/{y}.png" }), "options"),
+        ] {
+            let err = check("map", &options, &json!({})).unwrap_err();
+            assert!(err.starts_with(place), "{options}: {err}");
+        }
     }
 
     #[test]

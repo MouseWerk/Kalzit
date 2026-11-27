@@ -925,6 +925,18 @@ the account's device cookies. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
 
+**Wrong passwords in a session.** Each session counts the wrong passwords given in `POST
+/me/password` and `POST /me/security/confirm/password` since its last right one
+(`sessions.wrong_passwords`, reset by a right password). The third in a row (or the account's
+`security.login_max_failures`, when that is smaller) is audited once as
+`user.password_wrong_repeated` with `userId`, the `sessionId` and `attempts`, never the guess;
+further wrong ones in the same series are not audited again, and the password budget above
+pauses them anyway. The person also gets a mail ("Password entered wrongly several times") when
+the server can send mail. A series ends only with a right password, so three typos followed by
+the right password still give one audit entry and one mail, once per series. The answer stays
+`validation` with the field, as for any wrong password. Another session of the account counts on
+its own.
+
 **`DELETE /me/sessions/{sessionId}`** ends one of the caller's sessions (also the current one,
 which signs this browser out). Errors: `404` (unknown, or another user's). Audit
 `auth.session_ended`.
@@ -1115,6 +1127,10 @@ interface SecurityStatus {
   passwordConfirmedUntil: number | null;   // this session's fresh password confirmation
   freshSignInUntil: number | null;   // this session counts as just signed in until then
   providerSignInUntil: number | null;   // this session's provider sign-in stands in for the password
+  providerConfirmedUntil: number | null;   // this session signed in again at its provider until then
+  // the OpenID Connect provider this session signed in through (enabled, with the account's
+  // confirmed identity): the one `POST /me/security/confirm/provider` goes to
+  reauthProvider: { slug: string; name: string } | null;
   lockedUntil: number | null;
   hasPassword: boolean;
   // the providers and directories the account signs in through, in the sign-in page's order;
@@ -1129,6 +1145,7 @@ interface SecurityStatus {
 | `POST /me/security/confirm` | `200 { "confirmedUntil": number }` |
 | `POST /me/security/confirm/passkey` | `200 { "publicKey": ... }` (request options) |
 | `POST /me/security/confirm/password` | `200 { "passwordConfirmedUntil": number }` |
+| `POST /me/security/confirm/provider` | `200 { "url": string }` and the binding cookie; the browser goes to `url` |
 | `POST /me/security/totp/setup` | `200 TotpSetup` |
 | `POST /me/security/totp` | `200 { "recoveryCodes": string[] \| null }` |
 | `DELETE /me/security/totp` | `204` |
@@ -1164,7 +1181,37 @@ provider or a directory) sets up its first method only in a session that signed 
 last 5 minutes (`sessions.created_at`); an older one answers `403 confirmation_required` with
 reason `second_factor.sign_in_again`, and the UI offers "Sign in again" (sign out, then the
 provider's sign-in). `SecurityStatus.freshSignInUntil` says until when the session counts as
-just signed in. Saving the first method ends every other session
+just signed in.
+
+When that session signed in through an OpenID Connect provider (`SecurityStatus.reauthProvider`:
+enabled, with the account's confirmed identity), a fresh sign-in is not enough, since a browser
+still signed in at the provider passes it without anyone typing anything: the first method
+answers `403 confirmation_required` with reason `second_factor.reauthenticate` (`params.provider`
+the provider's name, `params.slug` its slug) until the session signed in again there. `POST
+/me/security/confirm/provider` `{ "returnTo"?: string }` (a path of this server, as for the
+sign-in's `returnTo`) starts it: it answers the provider's authorization URL with `max_age=0` and
+`prompt=login` (OpenID Connect Core 1.0, 3.1.2.1), with state, nonce and PKCE as for a sign-in,
+and sets the binding cookie. It counts against the address's budget for starting sign-ins
+(`429 rate_limited`). The callback (`/auth/oidc/{slug}/callback`, the same redirect URI as the
+sign-in) opens no new session; it takes the result only when the browser still holds the session
+that started it, the ID token's `auth_time` is no earlier than the start (5 seconds of clock
+skew allowed) and later than the session's own sign-in, and the person is the
+account's confirmed identity at that provider. The provider must honor `max_age` (and send
+`auth_time` when asked for it): one that ignores `max_age=0` answers the time of its earlier
+sign-in, which is refused as `reauth=stale`, so its people cannot set up a first method until an
+admin fixes the provider. Then this session counts as confirmed at the
+provider for 5 minutes (`sessions.provider_confirmed_at`, `SecurityStatus.providerConfirmedUntil`),
+which also stands in for the password of an account that has one, and the audit gets
+`user.provider_reauthenticated` (`userId`, `provider`). The browser returns to `returnTo` with
+`reauth=done`; a refusal returns with `reauth=stale` (no fresh `auth_time`), `reauth=cancelled`,
+`reauth=unavailable`, `reauth=expired` (the start ran out before the provider answered; the browser
+still holds the session that started it) or `reauth=failed` (another person, another session, an
+error) and is
+audited as `auth.sso_failed` with reason `sso.reauth_stale`, `sso.reauth_other_person`,
+`sso.reauth_other_session` or `sso.reauth_invalid`. An account that has a method answers `409
+conflict` (`second_factor.has_factor`); a session from a password, SAML or a directory answers
+`409 conflict` (`second_factor.no_reauth_provider`) and keeps the rules above; a provider that
+cannot be reached answers `409 conflict` (`second_factor.reauth_unavailable`). Saving the first method ends every other session
 of the account (`sessionsEnded` in the audit entry), as a new password does, also when it is set
 up during a sign-in; the session that set it up counts as having proved it for the organization
 sign-in rules, but not as a fresh confirmation for weakening changes.
@@ -1262,6 +1309,9 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the session proved none; `params.orgId` |
 | `second_factor.confirm_password` | `403 confirmation_required` | the first method of an account with a password, without a fresh password confirmation |
 | `second_factor.sign_in_again` | `403 confirmation_required` | the first method of an account without a password, in a session signed in more than 5 minutes ago |
+| `second_factor.reauthenticate` | `403 confirmation_required` | the first method of an account without a password whose session signed in through an OpenID Connect provider, before it signed in there again; `params.provider`, `params.slug` |
+| `second_factor.no_reauth_provider` | `409 conflict` | `POST /me/security/confirm/provider` in a session that did not sign in through an OpenID Connect provider the account is linked to |
+| `second_factor.reauth_unavailable` | `409 conflict` | `POST /me/security/confirm/provider` while the provider's discovery cannot be loaded |
 | `second_factor.has_factor` | `409 conflict` | `POST /me/security/confirm/password` on an account that has a method; it confirms with the method |
 | `second_factor.no_password` | `409 conflict` | `POST /me/security/confirm/password` on an account without a password |
 | `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
