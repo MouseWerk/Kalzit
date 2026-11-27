@@ -1564,5 +1564,8 @@
   "datasources.reason.steps.pattern": "{pattern} is no regular expression this step can read.",
   "datasources.reason.steps.filter_value": "“{value}” cannot be compared with the field {field}.",
   "datasources.reason.steps.stack_types": "The field {field} is {first} in one table and {other} in another.",
-  "datasources.reason.steps.result_rows": "The step would make more than {max} rows."
+  "datasources.reason.steps.result_rows": "The step would make more than {max} rows.",
+  "datasources.reason.graph_actions.busy": "Many analyses are running on the server right now. Try again in a moment.",
+  "datasources.reason.graph_actions.user_busy": "Your previous analysis is still running. Wait until it is done.",
+  "datasources.reason.graph_actions.too_large": "The canvas holds more than an analysis reads: at most {maxNodes} nodes and {maxEdges} edges. Hide parts or narrow the query."
 }

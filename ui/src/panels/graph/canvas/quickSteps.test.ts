@@ -4,12 +4,15 @@ import { edgeDisplay, nodeDisplay, nodeLit, singlesOut } from "../drawing";
 import { buildGraphModel } from "../model";
 import { allVisible, buildView } from "../view";
 import {
+  adopted,
   connectSteps,
   edgeWeights,
   emphasisOf,
   loadedGraph,
+  pathDetails,
   pathStep,
   ranking,
+  topProperty,
   topStep,
   unconnected,
 } from "./quickSteps";
@@ -58,6 +61,42 @@ describe("quick actions", () => {
     ]);
     expect(model.edges).toHaveLength(3);
     expect(edgeWeights(model)).toEqual(["aufwand"]);
+  });
+
+  it("leave hidden edges out of what they send", () => {
+    const { model, view, visibility } = setup();
+    const edges = visibility.edges.slice();
+    edges[view.edgeOf[1] ?? 0] = 0;
+    const graph = loadedGraph(model, view, { nodes: visibility.nodes, edges });
+    expect(graph.edges.map((e) => e.id)).toEqual(["e1", "e3"]);
+  });
+
+  it("list a path's edges with their weights and the sum; missing weights count 1", () => {
+    const { model } = setup();
+    const details = pathDetails(
+      model,
+      { nodes: ["a", "c", "b", "d"], edges: ["e1", "e2", "e3"] },
+      "aufwand",
+    );
+    expect(details.edges.map((e) => [e.from, e.to, e.weight])).toEqual([
+      ["Anna", "Abo", 2],
+      ["Ben", "Abo", 1],
+      ["Ben", "Dock", null],
+    ]);
+    expect(details.sum).toBe(4);
+    expect(pathDetails(model, { nodes: [], edges: ["e1"] }, undefined).sum).toBeNull();
+  });
+
+  it("are taken over as steps of the panel with the measure's own property name", () => {
+    expect(topStep("pageRank", false)).not.toHaveProperty("name");
+    expect(topProperty("pageRank")).toBe("pagerank");
+    expect(topProperty("betweenness")).toBe("betweenness");
+    expect(adopted(topStep("degree", false), "Q")).toEqual({ type: "degree", frame: "Q" });
+    expect(pathStep("kShortest", "a", "d", false, "aufwand")).toMatchObject({
+      k: 3,
+      weight: "aufwand",
+    });
+    expect(connectSteps(Array.from({ length: 20 }, (_, i) => `n${i}`))).toHaveLength(190);
   });
 
   it("ask without direction unless the person wants it", () => {

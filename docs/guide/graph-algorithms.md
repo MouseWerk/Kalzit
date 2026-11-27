@@ -59,8 +59,8 @@ like any other property. In the panel editor a step's card offers:
 - **Show as size**: adds the style rule "Size by value", from 5 to 17 px over the values in the
   result. The area of a node grows with its value. The rule is listed under Style and can be
   changed or removed there; when the step is turned off, the rule rests.
-- **Show as color**: colors the nodes by the value with the panel's color ramp (Options › Color by
-  property).
+- **Show as color**: adds the style rule "Color by value": one tone of the data palette, light for
+  the smallest value, saturated for the largest. Like the size rule it is listed under Style.
 - **Color per community**: adds a rule with one color per community; the eight largest get the
   data palette.
 
@@ -74,19 +74,25 @@ Three questions need no step list. They compute on the Kalzit server on what the
 ask the data source nothing, and are not saved, so viewers can use them too; they are off on public
 links and snapshots.
 
-- **Find path** with two selected nodes: shortest path, all shortest paths or weighted path (by a
-  number on the edges; without one the entry stays visible with the reason). The search ignores
-  the direction of edges unless "Follow the direction of the edges" is ticked. The path is drawn
-  strong in the text color, the other paths found lighter, the rest dimmed. J and Shift+J walk
-  through the paths.
-- **How are these connected?** with three to ten selected nodes: one shortest path between each
-  two, and the nodes that are not connected to the others by name.
-- **Most important nodes**: the first five ranks by PageRank, degree or betweenness; ties share a
-  rank, so the list may be longer.
+- **Find path** with two selected nodes: shortest path, all shortest paths, "Weighted path by
+  <property>" for each number on the edges (without one the entry stays visible with the reason),
+  and the 3 shortest paths. "Swap From and To" turns the question around. The search ignores the
+  direction of edges unless "Follow the direction of the edges" is ticked. The path is drawn
+  strong in the text color, the other paths found lighter, the rest dimmed; its edges are listed
+  with their weights and the sum. J and Shift+J walk through the paths, **Show only the path**
+  hides the rest.
+- **How are these connected?** with three to twenty selected nodes: one shortest path between each
+  two, and the nodes that are not connected to the others by name. When a pair could not be
+  computed, the sentence says why instead.
+- **Most important nodes**: the first five ranks by PageRank, degree or betweenness (arrow keys
+  switch the measure); ties share a rank, so the list may be longer, and beyond ten rows it says
+  how many more share them. In the panel editor **Show as size** takes the ranking over as a step
+  and adds a size rule.
 
 W starts the path or the connection for the selection, G the most important nodes, Escape closes the
-answer. In the panel editor, **Take over as a step** turns the answer into a step of
-the panel.
+answer. In the panel editor, **Take over as a step** turns the answer into steps of the panel.
+A person runs one quick action at a time, and a server a few at once; when it is busy, the answer
+says so and a moment later it works again.
 
 See also [Explore](explore.md#graph-steps), [Calculated fields and statistics](calculated-fields.md)
 and the [API of the graph algorithm steps](../api/settings-dashboards.md#graph-algorithm-steps).

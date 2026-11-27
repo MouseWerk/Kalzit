@@ -9,10 +9,11 @@
   with one sentence about their result. Limits and errors are said in plain words, with "Insert a
   filter before" or "Compute on the server" where that helps.
 - In the panel editor a step's result can be shown on the canvas with one click: as the size of the
-  nodes (a new style rule "Size by value"), as their color, or with one color per community.
-- Quick actions on the graph canvas: find the shortest, all shortest or weighted path between two
-  selected nodes, see how three to ten selected nodes are connected, and list the most important
-  nodes by PageRank, degree or betweenness. They compute on what the canvas has loaded, ask the data
+  nodes or as their color (new style rules "Size by value" and "Color by value"), or with one color
+  per community.
+- Quick actions on the graph canvas: find the shortest, all shortest, weighted (by a chosen number
+  on the edges) or 3 shortest paths between two selected nodes, see how three to twenty selected
+  nodes are connected, and list the most important nodes by PageRank, degree or betweenness. They compute on what the canvas has loaded, ask the data
   source nothing and are open to viewers; keys W, J, G and U.
 - Suggested edges of link prediction are drawn dotted with a diamond, are not counted and can be
   hidden.

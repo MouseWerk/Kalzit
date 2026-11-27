@@ -62,8 +62,8 @@ Alert-Regeln lesen sie wie jede andere Property. Im Panel-Editor bietet die Kart
 - **Als Größe zeigen**: legt die Stilregel „Größe nach Wert“ an, von 5 bis 17 px über die Werte im
   Ergebnis. Die Fläche eines Knotens wächst mit seinem Wert. Die Regel steht unter Stil und lässt
   sich dort ändern oder entfernen; ist der Schritt ausgeschaltet, ruht sie.
-- **Als Farbe zeigen**: färbt die Knoten nach dem Wert mit dem Farbverlauf des Panels (Optionen ›
-  Farbe nach Property).
+- **Als Farbe zeigen**: legt die Stilregel „Farbe nach Wert“ an: ein Ton der Datenpalette, hell für
+  den kleinsten Wert, satt für den größten. Wie die Größen-Regel steht sie unter Stil.
 - **Farbe je Community**: legt eine Regel mit einer Farbe je Community an; die acht größten
   bekommen die Datenpalette.
 
@@ -78,19 +78,25 @@ Drei Fragen gehen ohne Schrittliste. Sie rechnen im Kalzit-Server auf dem, was d
 geladen hat, fragen die Datenquelle nichts und werden nicht gespeichert; darum stehen sie auch
 Betrachtern offen. Auf Freigabe-Links und Snapshots sind sie aus.
 
-- **Pfad finden** bei zwei gewählten Knoten: kürzester Pfad, alle kürzesten Pfade oder gewichteter
-  Pfad (über eine Zahl an den Kanten; ohne sie bleibt der Eintrag sichtbar, mit dem Grund). Die
-  Suche beachtet die Richtung der Kanten nicht, außer „Richtung der Kanten beachten“ ist
-  angehakt. Der Pfad steht kräftig in Textfarbe, die anderen gefundenen Pfade leichter, der Rest
-  gedimmt. J und Umschalt+J gehen durch die Pfade.
-- **Wie hängen diese zusammen?** bei drei bis zehn gewählten Knoten: je ein kürzester Pfad
-  zwischen je zweien, und beim Namen die Knoten, die mit den anderen nicht verbunden sind.
-- **Wichtigste Knoten**: die ersten fünf Ränge nach PageRank, Grad oder Betweenness; bei
-  Gleichstand teilen sich Knoten einen Rang, die Liste wird dann länger.
+- **Pfad finden** bei zwei gewählten Knoten: kürzester Pfad, alle kürzesten Pfade, „Gewichteter Pfad
+  nach <Eigenschaft>“ für jede Zahl an den Kanten (ohne sie bleibt der Eintrag sichtbar, mit dem
+  Grund) und die 3 kürzesten Pfade. „Von und Nach tauschen“ dreht die Frage um. Die Suche beachtet
+  die Richtung der Kanten nicht, außer „Richtung der Kanten beachten“ ist angehakt. Der Pfad steht
+  kräftig in Textfarbe, die anderen gefundenen Pfade leichter, der Rest gedimmt; seine Kanten
+  stehen mit ihren Gewichten und der Summe darunter. J und Umschalt+J gehen durch die Pfade,
+  **Nur Pfad zeigen** blendet den Rest aus.
+- **Wie hängen diese zusammen?** bei drei bis zwanzig gewählten Knoten: je ein kürzester Pfad
+  zwischen je zweien, und beim Namen die Knoten, die mit den anderen nicht verbunden sind. Ließ
+  sich ein Paar nicht berechnen, sagt der Satz stattdessen warum.
+- **Wichtigste Knoten**: die ersten fünf Ränge nach PageRank, Grad oder Betweenness (die
+  Pfeiltasten wechseln das Maß); bei Gleichstand teilen sich Knoten einen Rang, die Liste wird
+  dann länger und sagt ab zehn Zeilen, wie viele noch folgen. Im Panel-Editor übernimmt **Als
+  Größe zeigen** die Rangfolge als Schritt und legt eine Größen-Regel an.
 
 W startet den Pfad oder den Zusammenhang für die Auswahl, G die wichtigsten Knoten, Escape
-schließt die Antwort. Im Panel-Editor macht **Als Schritt übernehmen** aus der Antwort einen
-Schritt des Panels.
+schließt die Antwort. Im Panel-Editor macht **Als Schritt übernehmen** aus der Antwort Schritte
+des Panels. Eine Person führt eine Schnellaktion zur Zeit aus, ein Server einige gleichzeitig; ist
+er ausgelastet, sagt es die Antwort, und einen Moment später geht es wieder.
 
 Siehe auch [Explore](explore.md#graph-schritte), [Berechnete Felder und Statistik](calculated-fields.md)
 und die [API der Graph-Algorithmen](../../api/settings-dashboards.md#graph-algorithm-steps).

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shaded } from "../drawing";
 import { evaluateRules } from "./evaluate";
 import { withResultRule } from "./fromResult";
 import { EMPTY_STYLE, type NodeRule, parseGraphStyle } from "./schema";
@@ -16,6 +17,31 @@ const sizeRule = (property: string): NodeRule => ({
   scope: "",
   when: { kind: "always" },
   set: { sizeBy: { property, min: 5, max: 17 } },
+});
+
+describe("color by value", () => {
+  it("gives one tone, light for the smallest value and saturated for the largest", () => {
+    const rule: NodeRule = {
+      id: "r1",
+      on: true,
+      scope: "",
+      when: { kind: "always" },
+      set: { colorBy: { property: "pagerank", color: "chart-3" } },
+    };
+    const out = evaluateRules([rule], items);
+    expect(out.styles[0]?.set).toMatchObject({ color: "chart-3", shade: 0.25 });
+    expect(out.styles[1]?.set).toMatchObject({ color: "chart-3", shade: 1 });
+    expect(out.styles[3]?.set.color).toBeUndefined();
+    expect(withResultRule(EMPTY_STYLE, "color", "pagerank").style.nodes[0]?.set).toEqual({
+      colorBy: { property: "pagerank", color: "chart-1" },
+    });
+  });
+
+  it("draws the tone mixed toward the canvas the lighter it is", () => {
+    expect(shaded("#000000", 0.25, "#ffffff")).toBe("#bfbfbf");
+    expect(shaded("#336699", 1, "#ffffff")).toBe("#336699");
+    expect(shaded("#336699", undefined, "#ffffff")).toBe("#336699");
+  });
 });
 
 describe("size by value", () => {

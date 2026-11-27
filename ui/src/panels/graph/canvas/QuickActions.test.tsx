@@ -32,13 +32,19 @@ function Canvas({
   chosen,
   orgId,
   onAdopt,
+  weights = false,
 }: {
+  /** Edges carry the number property `menge`. */
+  weights?: boolean;
   chosen: string[];
   /** The organization; null for a public page without one. */
   orgId?: string | null;
   onAdopt?: (steps: readonly unknown[]) => void;
 }) {
-  const model = buildGraphModel([GRAPH], { nodeLimit: 100, caption: "name" });
+  const graph: GraphSet = weights
+    ? { ...GRAPH, edges: GRAPH.edges.map((e) => ({ ...e, properties: { menge: 2 } })) }
+    : GRAPH;
+  const model = buildGraphModel([graph], { nodeLimit: 100, caption: "name" });
   const view = buildView(model, {
     sizes: new Float32Array(3).fill(10),
     widths: new Float32Array(2).fill(1),
@@ -139,6 +145,83 @@ describe("quick actions on the canvas", () => {
     });
     await user.click(screen.getByRole("radio", { name: "Betweenness" }));
     expect(await screen.findByText(/Too large for this step/)).toBeTruthy();
+  });
+
+  it("say why when a pair could not be computed, instead of claiming who is apart", async () => {
+    request.mockResolvedValueOnce({
+      results: [
+        {
+          id: "pair-0-1",
+          ranIn: "server",
+          paths: [{ nodes: ["a", "c", "b"], edges: ["e1", "e2"] }],
+        },
+        {
+          id: "pair-0-2",
+          ranIn: "server",
+          error: {
+            code: "validation",
+            message: "late",
+            reason: "steps.timeout",
+            params: { seconds: "30" },
+          },
+        },
+        { id: "pair-1-2", ranIn: "server", paths: [] },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<Canvas chosen={["a", "b", "c"]} />);
+    await user.click(screen.getByRole("button", { name: "How are these connected?" }));
+    expect(await screen.findByText(/^Not every pair could be computed: /)).toBeTruthy();
+    expect(screen.queryByText(/Not connected to the others/)).toBeNull();
+  });
+
+  it("refuse more than twenty nodes with the reason, without running on a part", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 21 }, (_, i) => `n${i}`);
+    render(<Canvas chosen={many} />);
+    const connect = screen.getByRole("button", { name: "How are these connected?" });
+    expect(connect.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("At most 20 selected nodes.")).toBeTruthy();
+    request.mockClear();
+    await user.click(connect);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("offer a weighted path per number on the edges, swap the ends and close on Escape", async () => {
+    request.mockResolvedValue({ results: [{ id: "path", ranIn: "server", paths: [] }] });
+    const user = userEvent.setup();
+    render(<Canvas chosen={["a", "b"]} weights />);
+    const opener = screen.getByRole("button", { name: "Find path" });
+    await user.click(opener);
+    // Focus moves into the menu.
+    expect(document.activeElement?.textContent).toBe("Shortest path");
+    expect(screen.getByText("From a to b")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Swap From and To" }));
+    expect(screen.getByText("From b to a")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Swap From and To" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    await user.click(opener);
+    await user.click(screen.getByRole("button", { name: "Weighted path by menge ›" }));
+    const body = request.mock.calls.at(-1)?.[2] as { steps: Record<string, unknown>[] };
+    expect(body.steps[0]).toMatchObject({ mode: "weighted", weight: "menge", from: "a", to: "b" });
+    request.mockReset();
+  });
+
+  it("walk the measures with the arrow keys and cap a long list of ties", async () => {
+    const tied = Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`x${i}`, 1]));
+    request.mockResolvedValue({ results: [{ id: "top", ranIn: "server", values: tied }] });
+    const user = userEvent.setup();
+    render(<Canvas chosen={[]} />);
+    await user.click(screen.getByRole("button", { name: "Most important nodes" }));
+    expect(await screen.findByText("and 4 more on the same ranks")).toBeTruthy();
+    const pageRank = screen.getByRole("radio", { name: "PageRank" });
+    expect(pageRank.getAttribute("tabindex")).toBe("0");
+    expect(screen.getByRole("radio", { name: "Degree" }).getAttribute("tabindex")).toBe("-1");
+    pageRank.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "Degree" }).getAttribute("aria-checked")).toBe("true");
+    request.mockReset();
   });
 
   it("are not offered without an organization (public links, snapshots)", () => {

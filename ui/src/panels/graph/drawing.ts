@@ -123,10 +123,30 @@ function nodeColor(
  */
 export function shaded(color: string, shade: number | undefined, background: string): string {
   if (shade === undefined || shade >= 1) return color;
-  const tone = toRgb(color);
-  const canvas = toRgb(background);
-  if (tone === null || canvas === null) return color;
-  return hex(mix(tone, canvas, 1 - shade));
+  const key = `${color}|${shade}|${background}`;
+  const known = SHADES.get(key);
+  if (known !== undefined) return known;
+  const tone = rgbOf(color);
+  const canvas = rgbOf(background);
+  const out = tone === null || canvas === null ? color : hex(mix(tone, canvas, 1 - shade));
+  // Few tones and steps per theme: the renderer asks for the same ones on every frame.
+  if (SHADES.size > 4096) SHADES.clear();
+  SHADES.set(key, out);
+  return out;
+}
+
+const SHADES = new Map<string, string>();
+
+/** A color as RGB: hex and rgb() read directly, anything else through the canvas (`toRgb`). */
+function rgbOf(color: string): [number, number, number] | null {
+  const short = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (short !== null) {
+    const n = Number.parseInt(short[1] as string, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgb = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(color.trim());
+  if (rgb !== null) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  return toRgb(color);
 }
 
 /** A selected node is drawn this much larger. */

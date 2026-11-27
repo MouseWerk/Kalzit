@@ -1294,6 +1294,50 @@ parallel steps are per Kalzit server):
 Every step on the server looks at its deadline and at the request: a request that goes away stops
 it. In Neo4j a step that runs too long is stopped with its transaction.
 
+#### Quick actions on a loaded graph
+
+`POST /api/orgs/{orgId}/graph/actions` runs the quick actions of the graph canvas (board
+Graph082, frames 8 to 10): "Pfad finden", "Wie hängen diese zusammen?" and "Wichtigste Knoten".
+They compute on the Kalzit server on the graph the caller sends, the nodes and edges its canvas
+shows, and ask no data source anything: no query runs, nothing is read from or written to a
+source, nothing is stored. Any member of the organization may call it (viewers too); strangers
+answer `401`, other organizations `403`/`404`. Public links and snapshots have no organization and
+offer no quick actions.
+
+Request:
+
+```json
+{
+  "graph": { "nodes": [...], "edges": [...], "schema": {...} },
+  "steps": [
+    { "id": "path", "type": "paths", "frame": "A", "mode": "shortest", "from": "n1", "to": "n2", "direction": "both" }
+  ]
+}
+```
+
+- `graph` is a `graph` result (`GraphSet`) of at most 20,000 nodes and 100,000 edges
+  (`422 validation`, reason `graph_actions.too_large`, `maxNodes`, `maxEdges`); the body is at
+  most 16 MiB (`413 payload_too_large`).
+- `steps` holds 1 to 190 steps (the pairs of 20 chosen nodes), each on frame `A`, each one the
+  canvas offers: `paths` with `mode` `shortest`, `allShortest`, `weighted` or `kShortest`,
+  `centrality` with `measure` `pageRank` or `betweenness`, and `degree`. They take the parameters
+  and checks of the steps above; any other step is `422 validation`.
+
+Answer: `{"results": [...]}`, one entry per step in order, with `id`, `ranIn` (always `server`),
+`summary` (as `StepPlace.summary`), `paths` (the paths found), `values` (node id to the value a
+`centrality` or `degree` step computed, under its `name`), `notices`, or `error` (an `ErrorBody`
+with the reasons of the steps, such as `steps.node_missing`, `steps.algorithm_too_large`,
+`steps.timeout`).
+
+Limits: one request per user at a time (`503 busy`, reason `graph_actions.user_busy`) and at most
+two on a server (`503 busy`, reason `graph_actions.busy`), in places of their own: the stored
+steps of panels, Explore and alert rules never wait for a quick action. The organization's
+algorithm limits apply to every step, and one deadline, `datasources.algorithm_timeout_secs`,
+covers the whole request: steps past it answer `steps.timeout` without computing. A request that
+goes away stops the step at work. `/metrics` counts the requests as
+`kalzit_graph_quick_actions_total{action="path"|"connect"|"top",outcome="ran"|"busy"}`, with
+nothing about the graph or the user.
+
 ### Expressions
 
 A small language over the fields of one frame, parsed and type-checked, never evaluated as code.
