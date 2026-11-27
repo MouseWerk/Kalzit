@@ -1303,7 +1303,8 @@
   @media (prefers-reduced-motion: no-preference) {
     .access-bd[data-lit] .access-art__light {
       visibility: visible;
-      animation: access-art-light var(--duration-icon-long) var(--easing) both;
+      /* At an even pace: a light that passes, not a thing that starts and stops. */
+      animation: access-art-light var(--duration-icon-long) linear both;
     }
   }
 

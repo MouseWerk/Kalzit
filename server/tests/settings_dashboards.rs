@@ -2216,7 +2216,12 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
     let refused = t.patch("/admin/settings/signin.backdrop", json!({ "value": false, "version": 0 }), &erika).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
     let anonymous = t
-        .send(Method::PATCH, &t.path("/admin/settings/signin.backdrop"), Some(json!({ "value": false, "version": 0 })), None)
+        .send(
+            Method::PATCH,
+            &t.path("/admin/settings/signin.backdrop"),
+            Some(json!({ "value": false, "version": 0 })),
+            None,
+        )
         .await;
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{}", anonymous.body);
     let public = t.send(Method::GET, "/api/branding", None, None).await;
