@@ -86,7 +86,7 @@ pub fn graph() -> QueryResult {
                 to: "b".into(),
                 properties: BTreeMap::from([("since".into(), json!({"$type": "date", "value": "2020-01-01"}))]),
             }],
-            paths: Some(vec![GraphPath { nodes: vec!["a".into(), "b".into()], edges: vec!["a-KNOWS-b".into()] }]),
+            paths: Some(vec![GraphPath::new(vec!["a".into(), "b".into()], vec!["a-KNOWS-b".into()])]),
             schema: GraphSchema {
                 labels: vec!["Company".into(), "Person".into()],
                 edge_types: vec!["KNOWS".into()],
@@ -94,6 +94,7 @@ pub fn graph() -> QueryResult {
             },
             truncated: Some(Truncated { limit: 3, reason: None }),
             notices: Some(notices()),
+            suggested: None,
         },
     }
 }

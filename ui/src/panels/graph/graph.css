@@ -213,6 +213,20 @@
     color: var(--bg-active);
   }
 
+  /* The status tones a style rule can set, read by readPalette (colors.ts): good, warning and
+     critical are the tokens --tone-ok, --tone-warn and --tone-critical (style/colors.ts). */
+  .graph__probe--tone-good {
+    color: var(--tone-ok);
+  }
+
+  .graph__probe--tone-warning {
+    color: var(--tone-warn);
+  }
+
+  .graph__probe--tone-critical {
+    color: var(--tone-critical);
+  }
+
   .graph__probe--blues-1 {
     color: var(--ramp-blues-1);
   }
@@ -296,7 +310,8 @@
     .graph__probe--text,
     [class*="graph__probe--blues-"],
     [class*="graph__probe--gyr-"],
-    [class*="graph__probe--grays-"] {
+    [class*="graph__probe--grays-"],
+    [class*="graph__probe--tone-"] {
       color: CanvasText;
     }
 

@@ -95,6 +95,31 @@ export function fromPackageLock(lock, root = uiRoot) {
   return found;
 }
 
+/**
+ * Code the bundle carries without an npm dependency: the icons of the graph style rules, a subset
+ * of `lucide-static` written by scripts/graph-icons.mjs, with the license text next to them.
+ */
+export function vendored(root = uiRoot) {
+  const dir = resolve(root, "src", "panels", "graph", "style", "icons");
+  const data = resolve(dir, "lucide.json");
+  if (!existsSync(data)) {
+    return [];
+  }
+  const source = String(JSON.parse(readFileSync(data, "utf8")).source ?? "");
+  const [name, version] = source.split(" ");
+  return [
+    withDir(
+      {
+        name: name || "lucide-static",
+        version: version || "unknown",
+        license: "ISC",
+        source: "npm",
+      },
+      dir,
+    ),
+  ];
+}
+
 /** Sorted by name, one entry per source, name and version. */
 export function merge(...lists) {
   const seen = new Set();
@@ -245,7 +270,7 @@ function main() {
     );
     rust = [];
   }
-  const entries = merge(rust, npm);
+  const entries = merge(rust, npm, vendored());
   mkdirSync(dirname(LIST), { recursive: true });
   writeFileSync(LIST, `${JSON.stringify(entries)}\n`);
   writeFileSync(NOTICES, buildNotices(entries));

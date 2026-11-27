@@ -13,6 +13,7 @@
     "Raised with #387: the language catalogs to 175 kB (owner decision of 2026-11-23), since the German one reached 166.1 kB with the sidebar texts and the pending M8 pages (handbook, themes, dashboards, administration) add more; splitting the catalogs per area stays M8 work (Performance und Tempo).",
     "total raised to 3.3 MB (owner decision of 2026-11-23): one raise for the M8 graph pages of 0.8.1 (canvas, style rules, layouts, export, map panel, about 3.16 MB measured with all of them) and the built-in handbook (#383); the first page load, the language catalogs and every single chunk are unchanged. Making the whole bundle smaller stays M8 work (Performance und Tempo).",
     "Raised with #417: the language catalogs to 185 kB, since the German one reached 175.6 kB with the step catalog and its nine table steps, and the parity batch merged with it (#415 axes, legend and tooltip, #410 XY chart and Trend, #416, #418, #419 and #421 variables) brings it to about 181 kB; these texts show in the panel editor, Explore and the variable bar, so they cannot load with one page. Splitting the catalogs per area stays M8 work (Performance und Tempo).",
+    "Measured on 2026-11-27 with the graph style rules, layouts, algorithms and export (#353): ELK shipped twice, its worker build and elk.bundled.js for browsers without workers (437 kB gzip, the same code); ELK now ships once, as the worker build, and the whole bundle is 2.86 MB. The graph canvas texts load with the graph panels (deferred area graphCanvas), so the German catalog is 183.6 kB. No limit raised.",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
@@ -21,7 +22,6 @@
   "lazy": ["RangePopover"],
   "chunk": 117000,
   "chunks": {
-    "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
   "total": 3300000

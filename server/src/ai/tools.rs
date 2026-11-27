@@ -1057,6 +1057,31 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
             StepKind::SpanTable { attributes, .. } => read.extend(attributes.iter().map(String::as_str)),
             StepKind::FilterSpans { attribute, .. } => read.extend(attribute.as_ref().map(|a| a.key.as_str())),
+            // Graph algorithms carry a property on as a score, a group's aggregate or a sum along
+            // the edges; the weight shapes every score.
+            StepKind::Centrality { weight, .. }
+            | StepKind::Communities { weight, .. }
+            | StepKind::Paths { weight, .. } => read.extend(weight.as_deref()),
+            // A table of pairs and a group's members carry the nodes' `name` into new places.
+            StepKind::Similarity { properties, .. } => {
+                read.extend(properties.iter().map(String::as_str));
+                if crate::analysis::algo::similarity_output(&step.kind) == crate::analysis::SimilarityOutput::Table {
+                    read.push("name");
+                }
+            }
+            StepKind::MergeNodes { property, aggregates, edge_aggregates, .. } => {
+                read.push("name");
+                read.extend(property.as_deref());
+                read.extend(aggregates.iter().chain(edge_aggregates).filter_map(|a| a.property.as_deref()));
+            }
+            StepKind::AggregateAlong { property, .. } => read.extend(property.as_deref()),
+            StepKind::KCore { .. }
+            | StepKind::Triangles { .. }
+            | StepKind::LinkPrediction { .. }
+            | StepKind::Reachable { .. }
+            | StepKind::Bridges { .. }
+            | StepKind::ArticulationPoints { .. }
+            | StepKind::Cycles { .. } => {}
             StepKind::ServiceMap { .. }
             | StepKind::TraceTable { .. }
             | StepKind::SpanTree { .. }
@@ -1064,8 +1089,8 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             | StepKind::CountLabels { .. }
             | StepKind::CountEdgeTypes { .. }
             | StepKind::DegreeDistribution { .. }
-            | StepKind::TopDegree { .. }
-            | StepKind::Degree { .. } => {}
+            | StepKind::TopDegree { .. } => {}
+            StepKind::Degree { weight, .. } => read.extend(weight.as_deref()),
         }
         if let Some(field) = read.into_iter().find(|f| policy.excludes(f)) {
             return Some(field.to_string());
@@ -1562,6 +1587,16 @@ mod tests {
                      "aggregations": [{ "field": "email", "op": "first", "name": "k" }] }]),
             json!([{ "id": "1", "type": "pivot", "frame": "A", "row": "name", "column": "email", "value": "umsatz",
                      "op": "sum" }]),
+            // Graph algorithms carry a property on as a score, an aggregate or a sum.
+            json!([{ "id": "1", "type": "centrality", "frame": "A", "measure": "pageRank", "weight": "email" }]),
+            json!([{ "id": "1", "type": "degree", "frame": "A", "weight": "email" }]),
+            json!([{ "id": "1", "type": "similarity", "frame": "A", "measure": "cosine", "properties": ["email"] }]),
+            json!([{ "id": "1", "type": "mergeNodes", "frame": "A", "by": "property", "property": "email" }]),
+            json!([{ "id": "1", "type": "mergeNodes", "frame": "A", "by": "label",
+                     "aggregates": [{ "op": "distinct", "property": "email", "name": "k" }] }]),
+            json!([{ "id": "1", "type": "aggregateAlong", "frame": "A", "op": "max", "property": "email", "name": "k" }]),
+            json!([{ "id": "1", "type": "paths", "frame": "A", "mode": "weighted", "from": "a", "to": "b",
+                     "weight": "email" }]),
             json!([{ "id": "1", "type": "organize", "frame": "A", "rename": { "email": "kontakt" } }]),
             json!([{ "id": "1", "type": "filterRows", "frame": "A", "mode": "keep", "match": "all",
                      "conditions": [{ "field": "email", "op": "contains", "value": "@" }] }]),
@@ -1630,6 +1665,19 @@ mod tests {
         let alone =
             json!([{ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }]);
         assert_eq!(joined_excluded(&policy, &steps2(alone), &both), None);
+        // Steps that copy the nodes' `name` into a table or a group's members read it.
+        let access =
+            super::super::store::DatasourceAccess { readable: true, excluded_fields: vec!["kunden.name".into()] };
+        let policy = redact::DataPolicy::new(&access, 10);
+        for raw in [
+            json!([{ "id": "1", "type": "similarity", "frame": "A", "measure": "jaccard" }]),
+            json!([{ "id": "1", "type": "mergeNodes", "frame": "A", "by": "label" }]),
+        ] {
+            let field = step_reads_excluded(&policy, &steps(raw.clone()));
+            assert!(field.as_deref().is_some_and(|f| f.ends_with("name")), "{raw}: {field:?}");
+        }
+        let edges = json!([{ "id": "1", "type": "similarity", "frame": "A", "measure": "jaccard", "output": "edges" }]);
+        assert_eq!(step_reads_excluded(&policy, &steps(edges)), None, "edges keep the names where they were");
     }
 
     #[test]

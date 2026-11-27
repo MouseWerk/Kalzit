@@ -313,6 +313,7 @@ on_both_databases! {
     the_logo_is_validated_stored_and_served_same_origin: |_| {};
     logo_changes_can_be_undone: |_| {};
     server_routes_refuse_organization_admins_and_org_writes_refuse_viewers: |_| {};
+    graph_algorithm_limits_follow_the_server_and_organizations_only_lower: |_| {};
     a_reset_in_a_batch_brings_the_default_back: |_| {};
     // As if kalzit.toml set the lifetime, which then stays out of the export.
     settings_export_and_import_through_a_preview_and_one_batch: |c| {
@@ -2511,6 +2512,44 @@ async fn server_routes_refuse_organization_admins_and_org_writes_refuse_viewers(
     }
     // Nothing changed through any of them.
     assert!(!t.actions().await.iter().any(|a| a.starts_with("settings.") || a.starts_with("branding.")));
+}
+
+/// The limits of graph algorithm steps are server settings; an organization may only lower them
+/// (a higher value of its own leaves the server's), only its admins may set them, and
+/// organization admins never change the server's.
+async fn graph_algorithm_limits_follow_the_server_and_organizations_only_lower(t: TestApp) {
+    use kalzit::analysis::algo::AlgoLimits;
+    let load = |org: Option<String>| {
+        let state = t.state.clone();
+        async move { AlgoLimits::load(&state, org.as_deref()).await.unwrap() }
+    };
+    assert_eq!(load(Some(t.org.clone())).await, AlgoLimits::default());
+    let t = &t;
+    let server = |key: &str, value: Value, version: u64| {
+        let (path, body) = (format!("/admin/settings/{key}"), json!({ "value": value, "version": version }));
+        async move { t.patch(&path, body, &t.owner).await }
+    };
+    let r = server("datasources.algorithm_max_nodes", json!(50_000), 0).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    for (key, value) in [("datasources.algorithm_max_nodes", 1_000), ("datasources.algorithm_max_results", 100_000)] {
+        let r = t.patch(&format!("~/settings/{key}"), json!({ "value": value, "version": 0 }), &t.owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
+    }
+    let limits = load(Some(t.org.clone())).await;
+    assert_eq!((limits.max_nodes, limits.max_results), (1_000, 200), "lower applies, higher does not");
+    assert_eq!(load(None).await.max_nodes, 50_000);
+    // The hard bounds of the steps hold for the settings too.
+    assert_eq!(server("datasources.algorithm_max_suggestions", json!(501), 0).await.code(), "validation");
+    assert_eq!(server("datasources.algorithm_max_top_k", json!(101), 0).await.code(), "validation");
+    let admin = t.member("Anton", "admin").await;
+    let r =
+        t.patch("/admin/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &admin).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let viewer = t.member("Vera", "viewer").await;
+    let r = t.patch("~/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!(load(Some(t.org.clone())).await.max_nodes, 1_000);
+    assert_eq!(load(None).await.max_nodes, 50_000);
 }
 
 async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {

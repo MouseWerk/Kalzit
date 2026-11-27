@@ -125,10 +125,12 @@ datasources() {
   container kalzit-ci-ds-opensearch -p $p:9201:9200 -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true \
     -e DISABLE_INSTALL_DEMO_CONFIG=true -e cluster.routing.allocation.disk.threshold_enabled=false \
     -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" opensearchproject/opensearch:3.9.0
+  # With their algorithm libraries (Graph Data Science, MAGE), as in ci.yml.
   container kalzit-ci-ds-neo4j -p $p:7687:7687 -e NEO4J_AUTH=neo4j/kalzit-ci-neo4j \
+    -e NEO4J_PLUGINS='["graph-data-science"]' \
     -e NEO4J_server_memory_heap_initial__size=256m -e NEO4J_server_memory_heap_max__size=512m \
     -e NEO4J_server_memory_pagecache_size=128m neo4j:2026.10.0-community
-  container kalzit-ci-ds-memgraph -p $p:7688:7687 memgraph/memgraph:3.14.0
+  container kalzit-ci-ds-memgraph -p $p:7688:7687 memgraph/memgraph-mage:3.14.0
   container kalzit-ci-ds-clickhouse --memory 2g -p $p:8123:8123 -e CLICKHOUSE_USER=kalzit -e CLICKHOUSE_PASSWORD=kalzit-ci-clickhouse \
     -e CLICKHOUSE_DB=kalzit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server:25.8
   container kalzit-ci-ds-influxdb2 -p $p:8086:8086 -e DOCKER_INFLUXDB_INIT_MODE=setup \
@@ -159,7 +161,7 @@ datasources() {
     curl -fs -u elastic:kalzit-ci-es "http://$p:9200/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null \
       || pending="$pending elasticsearch"
     curl -fs "http://$p:9201/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null || pending="$pending opensearch"
-    docker exec kalzit-ci-ds-neo4j cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN 1" > /dev/null 2>&1 \
+    docker exec kalzit-ci-ds-neo4j cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN gds.version()" > /dev/null 2>&1 \
       || pending="$pending neo4j"
     timeout 1 bash -c "</dev/tcp/$p/7688" 2> /dev/null || pending="$pending memgraph"
     curl -fs http://$p:8123/ping > /dev/null || pending="$pending clickhouse"
@@ -188,6 +190,7 @@ datasources() {
   export KALZIT_TEST_OPENSEARCH_URL=http://127.0.0.1:9201
   export KALZIT_TEST_NEO4J_URL=bolt://neo4j:kalzit-ci-neo4j@127.0.0.1:7687
   export KALZIT_TEST_MEMGRAPH_URL=bolt://127.0.0.1:7688
+  export KALZIT_TEST_GRAPH_LIBRARIES=1
   export KALZIT_TEST_MONGODB_URL='mongodb://kalzit:kalzit-ci-mongo@127.0.0.1:27017/?authSource=admin'
   export KALZIT_TEST_CLICKHOUSE_URL=http://kalzit:kalzit-ci-clickhouse@127.0.0.1:8123/kalzit
   export KALZIT_TEST_INFLUXDB2_URL=http://kalzit:kalzit-ci-influx-token@127.0.0.1:8086/kalzit

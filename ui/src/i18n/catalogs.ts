@@ -5,6 +5,8 @@
 // holds the areas that load with their pages too (deferred.ts), so every rule covers them.
 import { de as deStart } from "./de";
 import deApps from "./de/apps.json";
+import deGraphCanvas from "./de/graphCanvas.json";
+import deGraphStyle from "./de/graphStyle.json";
 import deHandbook from "./de/handbook.json";
 import deProvisioning from "./de/provisioning.json";
 import deReports from "./de/reports.json";
@@ -13,6 +15,8 @@ import deSharing from "./de/sharing.json";
 import deTraces from "./de/traces.json";
 import { en as enStart } from "./en";
 import enApps from "./en/apps.json";
+import enGraphCanvas from "./en/graphCanvas.json";
+import enGraphStyle from "./en/graphStyle.json";
 import enHandbook from "./en/handbook.json";
 import enProvisioning from "./en/provisioning.json";
 import enReports from "./en/reports.json";
@@ -28,6 +32,8 @@ export const de = {
   ...deTraces,
   ...deServerAdmin,
   ...deApps,
+  ...deGraphStyle,
+  ...deGraphCanvas,
   ...deHandbook,
 };
 export const en = {
@@ -38,5 +44,7 @@ export const en = {
   ...enTraces,
   ...enServerAdmin,
   ...enApps,
+  ...enGraphStyle,
+  ...enGraphCanvas,
   ...enHandbook,
 };
