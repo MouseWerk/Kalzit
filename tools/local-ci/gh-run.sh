@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs the full CI of pull requests on GitHub's runners instead of this machine, for example
 # overnight next to a local run: the pull requests are merged onto the current main (one after
-# another, as run.sh does), that commit is pushed to a branch of its own, ci.yml is started there
-# by hand (workflow_dispatch: every job, Windows and Linux, arm64 packages and the MSI included),
-# and its result is posted to every head as the statuses local/linux and local/windows with the
-# tested tree, as run.sh posts them:
+# another as squash commits, as run.sh and GitHub do), that commit is pushed to a branch of its
+# own, ci.yml is started there by hand (workflow_dispatch: every job, Windows and Linux, arm64
+# packages and the MSI included), and its result is posted to every head as the statuses
+# local/linux and local/windows with the tested tree, as run.sh posts them:
 #
 #   passed tree <tree> on main <main> [batch 391,388] in N min, GitHub run <id>
 #
@@ -18,10 +18,20 @@
 #                                 suite=gate), posted as `passed gate tree ...` like run.sh's gate;
 #                                 enough for merge.sh, as a local gate is
 #
-# It waits for the run and deletes the branch afterwards. No checkout is touched: the merges are
-# made with git merge-tree in the repository's object store.
+# It waits for the run (at most 8 hours) and deletes the branch afterwards. No checkout is
+# touched: the merges are made with git merge-tree in the repository's object store.
+#
+# On GitHub the pushed commit's own ci.yml runs, so a batch that changes .github/ or
+# tools/local-ci would be judged by its own rules: it is refused (run it locally) unless
+# GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed. Only a run that fails posts
+# `failure`; one that is cancelled, times out, ends otherwise without a result or does not finish
+# (it is cancelled then) posts `error` (no result; merge.sh runs the CI again).
 
 set -euo pipefail
+
+# The whole script is one function, called on the last line: bash reads all of it before it
+# runs any of it, so an edit to this file during a run cannot change the running copy.
+main() {
 
 REPO_SLUG=MouseWerk/Kalzit
 CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
@@ -54,9 +64,20 @@ for n in "${all[@]}"; do
   heads+=("$h")
   step="$(git merge-tree --write-tree --no-messages "$cur" "$h")" \
     || { echo "PR $n does not merge cleanly onto main ${main:0:9} with the PRs before it." >&2; exit 1; }
-  cur="$(git commit-tree "$step" -p "$cur" -p "$h" -m "GitHub CI: PR $n onto main")"
+  # One parent, as GitHub's squash commit has (see merge.sh).
+  cur="$(git commit-tree "$step" -p "$cur" -m "GitHub CI: PR $n onto main")"
 done
 tree="$(git rev-parse "$cur^{tree}")"
+# The workflow that runs is the pushed commit's own ci.yml: a batch that changes it, or the
+# scripts it calls, would be judged by its own rules. Such a batch runs locally (run.sh uses
+# main's scripts), unless GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed.
+ci_changes="$(git diff --name-only "$main" "$cur" -- .github tools/local-ci)"
+if [ "${GH_RUN_ALLOW_CI_CHANGES:-0}" != 1 ] && [ -n "$ci_changes" ]; then
+  echo "This batch changes .github/ or tools/local-ci, so ci.yml on GitHub would judge it by its own rules:" >&2
+  printf '%s\n' "$ci_changes" | sed 's/^/  /' >&2
+  echo "Run it locally, or set GH_RUN_ALLOW_CI_CHANGES=1 after reviewing those changes." >&2
+  exit 2
+fi
 # The heads that get the statuses: the second list (all of them without --on).
 targets=("${heads[@]:${#ahead[@]}}")
 
@@ -86,7 +107,10 @@ gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" -f suite="$suite" > /
 run=""
 for _ in $(seq 1 30); do
   sleep 5
-  run="$(gh run list --repo "$REPO_SLUG" --workflow ci.yml --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+  # The run of exactly the pushed commit, not an older one on a branch of the same name; a failed
+  # call is tried again.
+  run="$(gh run list --repo "$REPO_SLUG" --workflow ci.yml --branch "$branch" --event workflow_dispatch \
+    --json databaseId,headSha --jq "[.[] | select(.headSha == \"$cur\")][0].databaseId // empty" || true)"
   [ -n "$run" ] && break
 done
 [ -n "$run" ] || { echo "the GitHub run did not start" >&2; exit 1; }
@@ -95,20 +119,41 @@ echo "GitHub run $run for ${all[*]} (tree ${tree:0:12} on main ${main:0:9}): $ur
 status pending "running $base, GitHub run $run"
 
 start=$SECONDS
-while :; do
+# At most eight hours; a run that has not finished by then counts as no result. A failed status
+# call counts as not finished yet.
+state=unknown
+conclusion=none
+while [ $((SECONDS - start)) -lt 28800 ]; do
   sleep 60
-  read -r state conclusion < <(gh run view "$run" --repo "$REPO_SLUG" --json status,conclusion \
-    --jq '"\(.status) \(.conclusion // "none")"' 2> /dev/null || echo "unknown none")
+  line="$(gh run view "$run" --repo "$REPO_SLUG" --json status,conclusion \
+    --jq '"\(.status) \(.conclusion // "none")"' 2> /dev/null || true)"
+  read -r state conclusion <<< "${line:-unknown none}" || true
   [ "$state" = completed ] && break
 done
 took=$(( (SECONDS - start + 30) / 60 ))
+# A run still going after eight hours is stopped, so it posts nothing and holds no runner.
+if [ "$state" != completed ]; then
+  gh run cancel "$run" --repo "$REPO_SLUG" > /dev/null 2>&1 || true
+fi
 if [ "$conclusion" = success ]; then
   status success "passed $base in $took min, GitHub run $run"
   echo "PASSED in $took min: $url" | tee -a "$logs/github.txt"
   exit 0
+fi
+# Only a run whose conclusion is failure judged the code. Every other end (cancelled, timed out,
+# startup failure, skipped, neutral, stale, action required, or not finished) says nothing about
+# it: an error, which merge.sh treats as no result (it runs the CI again), not a failure.
+if [ "$state" != completed ] || [ "$conclusion" != failure ]; then
+  status error "no result for $base: GitHub run $run ($state, $conclusion)"
+  echo "NO RESULT ($state, $conclusion) after $took min; $url" | tee -a "$logs/github.txt"
+  exit 1
 fi
 failed="$(gh run view "$run" --repo "$REPO_SLUG" --json jobs \
   --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2> /dev/null || true)"
 status failure "failed $base: GitHub run $run ${failed:-$conclusion}"
 echo "FAILED ($conclusion) after $took min: ${failed:-}; $url" | tee -a "$logs/github.txt"
 exit 1
+}
+
+# exit: bash must not read on past this line, even when the file was replaced during the run.
+main "$@"; exit

@@ -149,7 +149,7 @@ const EXPLORE_KEY = "explore";
 /** The cache key of the runs with graph steps (a key of their own, so a new run keeps them). */
 const EXPLORE_STEPS_KEY = "explore-steps";
 /** How long graph steps stay unchanged before they run in the database. */
-const GRAPH_STEPS_SETTLE_MS = 600;
+export const GRAPH_STEPS_SETTLE_MS = 600;
 
 const exploreRoute = getRouteApi("/_app/explore");
 const appRoute = getRouteApi("/_app");

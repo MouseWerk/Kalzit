@@ -112,28 +112,48 @@ test("the query editor is styled under the server's Content-Security-Policy", as
 
 /**
  * Probes that the console guard's allowance for CodeMirror's refused style stays narrow: any
- * other inline style the policy refuses fails the test, in every engine. Expected to fail.
+ * other inline style the policy refuses fails the test, in every engine. The probe takes what the
+ * guard found and asserts it, so it passes only when the guard caught this very style.
  */
 const REFUSED_STYLES = {
-  "a <style> element": () => {
-    const style = document.createElement("style");
-    style.textContent = "body { color: red; }";
-    document.head.append(style);
+  "a <style> element": {
+    inject: () => {
+      const style = document.createElement("style");
+      style.textContent = "body { color: red; }";
+      document.head.append(style);
+    },
+    problem: /\[inline style that is not CodeMirror's: body \{ color: red; \}\]/,
   },
-  "a style attribute": () => {
-    document.querySelector("main")?.setAttribute("style", "color: red");
+  "a style attribute": {
+    inject: () => {
+      document.querySelector("main")?.setAttribute("style", "color: red");
+    },
+    // Firefox keeps the declarations of a refused attribute, so there the notice budget (none on
+    // a page without the editor) catches it.
+    problem:
+      /\[refused style attribute: <main style="color: red">\]|\[style notice \d+, expected at most 0\]/,
   },
 } as const;
 
-for (const [name, inject] of Object.entries(REFUSED_STYLES)) {
-  test(`the console guard catches ${name} on an admin page`, async ({ page }) => {
-    test.fail(true, "the probe adds an inline style the policy refuses, on purpose");
+for (const [name, { inject, problem }] of Object.entries(REFUSED_STYLES)) {
+  test(`the console guard catches ${name} on an admin page`, async ({ page, consoleGuard }) => {
     await signInOwner(page);
-    await page.goto("/admin/members");
+    // Within the app, as above: a full page load would cancel the start page's requests.
+    await page
+      .getByRole("navigation", { name: t("nav.label") })
+      .getByRole("link", { name: t("nav.members"), exact: true })
+      .click();
     await expect(page.getByRole("heading", { name: t("admin.members.title") })).toBeVisible();
+    // Nothing so far: what the guard finds below comes from the probe's style.
+    expect(await consoleGuard.drain()).toEqual([]);
     await page.evaluate(inject);
-    // Gives the browser time to report the refusal before the guard checks.
-    await page.waitForTimeout(500);
+    // The browser reports the refusal in its own time; the guard checks each notice it gets.
+    await expect.poll(() => consoleGuard.styleNotices()).toBeGreaterThan(0);
+    const found = await consoleGuard.drain();
+    expect(found.length).toBeGreaterThan(0);
+    for (const line of found) {
+      expect(line).toMatch(problem);
+    }
   });
 }
 
@@ -174,8 +194,8 @@ for (const [name, { css, problem }] of Object.entries(STYLE_THEN_LEAVE)) {
     await page.route("**/guard-probe/two", (route) => route.fulfill(html("")));
     await page.goto("/guard-probe/one");
     await expect(page).toHaveURL(/\/guard-probe\/two$/);
-    // Gives the browser time to report the refusal before the guard checks.
-    await page.waitForTimeout(500);
+    // The browser reports the refusal in its own time; the guard checks each notice it gets.
+    await expect.poll(() => consoleGuard.styleNotices()).toBeGreaterThan(0);
     const found = await consoleGuard.drain();
     if (problem === null) {
       expect(found).toEqual([]);
