@@ -104,24 +104,32 @@ export function DashboardRail({
   // narrow and every panel move under the pointer), the person opens and closes it.
   const [pane, setPane] = useState<Pane>(editing ? "outline" : null);
   const [wasEditing, setWasEditing] = useState(editing);
+  // Whether edit mode's start just opened the outline (not the person, before editing).
+  const [openedByEditing, setOpenedByEditing] = useState(editing);
   if (editing !== wasEditing) {
     setWasEditing(editing);
     if (editing && pane === null) {
       setPane("outline");
+      setOpenedByEditing(true);
     } else if (!editing && pane === "add") {
       setPane(null);
     }
   }
   // Where the canvas is too narrow to give a pane its room, the pane floats over the panels
-  // (toolbar.css): edit mode then starts with the outline closed, so it covers nothing until the
-  // person opens it. Read before edit mode's first paint, so the pane never shows and goes again.
+  // (toolbar.css): edit mode then does not open the outline, so it covers nothing until the
+  // person opens it. An outline the person opened before editing stays. Read before edit mode's
+  // first paint, so the pane never shows and goes again.
   const railRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
+    if (!openedByEditing) {
+      return;
+    }
+    setOpenedByEditing(false);
     const rail = railRef.current;
-    if (editing && rail !== null && paneFloats(rail)) {
+    if (rail !== null && paneFloats(rail)) {
       setPane((current) => (current === "outline" ? null : current));
     }
-  }, [editing]);
+  }, [openedByEditing]);
   // Selecting a panel while the Add pane is open shows the outline instead, in the same room.
   const [shownFor, setShownFor] = useState<string | null>(null);
   if (selectedId !== shownFor) {

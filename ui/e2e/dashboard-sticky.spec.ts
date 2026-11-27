@@ -280,3 +280,63 @@ test("900x720, editing: the outline floats over the panels instead of narrowing 
     .getByRole("heading", { level: 2 });
   await expect(title).toBeVisible();
 });
+
+// Only the outline that edit mode itself opens stays closed there: one the person opened while
+// viewing stays open as editing starts.
+test("900x720: an outline opened while viewing stays open as editing starts", async ({
+  page,
+  world,
+}) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${world.dashboardId}`);
+  await expect(page.getByRole("group", { name: "Sales", exact: true })).toBeVisible();
+  const outline = page.getByRole("button", { name: t("toolbar.rail.outline") });
+  await outline.click();
+  await expect(outline).toHaveAttribute("aria-expanded", "true");
+  await startEditing(page);
+  await expect(outline).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".dash-pane")).toBeVisible();
+});
+
+// An empty dashboard: its notice keeps its own height while the rail still runs down.
+test("1440x900: an empty dashboard's notice keeps its height beside a rail that runs down", async ({
+  page,
+  world,
+}) => {
+  const owner = await Api.owner();
+  const model = regionDashboard(unique("Leer"), world.sourceId);
+  model.panels = [];
+  const id = await owner.createDashboard(model);
+  await owner.dispose();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  const notice = page.locator(".dash-canvas > .empty-state");
+  await expect(notice).toBeVisible();
+  const free = await tokenPx(page, "--space-sticky-bottom");
+  const { noticeHeight, contentHeight, railBottom } = await page.evaluate(() => {
+    const element = document.querySelector(".dash-canvas > .empty-state");
+    const column = document.querySelector(".dash-rail__column");
+    if (element === null || column === null) throw new Error("notice or rail missing");
+    // The notice's own height: its children from the first top to the last bottom, plus padding.
+    const style = getComputedStyle(element);
+    const kids = [...element.children].map((child) => child.getBoundingClientRect());
+    const top = Math.min(...kids.map((box) => box.top));
+    const bottom = Math.max(...kids.map((box) => box.bottom));
+    return {
+      noticeHeight: element.getBoundingClientRect().height,
+      contentHeight:
+        bottom -
+        top +
+        Number.parseFloat(style.paddingTop) +
+        Number.parseFloat(style.paddingBottom) +
+        Number.parseFloat(style.borderTopWidth) +
+        Number.parseFloat(style.borderBottomWidth),
+      railBottom: column.getBoundingClientRect().bottom,
+    };
+  });
+  expect(noticeHeight).toBeLessThanOrEqual(contentHeight + 1);
+  expect(900 - railBottom).toBeGreaterThanOrEqual(-0.5);
+  expect(900 - railBottom).toBeLessThanOrEqual(free + 0.5);
+});

@@ -257,6 +257,11 @@
     .dashboard > .dash-canvas--rail {
       flex: 1 0 auto;
     }
+
+    /* An empty dashboard's notice keeps its own height; only the rail runs down. */
+    .dash-canvas--rail > .empty-state {
+      align-self: start;
+    }
   }
 
   /*
