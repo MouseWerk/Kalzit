@@ -1005,3 +1005,185 @@ allowExternalRecipients: boolean,
 externalDomains: Array<string>, limits: ReportLimits, reports: number, };
 
 export type SendNow = { run: ReportRun, };
+
+export type Direction = "out" | "in" | "both";
+
+export type Operator = "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "contains" | "startsWith" | "endsWith" | "in" | "isNull" | "isNotNull";
+
+export type LiteralOperand = { value: JsonValue, };
+
+export type ParamOperand = { param: string, };
+
+export type Operand = LiteralOperand | ParamOperand;
+
+export type Condition = { property: string, op: Operator, value?: Operand, };
+
+export type PatternNode = { 
+/**
+ * The node's name in the query (`a`): letters, digits and `_`.
+ */
+id: string, 
+/**
+ * All of these labels (Cypher); TigerGraph takes at most one vertex type.
+ */
+labels?: Array<string>, conditions?: Array<Condition>, 
+/**
+ * Only these nodes, by the database's own id (Neo4j element id, Memgraph id, TigerGraph
+ * primary id): a list, or a parameter of type `idList` (pasted ids).
+ */
+ids?: Operand, };
+
+export type PatternEdge = { id: string, from: string, to: string, 
+/**
+ * Any of these types; any type when empty.
+ */
+types?: Array<string>, direction: Direction, 
+/**
+ * The path length, 1 to `MAX_HOPS` steps; both 1 (the default) is one edge.
+ */
+minHops?: number, maxHops?: number, 
+/**
+ * Matches also where this edge (and nodes only it reaches) is missing (Cypher only).
+ */
+optional?: boolean, 
+/**
+ * Conditions on the edge's properties; only for one edge (no path length).
+ */
+conditions?: Array<Condition>, };
+
+export type ParameterType = "string" | "integer" | "float" | "boolean" | "stringList" | "integerList" | "floatList" | "idList";
+
+export type PatternParameter = { name: string, type: ParameterType, 
+/**
+ * What the field is called where the template asks for it ("Firma").
+ */
+label?: string, };
+
+export type Pattern = { nodes: Array<PatternNode>, edges?: Array<PatternEdge>, 
+/**
+ * The most matches; `DEFAULT_LIMIT` when left out.
+ */
+limit?: number, 
+/**
+ * The template parameters the conditions use (`{"param": name}`), with their types.
+ */
+parameters?: Array<PatternParameter>, };
+
+export type Compiled = { text: string, 
+/**
+ * By parameter name: the literals (`kz_v0`, ...) and the template parameters that had a
+ * value. GSQL declares each with its type in the query's header.
+ */
+parameters: { [key in string]: JsonValue }, };
+
+export type Parsed = { representable: boolean, pattern?: Pattern, 
+/**
+ * `pattern.not_representable` (or another `pattern.*` reason) when it is not.
+ */
+reason?: string, params?: { [key in string]: string }, message?: string, };
+
+export type GraphSchemaSource = "schemaInfo" | "procedures" | "sample" | "catalog";
+
+export type PropertySchema = { name: string, 
+/**
+ * The value types seen or declared (`string`, `integer`, `float`, `boolean`, `date`,
+ * `dateTime`, `localDateTime`, `time`, `localTime`, `duration`, `point`, `list`, `map`,
+ * `bytes`, `enum`; another type in lower case as the source names it).
+ */
+types: Array<string>, 
+/**
+ * Whether every element of the label or type has it, where the source says.
+ */
+mandatory?: boolean, };
+
+export type ElementSchema = { name: string, count?: number, properties: Array<PropertySchema>, };
+
+export type SchemaLink = { from: string, type: string, to: string, count?: number, };
+
+export type GraphSourceSchema = { source: GraphSchemaSource, sampleSize?: number, labels: Array<ElementSchema>, edgeTypes: Array<ElementSchema>, 
+/**
+ * Which label connects to which through which edge type, in the edge's direction.
+ */
+links: Array<SchemaLink>, 
+/**
+ * More labels, types or links than `MAX_ENTRIES`; the rest is left out.
+ */
+truncated: boolean, 
+/**
+ * When the source was read, Unix milliseconds.
+ */
+readAt: number, };
+
+export type PlanMode = "explain" | "profile";
+
+export type PlanOperator = { 
+/**
+ * The operator's name (`NodeByLabelScan`, `ScanAllByLabel`, `Expand`).
+ */
+operator: string, 
+/**
+ * What it works on, as the engine writes it (`n:Person`, `(n :Person)`).
+ */
+details?: string, identifiers?: Array<string>, 
+/**
+ * Neo4j's estimate.
+ */
+estimatedRows?: number, 
+/**
+ * `PROFILE`: rows the operator produced (Memgraph: its hits).
+ */
+rows?: number, 
+/**
+ * `PROFILE`: database hits (Neo4j).
+ */
+dbHits?: number, 
+/**
+ * `PROFILE`: time spent in the operator, in milliseconds, where the engine measures it.
+ */
+timeMs?: number, 
+/**
+ * `PROFILE` (Memgraph): the operator's share of the whole time, in percent.
+ */
+timeShare?: number, children: Array<PlanOperator>, };
+
+export type QueryPlan = { mode: PlanMode, available: boolean, 
+/**
+ * Why there is no plan (`plan.not_available_gsql`, `plan.unsupported`).
+ */
+reason?: string, message?: string, 
+/**
+ * The query text the plan is of (a pattern's compiled Cypher, for instance).
+ */
+query?: string, root?: PlanOperator, 
+/**
+ * `PROFILE`: the database hits of all operators together, where the engine counts them.
+ */
+totalDbHits?: number, };
+
+export type PlanRequest = { 
+/**
+ * The query in the source's own form (`{"cypher": ...}` or `{"pattern": ...}`).
+ */
+query: Record<string, unknown>, mode: PlanMode, 
+/**
+ * For the time macros; the last hour when left out.
+ */
+timeRange?: TimeRange, variables?: { [key in string]: JsonValue }, };
+
+export type CompilePatternRequest = { pattern: Pattern, 
+/**
+ * Values of the template parameters; a parameter without one is left out of the answer's
+ * values and named in its query text.
+ */
+variables?: { [key in string]: JsonValue }, };
+
+export type ParsePatternRequest = { 
+/**
+ * Cypher (Neo4j, Memgraph) or GSQL (TigerGraph).
+ */
+text: string, 
+/**
+ * The values a compiled pattern came with: `kz_v...` parameters with a value read back as
+ * those literals.
+ */
+parameters?: { [key in string]: JsonValue }, };

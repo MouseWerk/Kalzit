@@ -309,6 +309,7 @@ on_both_databases! {
     team_spaces_and_team_ownership,
     saving_rechecks_the_query_right,
     readers_run_the_stored_queries_only,
+    search_templates_run_with_typed_values,
     distributions_follow_the_stored_query_rule,
     folder_trash_takes_analyses_along,
     other_organizations_see_nothing,
@@ -833,6 +834,82 @@ async fn readers_run_the_stored_queries_only(t: TestApp) {
     // Running records nothing in the Explore history.
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM explore_history").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(n, 0);
+}
+
+/// A search template ("Umsatz von $land"): readers run the stored query with their own values for
+/// its declared parameters only, converted to the declared type and bound, never written into
+/// the query; they still cannot run the query as a free query.
+async fn search_templates_run_with_typed_values(t: TestApp) {
+    let source = t.source("shop").await;
+    let sql = "SELECT country, SUM(amount) AS amount FROM orders WHERE country = $land GROUP BY country \
+               HAVING SUM(amount) >= $mindest ORDER BY country";
+    let mut m = model("Umsatz von $land", &source, sql);
+    m["steps"] = json!([]);
+    m["parameters"] = json!([
+        { "name": "land", "type": "string", "label": "Land" },
+        { "name": "mindest", "type": "integer" }
+    ]);
+    let id = id_of(t.post("~/analyses", json!({ "model": m }), &t.owner).await);
+    let (_, vera) = t.member("Vera", "viewer").await;
+    let path = format!("~/analyses/{id}/query");
+    let body = |variables: Value| json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "variables": variables });
+    let r = t.post(&path, body(json!({ "land": "DE", "mindest": "20" })), &vera).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let fields = &r.body["results"]["A"]["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!(["DE"]), "{}", r.body);
+    // A value written to break out of the query stays one value and matches nothing.
+    for attack in ["DE' OR '1'='1", "DE\" OR 1=1 --", "DE'; DROP TABLE orders; --"] {
+        let r = t.post(&path, body(json!({ "land": attack, "mindest": 0 })), &vera).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let values = &r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"];
+        assert_eq!(values.as_array().map_or(0, Vec::len), 0, "{attack}: {}", r.body);
+    }
+    let r = t.post(&path, body(json!({ "land": "AT", "mindest": 0 })), &vera).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["AT"]), "{}", r.body);
+    // A value that does not fit the declared type is refused before anything runs.
+    let r = t.post(&path, body(json!({ "land": "DE", "mindest": "zwanzig" })), &vera).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "pattern.parameter_type", "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "variables", "{}", r.body);
+    // Only the template's parameters may be sent.
+    let r = t.post(&path, body(json!({ "land": "DE", "mindest": 1, "tabelle": "orders" })), &vera).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    // The same query as a free query is not the viewer's to run.
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": source, "query": { "sql": sql } }],
+        "timeRange": { "from": T0 - DAY, "to": T0 }, "variables": { "land": "DE", "mindest": 0 }
+    });
+    let r = t.post("~/query", free, &vera).await;
+    let code = r.body["results"]["A"]["error"]["code"].as_str();
+    assert!(matches!(code, Some("forbidden" | "not_found")), "{}", r.body);
+    // Nor may the viewer save a template of their own.
+    let mut own = model("Eigen", &source, sql);
+    own["parameters"] = json!([{ "name": "land", "type": "string" }]);
+    assert_eq!(t.post("~/analyses", json!({ "model": own }), &vera).await.status, StatusCode::FORBIDDEN);
+    // Parameters and pattern targets are checked when saved.
+    let pattern = json!({ "pattern": {
+        "nodes": [{ "id": "f", "conditions": [{ "property": "name", "op": "eq", "value": { "param": "firma" } }] }],
+        "parameters": [{ "name": "firma", "type": "string" }]
+    } });
+    for (parameters, query, place) in [
+        (json!([{ "name": "1land", "type": "string" }]), json!({ "sql": sql }), "model.parameters[0].name"),
+        (
+            json!([{ "name": "land", "type": "string" }, { "name": "land", "type": "integer" }]),
+            json!({ "sql": sql }),
+            "model.parameters[1].name",
+        ),
+        (json!([]), json!({ "pattern": { "nodes": [] } }), "model.targets[0].query.pattern"),
+        (json!([{ "name": "firma", "type": "integer" }]), pattern, "model.targets[0].query.pattern"),
+    ] {
+        let mut m = model("Falsch", &source, sql);
+        m["parameters"] = parameters;
+        m["targets"][0]["query"] = query;
+        m["steps"] = json!([]);
+        let r = t.post("~/analyses", json!({ "model": m }), &t.owner).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{place}: {}", r.body);
+        let message = r.body["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with(place), "{place}: {message}");
+    }
 }
 
 /// Field distributions of an analysis follow its query route: readers ask for the stored

@@ -29,6 +29,9 @@ use super::bolt::{self, BoltConn, BoltError, Bv, PullEnd};
 use super::cypher::Checked;
 use super::frame::{Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
+use super::graph_schema::{self, GraphSchemaSource, GraphSourceSchema};
+use super::pattern::{self, Dialect, Pattern};
+use super::plan::{self, MemgraphRow, PlanMode, QueryPlan};
 use super::pool::{ConnPool, Lease, Pooled};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
@@ -123,6 +126,13 @@ impl Flavor {
             Flavor::Memgraph => "Memgraph",
         }
     }
+
+    fn dialect(self) -> Dialect {
+        match self {
+            Flavor::Neo4j => Dialect::Neo4j,
+            Flavor::Memgraph => Dialect::Memgraph,
+        }
+    }
 }
 
 pub struct GraphDb(Flavor);
@@ -147,6 +157,28 @@ struct Settings {
 #[serde(deny_unknown_fields)]
 struct CypherQuery {
     cypher: String,
+}
+
+/// `{"pattern": {...}}`: a graph pattern (`pattern.rs`), compiled into Cypher.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PatternQuery {
+    pattern: Pattern,
+}
+
+/// The Cypher of a query and the request it runs with. A pattern's values (its literals and the
+/// template parameters from the request's variables) become the parameters of its Cypher, and
+/// nothing else: no variable reaches a pattern's query as a name.
+fn cypher_of(flavor: Flavor, req: SourceQuery) -> Result<(String, SourceQuery), SourceError> {
+    if req.query.get("pattern").is_none() {
+        let q: CypherQuery = req.parse()?;
+        return Ok((q.cypher, req));
+    }
+    let q: PatternQuery = req.parse()?;
+    let compiled =
+        pattern::compile(&q.pattern, flavor.dialect(), None, &req.variables).map_err(SourceError::Rejected)?;
+    let req = SourceQuery { variables: compiled.parameters, identifier_variables: Some(BTreeSet::new()), ..req };
+    Ok((compiled.text, req))
 }
 
 /// `{"communities": {"nodeIds": [...]}}`: the communities of these nodes, by the database's own
@@ -641,29 +673,369 @@ impl DataSourcePlugin for GraphDb {
         })
     }
 
+    /// Neo4j: the read-only `db.schema.*` procedures and the count store; Memgraph: `SHOW SCHEMA
+    /// INFO` when the server has it on, else a sample (`graph_schema::SAMPLE`).
+    async fn graph_schema(&self, conn: &Connection) -> Result<GraphSourceSchema, SourceError> {
+        let s: Settings = conn.settings_as()?;
+        let db = s.database.as_deref();
+        let pool = pool(conn).await?;
+        let mut lease = lease(self.0, conn, &pool).await?;
+        let read = match self.0 {
+            Flavor::Neo4j => neo4j_schema(&mut lease.conn, db).await,
+            Flavor::Memgraph => memgraph_schema(&mut lease.conn, db).await,
+        };
+        finish_lease(lease, read)
+    }
+
+    /// `EXPLAIN` or `PROFILE` of a Cypher query or pattern, checked like the query itself and run
+    /// in a read transaction with the query's timeout; `PROFILE`'s records are counted and
+    /// dropped. Neo4j's plan comes from the result's metadata, Memgraph's as rows.
+    async fn plan(&self, conn: &Connection, req: SourceQuery, mode: PlanMode) -> Result<QueryPlan, SourceError> {
+        if req.query.get("communities").is_some() {
+            return Err(SourceError::rejected("query.invalid_form", "a plan needs a Cypher query or a pattern")
+                .with("detail", "cypher or pattern"));
+        }
+        let (cypher, req) = cypher_of(self.0, req)?;
+        // The mode decides; an `EXPLAIN` or `PROFILE` already in the text gives way to it.
+        let cypher = without_plan_keyword(&cypher).to_string();
+        let checked = super::cypher::check(&cypher).map_err(SourceError::Rejected)?;
+        let s: Settings = conn.settings_as()?;
+        let pool = pool(conn).await?;
+        let mut lease = lease(self.0, conn, &pool).await?;
+        let params = parameters(&checked, &req, lease.conn.utc)?;
+        let text = format!("{} {cypher}", mode.keyword());
+        let read = plan_rows(&mut lease.conn, self.0, s.database.as_deref(), &text, params, req.limits.timeout).await;
+        let read = finish_lease(lease, read)?;
+        let root = match read {
+            PlanRead::Summary(summary) => {
+                let summary = summary.as_ref().map_or(Value::Null, bolt_json);
+                plan::from_neo4j(summary.get("profile").or_else(|| summary.get("plan")).unwrap_or(&Value::Null))
+            }
+            PlanRead::Rows(rows) => plan::from_memgraph(&rows),
+        };
+        Ok(QueryPlan::of(mode, cypher, root))
+    }
+
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         if req.query.get("communities").is_some() {
             let q: CommunitiesQuery = req.parse()?;
             return communities(self.0, conn, &req, &q.communities.node_ids).await;
         }
-        let q: CypherQuery = req.parse()?;
-        let checked = super::cypher::check(&q.cypher).map_err(SourceError::Rejected)?;
+        let (cypher, req) = cypher_of(self.0, req)?;
+        let checked = super::cypher::check(&cypher).map_err(SourceError::Rejected)?;
         let s: Settings = conn.settings_as()?;
         let db = s.database.as_deref();
         let pool = pool(conn).await?;
         let first = lease(self.0, conn, &pool).await?;
         let reused = first.reused();
-        match run(first, conn, &req, &q.cypher, &checked, db).await {
+        match run(first, conn, &req, &cypher, &checked, db).await {
             // The pooled connection broke before any record arrived (the server restarted after
             // it was checked): once more on a fresh connection, which is safe as the query only
             // reads. A query error is never retried.
             Err(Attempt::Lost(_)) if reused => {
                 let fresh = lease(self.0, conn, &pool).await?;
-                run(fresh, conn, &req, &q.cypher, &checked, db).await.map_err(Attempt::into_source)
+                run(fresh, conn, &req, &cypher, &checked, db).await.map_err(Attempt::into_source)
             }
             other => other.map_err(Attempt::into_source),
         }
     }
+}
+
+// ---- graph schema ----
+
+/// Labels and types counted at most; more are listed without a count.
+const MAX_COUNTED: usize = 1_000;
+/// Counts read in one query (`UNION ALL`).
+const COUNT_BATCH: usize = 100;
+
+/// A name in backticks.
+fn quoted(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// `read_all`, but a query the database refuses (a procedure or function it lacks) is `None`,
+/// the connection reset for the next one.
+async fn try_read_all(c: &mut BoltConn, db: Option<&str>, query: &str) -> Result<Option<Vec<Vec<Bv>>>, BoltError> {
+    match read_all(c, db, query).await {
+        Ok(rows) => Ok(Some(rows)),
+        Err(BoltError::Failure { .. }) => {
+            c.reset().await?;
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn count_of(v: Option<&Bv>) -> Option<u64> {
+    v.and_then(Bv::as_int).and_then(|i| u64::try_from(i).ok())
+}
+
+fn strings_of(v: Option<&Bv>) -> Vec<String> {
+    v.and_then(Bv::as_list).map(|l| l.iter().filter_map(|s| s.as_str().map(String::from)).collect()).unwrap_or_default()
+}
+
+fn mandatory_of(v: Option<&Bv>) -> Option<bool> {
+    match v {
+        Some(Bv::Bool(m)) => Some(*m),
+        _ => None,
+    }
+}
+
+/// The exact count of each name from Neo4j's count store: `pattern(name)` is a `MATCH` that binds
+/// `x`, run in batches joined by `UNION ALL`; the result names the index, never the name.
+async fn counts(
+    c: &mut BoltConn,
+    db: Option<&str>,
+    names: &[String],
+    pattern: impl Fn(&str) -> String,
+) -> Result<Vec<Option<u64>>, BoltError> {
+    let mut out = vec![None; names.len()];
+    let counted: Vec<&String> = names.iter().take(MAX_COUNTED).collect();
+    for (batch, chunk) in counted.chunks(COUNT_BATCH).enumerate() {
+        let query = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, n)| format!("{} RETURN {} AS i, count(x) AS c", pattern(n), batch * COUNT_BATCH + i))
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
+        for row in read_all(c, db, &query).await? {
+            if let (Some(i), Some(n)) = (count_of(row.first()), count_of(row.get(1)))
+                && let Some(slot) = out.get_mut(i as usize)
+            {
+                *slot = Some(n);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+async fn neo4j_schema(c: &mut BoltConn, db: Option<&str>) -> Result<GraphSourceSchema, BoltError> {
+    let mut b = graph_schema::Builder::default();
+    let labels = texts(&read_all(c, db, "CALL db.labels() YIELD label RETURN label").await?);
+    let types =
+        texts(&read_all(c, db, "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType").await?);
+    let label_counts = counts(c, db, &labels, |l| format!("MATCH (x:{})", quoted(l))).await?;
+    for (l, n) in labels.iter().zip(label_counts) {
+        b.label(l, n);
+    }
+    let type_counts = counts(c, db, &types, |t| format!("MATCH ()-[x:{}]->()", quoted(t))).await?;
+    for (t, n) in types.iter().zip(type_counts) {
+        b.edge_type(t, n);
+    }
+    let node_props = "CALL db.schema.nodeTypeProperties() YIELD nodeLabels, propertyName, propertyTypes, mandatory \
+                      RETURN nodeLabels, propertyName, propertyTypes, mandatory";
+    for row in try_read_all(c, db, node_props).await?.unwrap_or_default() {
+        let Some(name) = row.get(1).and_then(Bv::as_str) else { continue };
+        for label in strings_of(row.first()) {
+            for ty in strings_of(row.get(2)) {
+                b.label_property(&label, name, Some(&ty), mandatory_of(row.get(3)));
+            }
+        }
+    }
+    let rel_props = "CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory \
+                     RETURN relType, propertyName, propertyTypes, mandatory";
+    for row in try_read_all(c, db, rel_props).await?.unwrap_or_default() {
+        let (Some(rel), Some(name)) = (row.first().and_then(Bv::as_str), row.get(1).and_then(Bv::as_str)) else {
+            continue;
+        };
+        // ":`KENNT`" to KENNT.
+        let rel = rel.trim_start_matches(':');
+        let rel = rel
+            .strip_prefix('`')
+            .and_then(|r| r.strip_suffix('`'))
+            .map_or_else(|| rel.to_string(), |r| r.replace("``", "`"));
+        for ty in strings_of(row.get(2)) {
+            b.type_property(&rel, name, Some(&ty), mandatory_of(row.get(3)));
+        }
+    }
+    let shape = "CALL db.schema.visualization() YIELD nodes, relationships RETURN nodes, relationships";
+    if let Some(row) = try_read_all(c, db, shape).await?.and_then(|rows| rows.into_iter().next()) {
+        let mut names = BTreeMap::new();
+        for n in row.first().and_then(Bv::as_list).unwrap_or_default() {
+            if let Bv::Struct(NODE, f) = n
+                && let Some(label) = strings_of(f.get(1)).into_iter().next()
+            {
+                names.insert(element_id(f, 3, 0), label);
+            }
+        }
+        for r in row.get(1).and_then(Bv::as_list).unwrap_or_default() {
+            if let Bv::Struct(REL, f) = r {
+                let ty = f.get(3).and_then(Bv::as_str).unwrap_or_default();
+                if let (Some(from), Some(to)) = (names.get(&element_id(f, 6, 1)), names.get(&element_id(f, 7, 2))) {
+                    b.link(from, ty, to, None);
+                }
+            }
+        }
+    }
+    Ok(b.finish(GraphSchemaSource::Procedures, None, now_ms()))
+}
+
+async fn memgraph_schema(c: &mut BoltConn, db: Option<&str>) -> Result<GraphSourceSchema, BoltError> {
+    if let Some(rows) = try_auto(c, db, "SHOW SCHEMA INFO").await
+        && let Some(text) = rows.first().and_then(|r| r.first()).and_then(Bv::as_str)
+        && let Ok(info) = serde_json::from_str::<Value>(text)
+    {
+        return Ok(graph_schema::from_memgraph_schema_info(&info, now_ms()));
+    }
+    let n = graph_schema::SAMPLE;
+    let mut b = graph_schema::Builder::default();
+    let mut label_counts = BTreeMap::new();
+    let labels = format!("MATCH (x) WITH x LIMIT {n} UNWIND labels(x) AS l RETURN l, count(*)");
+    for row in read_all(c, db, &labels).await? {
+        if let (Some(l), Some(count)) = (row.first().and_then(Bv::as_str), count_of(row.get(1))) {
+            b.label(l, Some(count));
+            label_counts.insert(l.to_string(), count);
+        }
+    }
+    let typed = format!(
+        "MATCH (x) WITH x LIMIT {n} UNWIND labels(x) AS l UNWIND keys(x) AS k RETURN l, k, valueType(x[k]), count(*)"
+    );
+    let untyped =
+        format!("MATCH (x) WITH x LIMIT {n} UNWIND labels(x) AS l UNWIND keys(x) AS k RETURN l, k, null, count(*)");
+    let rows = match try_read_all(c, db, &typed).await? {
+        Some(rows) => rows,
+        None => read_all(c, db, &untyped).await?,
+    };
+    // A key's count over its types against the label's count says whether every node has it.
+    let mut seen: BTreeMap<(String, String), (u64, Vec<String>)> = BTreeMap::new();
+    for row in rows {
+        let (Some(l), Some(k)) = (row.first().and_then(Bv::as_str), row.get(1).and_then(Bv::as_str)) else {
+            continue;
+        };
+        let entry = seen.entry((l.to_string(), k.to_string())).or_default();
+        entry.0 += count_of(row.get(3)).unwrap_or(0);
+        entry.1.extend(row.get(2).and_then(Bv::as_str).map(String::from));
+    }
+    for ((l, k), (count, types)) in seen {
+        let mandatory = label_counts.get(&l).map(|total| count >= *total);
+        if types.is_empty() {
+            b.label_property(&l, &k, None, mandatory);
+        }
+        for t in types {
+            b.label_property(&l, &k, Some(&t), mandatory);
+        }
+    }
+    let links = format!("MATCH (a)-[x]->(z) WITH a, x, z LIMIT {n} RETURN labels(a), type(x), labels(z), count(*)");
+    for row in read_all(c, db, &links).await? {
+        let Some(ty) = row.get(1).and_then(Bv::as_str) else { continue };
+        let count = count_of(row.get(3));
+        b.edge_type(ty, count);
+        let ends = |v: Option<&Bv>| {
+            let l = strings_of(v);
+            if l.is_empty() { vec![String::new()] } else { l }
+        };
+        for from in ends(row.first()) {
+            for to in ends(row.get(2)) {
+                b.link(&from, ty, &to, count);
+            }
+        }
+    }
+    let typed =
+        format!("MATCH ()-[x]->() WITH x LIMIT {n} UNWIND keys(x) AS k RETURN type(x), k, valueType(x[k]), count(*)");
+    let untyped = format!("MATCH ()-[x]->() WITH x LIMIT {n} UNWIND keys(x) AS k RETURN type(x), k, null, count(*)");
+    let rows = match try_read_all(c, db, &typed).await? {
+        Some(rows) => rows,
+        None => read_all(c, db, &untyped).await?,
+    };
+    for row in rows {
+        let (Some(t), Some(k)) = (row.first().and_then(Bv::as_str), row.get(1).and_then(Bv::as_str)) else {
+            continue;
+        };
+        b.type_property(t, k, row.get(2).and_then(Bv::as_str), None);
+    }
+    Ok(b.finish(GraphSchemaSource::Sample, Some(n), now_ms()))
+}
+
+// ---- query plans ----
+
+/// `text` without a leading `EXPLAIN` or `PROFILE`.
+fn without_plan_keyword(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let end = trimmed.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(trimmed.len());
+    let word = &trimmed[..end];
+    if word.eq_ignore_ascii_case("EXPLAIN") || word.eq_ignore_ascii_case("PROFILE") {
+        trimmed[end..].trim_start()
+    } else {
+        text
+    }
+}
+
+/// What a plan query answered: Neo4j's summary, or Memgraph's rows.
+enum PlanRead {
+    Summary(Option<Bv>),
+    Rows(Vec<MemgraphRow>),
+}
+
+/// The most plan rows Memgraph may send.
+const MAX_PLAN_ROWS: usize = 10_000;
+
+fn plan_text(v: Option<&Bv>) -> Option<String> {
+    match v? {
+        Bv::String(s) => Some(s.clone()),
+        Bv::Float(f) => Some(f.to_string()),
+        Bv::Int(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Runs `EXPLAIN` or `PROFILE` in a read transaction (Memgraph: outside one when it refuses that
+/// inside a transaction; the query check and the user's privileges keep it read-only there, as
+/// for any Memgraph query) and reads the plan; records of a profiled query are counted, not kept.
+async fn plan_rows(
+    c: &mut BoltConn,
+    flavor: Flavor,
+    db: Option<&str>,
+    text: &str,
+    params: Vec<(String, Bv)>,
+    timeout: Duration,
+) -> Result<PlanRead, BoltError> {
+    c.begin(db, timeout, true).await?;
+    let mut in_transaction = true;
+    let fields = match c.run(text, params.clone()).await {
+        Ok(fields) => fields,
+        Err(BoltError::Failure { .. }) if flavor == Flavor::Memgraph => {
+            c.reset().await?;
+            in_transaction = false;
+            c.run_auto_with(text, params, db).await?
+        }
+        Err(e) => return Err(e),
+    };
+    let column = |name: &str| fields.iter().position(|f| f.eq_ignore_ascii_case(name));
+    let op = column("OPERATOR").or_else(|| column("QUERY PLAN"));
+    let (hits, relative, absolute) = (column("ACTUAL HITS"), column("RELATIVE TIME"), column("ABSOLUTE TIME"));
+    let mut rows = Vec::new();
+    loop {
+        let end = c
+            .pull(BATCH, MAX_MESSAGE, |r, _| {
+                if flavor == Flavor::Memgraph {
+                    rows.push(MemgraphRow {
+                        operator: plan_text(op.and_then(|i| r.get(i))).unwrap_or_default(),
+                        hits: count_of(hits.and_then(|i| r.get(i))),
+                        relative: plan_text(relative.and_then(|i| r.get(i))),
+                        absolute: plan_text(absolute.and_then(|i| r.get(i))),
+                    });
+                }
+                rows.len() < MAX_PLAN_ROWS
+            })
+            .await?;
+        match end {
+            PullEnd::More => continue,
+            PullEnd::Done => break,
+            PullEnd::Stopped => return Err(BoltError::Protocol("too many plan rows".into())),
+        }
+    }
+    let summary = c.take_summary();
+    if in_transaction {
+        c.rollback().await?;
+    }
+    Ok(match flavor {
+        Flavor::Neo4j => PlanRead::Summary(summary),
+        Flavor::Memgraph => PlanRead::Rows(rows),
+    })
 }
 
 /// How a query attempt failed: the connection broke before any record arrived, or anything else.

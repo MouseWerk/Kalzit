@@ -115,7 +115,8 @@ struct Settings {
     max_edges: Option<u64>,
 }
 
-/// `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`, each with optional `params`.
+/// `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`, each with optional `params`; or
+/// `{"pattern": {...}}`, a graph pattern compiled into an interpreted query (`pattern::gsql`).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TgQuery {
@@ -123,6 +124,7 @@ struct TgQuery {
     installed: Option<String>,
     #[serde(default)]
     params: Map<String, Value>,
+    pattern: Option<super::pattern::Pattern>,
 }
 
 pub struct TigerGraph;
@@ -1253,9 +1255,34 @@ impl DataSourcePlugin for TigerGraph {
         })
     }
 
-    async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
-        let q: TgQuery = req.parse()?;
+    /// The catalog as a graph (`graph_schema::from_tigergraph`); TigerGraph keeps no counts there.
+    async fn graph_schema(&self, conn: &Connection) -> Result<super::graph_schema::GraphSourceSchema, SourceError> {
         let c = client(conn).await?;
+        let a = match c.api {
+            Api::V4 => c.gsql_json(Method::GET, &format!("gsql/v1/schema/graphs/{}", c.graph), &[]).await?,
+            Api::V3 => c.gsql_json(Method::GET, "gsqlserver/gsql/schema", &[("graph", &c.graph)]).await?,
+        };
+        let body = c.ok_or_error(a)?;
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        Ok(super::graph_schema::from_tigergraph(body.get("results").unwrap_or(&body), now))
+    }
+
+    async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
+        let mut q: TgQuery = req.parse()?;
+        let c = client(conn).await?;
+        // A pattern becomes an interpreted query whose values are its typed parameters.
+        if let Some(pattern) = q.pattern.take() {
+            if q.gsql.is_some() || q.installed.is_some() || !q.params.is_empty() {
+                return Err(SourceError::rejected("query.invalid_form", "a pattern stands alone in the query")
+                    .with("detail", "pattern"));
+            }
+            let dialect = super::pattern::Dialect::TigerGraph;
+            let compiled = super::pattern::compile(&pattern, dialect, Some(&c.graph), &req.variables)
+                .map_err(SourceError::Rejected)?;
+            q.gsql = Some(compiled.text);
+            q.params = compiled.parameters.into_iter().collect();
+        }
         let max_bytes = req.limits.budget.remaining();
         let timeout_ms = req.limits.timeout.as_millis().to_string();
         let mut charge = req.limits.budget.charge();

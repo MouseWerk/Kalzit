@@ -710,6 +710,47 @@ see [Graph algorithms](data-sources.md#graph-algorithms-neo4j-gds-memgraph-mage)
 Cypher parameters, such as `WHERE p.name = $name` or `WHERE p.id IN $ids`. A value picked on a
 dashboard is text: compare with `toInteger($id)` when the property holds numbers.
 
+## Graph patterns, search templates and query plans
+
+Neo4j, Memgraph and TigerGraph also take a **pattern** instead of query text: the nodes you look
+for (with labels and conditions on their properties), the edges between them (types, direction,
+how many steps, optional parts) and how many matches to return. Kalzit writes the Cypher or GSQL
+for it and always shows it with the result; the database runs exactly that text, read-only like
+any query. The pattern builder in Explore follows in a later release; until then patterns are
+written as JSON in the API and in provisioning files (docs/api/datasources.md, "Graph patterns").
+
+```json
+{
+  "nodes": [
+    { "id": "k", "labels": ["Kunde"] },
+    { "id": "f", "labels": ["Firma"], "conditions": [{ "property": "name", "op": "eq", "value": { "param": "firma" } }] }
+  ],
+  "edges": [{ "id": "e", "from": "k", "to": "f", "types": ["KUNDE_VON"] }],
+  "parameters": [{ "name": "firma", "type": "string", "label": "Firma" }]
+}
+```
+
+Customers of one company. Values in a pattern never become query text: each is sent to the
+database as a typed parameter, so a value cannot change what the query does. To look for many
+nodes at once, give a node `ids` (the database's own ids) or use an `in` condition, and paste the
+ids into a list parameter: one per line, or separated by commas, semicolons, tabs or spaces.
+
+**Search templates:** save an analysis whose query has parameters, such as "Kunden von $firma".
+Everyone who may read the analysis, viewers too, can run it with their own value for `firma`;
+they run the saved query only, never a query of their own.
+
+**Back from Cypher or GSQL:** a query in the simple form a pattern produces (one `MATCH` with
+`WHERE` conditions joined by `AND`, `OPTIONAL MATCH`, `RETURN`, `LIMIT`; in GSQL one `SELECT`)
+can be read back into a pattern. Anything more (such as `OR`, `WITH`, functions or sorting)
+answers "not representable as a pattern" instead of a pattern that leaves part of it out.
+
+**Schema and plans:** for a graph source Kalzit reads the labels and edge types with their counts
+and properties as a graph of which label connects to which. Memgraph gives exact counts when it
+runs with `--schema-info-enabled`, otherwise Kalzit reads a sample of 10,000 nodes and edges.
+`EXPLAIN` and `PROFILE` of a Cypher query come back as a tree of operators with rows and database
+hits; `PROFILE` runs the query (read-only, within the source's time limit). TigerGraph gives no
+plan for GSQL queries, and Kalzit says so.
+
 ## TigerGraph
 
 TigerGraph holds a graph of vertices (such as `Person`) and edges (such as `KNOWS`) in a named

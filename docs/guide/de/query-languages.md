@@ -729,6 +729,51 @@ projiziert hat); siehe [Graphalgorithmen](data-sources.md#graphalgorithmen-neo4j
 Cypher-Parameter, etwa `WHERE p.name = $name` oder `WHERE p.id IN $ids`. Ein auf einem Dashboard
 gewählter Wert ist Text: Vergleiche mit `toInteger($id)`, wenn die Eigenschaft Zahlen enthält.
 
+## Graph-Muster, Suchvorlagen und Abfragepläne
+
+Neo4j, Memgraph und TigerGraph nehmen statt Abfragetext auch ein **Muster**: die Knoten, die du
+suchst (mit Labels und Bedingungen auf ihre Eigenschaften), die Kanten dazwischen (Typen,
+Richtung, wie viele Schritte, optionale Teile) und wie viele Treffer kommen sollen. Kalzit schreibt
+das Cypher oder GSQL dazu und zeigt es immer beim Ergebnis; die Datenbank führt genau diesen Text
+aus, nur lesend wie jede Abfrage. Der Muster-Baukasten in Explore folgt in einer späteren Version;
+bis dahin schreibst du Muster als JSON in der API und in Provisioning-Dateien
+(docs/api/datasources.md, „Graph patterns“).
+
+```json
+{
+  "nodes": [
+    { "id": "k", "labels": ["Kunde"] },
+    { "id": "f", "labels": ["Firma"], "conditions": [{ "property": "name", "op": "eq", "value": { "param": "firma" } }] }
+  ],
+  "edges": [{ "id": "e", "from": "k", "to": "f", "types": ["KUNDE_VON"] }],
+  "parameters": [{ "name": "firma", "type": "string", "label": "Firma" }]
+}
+```
+
+Die Kunden einer Firma. Werte in einem Muster werden nie Abfragetext: Jeder geht als typisierter
+Parameter an die Datenbank, ein Wert kann also nicht ändern, was die Abfrage tut. Um viele Knoten
+auf einmal zu suchen, gib einem Knoten `ids` (die Ids der Datenbank) oder nimm eine
+`in`-Bedingung und füge die Ids in einen Listen-Parameter ein: eine pro Zeile oder getrennt durch
+Kommas, Semikolons, Tabs oder Leerzeichen.
+
+**Suchvorlagen:** Speichere eine Analyse, deren Abfrage Parameter hat, etwa „Kunden von $firma“.
+Alle, die die Analyse lesen dürfen, auch Betrachter, können sie mit ihrem eigenen Wert für
+`firma` ausführen; sie führen nur die gespeicherte Abfrage aus, nie eine eigene.
+
+**Zurück aus Cypher oder GSQL:** Eine Abfrage in der einfachen Form, die ein Muster erzeugt (ein
+`MATCH` mit `WHERE`-Bedingungen, verbunden mit `AND`, `OPTIONAL MATCH`, `RETURN`, `LIMIT`; in GSQL
+ein `SELECT`), lässt sich zurück in ein Muster lesen. Alles darüber hinaus (etwa `OR`, `WITH`,
+Funktionen oder Sortieren) ergibt „nicht als Muster darstellbar“ statt eines Musters, dem ein Teil
+fehlt.
+
+**Schema und Pläne:** Für eine Graph-Quelle liest Kalzit die Labels und Kantentypen mit ihren
+Anzahlen und Eigenschaften als Graphen, welches Label über welchen Typ mit welchem verbunden ist.
+Memgraph liefert genaue Anzahlen, wenn es mit `--schema-info-enabled` läuft, sonst liest Kalzit
+eine Stichprobe von 10.000 Knoten und Kanten. `EXPLAIN` und `PROFILE` einer Cypher-Abfrage kommen
+als Baum von Operatoren mit Zeilen und Datenbankzugriffen zurück; `PROFILE` führt die Abfrage aus
+(nur lesend, im Zeitlimit der Quelle). TigerGraph liefert keinen Plan für GSQL-Abfragen, und Kalzit
+sagt das.
+
 ## TigerGraph
 
 TigerGraph enthält einen Graphen aus Knoten (etwa `Person`) und Kanten (etwa `KNOWS`) in einem

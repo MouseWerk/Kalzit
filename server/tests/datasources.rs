@@ -934,6 +934,129 @@ async fn graph_reads(t: &T, id: &str) {
     graph_variables(t, id).await;
 }
 
+/// The graph schema as a graph, EXPLAIN and PROFILE as plan trees, and patterns: compiled with
+/// bound values, run, read back, refused where they are not one, and saved as a search template.
+async fn graph_patterns_schema_plans(t: &T, id: &str, kind: &str) {
+    // Schema: labels and types with counts and properties, and how they connect.
+    let (status, s) = t.send(Method::GET, &format!("/datasources/{id}/graph-schema?refresh=true"), None).await;
+    assert_eq!(status, StatusCode::OK, "{s}");
+    let expected_sources: &[&str] = if kind == "neo4j" { &["procedures"] } else { &["schemaInfo", "sample"] };
+    assert!(expected_sources.contains(&s["source"].as_str().unwrap()), "{s}");
+    let label =
+        s["labels"].as_array().unwrap().iter().find(|l| l["name"] == "KalzitTest").unwrap_or_else(|| panic!("{s}"));
+    assert!(label["count"].as_u64().unwrap() >= 2, "{s}");
+    let name =
+        label["properties"].as_array().unwrap().iter().find(|p| p["name"] == "name").unwrap_or_else(|| panic!("{s}"));
+    assert!(name["types"].as_array().unwrap().contains(&json!("string")), "{s}");
+    assert!(s["edgeTypes"].as_array().unwrap().iter().any(|e| e["name"] == "KENNT"), "{s}");
+    assert!(s["links"].as_array().unwrap().iter().any(|l| l["type"] == "KENNT" && l["from"] == "KalzitTest"), "{s}");
+    let (status, again) = t.send(Method::GET, &format!("/datasources/{id}/graph-schema"), None).await;
+    assert_eq!((status, again["readAt"].clone()), (StatusCode::OK, s["readAt"].clone()), "kept for a while");
+
+    // Plans: EXPLAIN reads the plan, PROFILE runs the query and counts.
+    let plan_path = format!("/datasources/{id}/plan");
+    let plan = |mode: &str, cypher: &str| {
+        let body = json!({ "query": { "cypher": cypher }, "mode": mode, "variables": { "n": "Ana" } });
+        t.send(Method::POST, &plan_path, Some(body))
+    };
+    let cypher = "MATCH (a:KalzitTest)-[:KENNT]->(b) WHERE a.name = $n RETURN b";
+    for mode in ["explain", "profile"] {
+        let (status, p) = plan(mode, cypher).await;
+        assert_eq!(status, StatusCode::OK, "{p}");
+        assert_eq!((p["available"].clone(), p["mode"].clone()), (json!(true), json!(mode)), "{p}");
+        assert!(!p["root"]["operator"].as_str().unwrap().is_empty(), "{p}");
+        assert!(!p["root"]["children"].as_array().unwrap().is_empty(), "{p}");
+        if mode == "profile" {
+            assert!(p["root"]["rows"].is_u64(), "{p}");
+        }
+    }
+    let (status, p) = plan("profile", &format!("PROFILE {cypher}")).await;
+    assert_eq!((status, p["query"].clone()), (StatusCode::OK, json!(cypher)), "{p}");
+    for write in ["MATCH (n:KalzitTest) DETACH DELETE n", "MATCH (n:KalzitTest) SET n.x = 1", "CREATE (n:KalzitTest)"] {
+        let (status, p) = plan("profile", write).await;
+        assert_eq!(
+            (status, p["error"]["code"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("query_rejected")),
+            "{write}: {p}"
+        );
+    }
+
+    // A pattern: values are parameters, also ones written to break out of the query.
+    let pattern = json!({
+        "nodes": [
+            { "id": "a", "labels": ["KalzitTest"], "conditions": [{ "property": "name", "op": "eq", "value": { "param": "wer" } }] },
+            { "id": "b", "labels": ["Person"] }
+        ],
+        "edges": [{ "id": "e", "from": "a", "to": "b", "types": ["KENNT"], "conditions": [
+            { "property": "seit", "op": "ge", "value": { "value": 2000 } }
+        ] }],
+        "parameters": [{ "name": "wer", "type": "string" }]
+    });
+    let r = t.query_with(id, json!({ "pattern": pattern }), json!({ "wer": "Ana" })).await;
+    let graph = &r["result"]["graph"];
+    assert_eq!(graph["nodes"].as_array().map(Vec::len), Some(2), "{r}");
+    assert_eq!(graph["edges"][0]["type"], "KENNT", "{r}");
+    for attack in ["Ana' OR 1=1 //", "Ana\"}) MATCH (m) DETACH DELETE m //", "$wer"] {
+        let r = t.query_with(id, json!({ "pattern": pattern }), json!({ "wer": attack })).await;
+        assert_eq!(r["result"]["graph"]["nodes"].as_array().map_or(0, Vec::len), 0, "{attack}: {r}");
+    }
+    let r = t.query_with(id, json!({ "pattern": pattern }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "pattern.parameter_missing", "{r}");
+    // Bulk ids: the database's own, pasted one per line.
+    let ana = graph["nodes"].as_array().unwrap().iter().find(|n| n["properties"]["name"] == "Ana").unwrap();
+    let by_id = json!({
+        "nodes": [{ "id": "a", "ids": { "param": "ids" } }],
+        "parameters": [{ "name": "ids", "type": "idList" }]
+    });
+    let pasted = format!("{}\nunbekannt-1\n", ana["id"].as_str().unwrap());
+    let pasted = if kind == "memgraph" { format!("{}\n99999999", ana["id"].as_str().unwrap()) } else { pasted };
+    let r = t.query_with(id, json!({ "pattern": by_id }), json!({ "ids": pasted })).await;
+    assert_eq!(r["result"]["graph"]["nodes"].as_array().map(Vec::len), Some(1), "{r}");
+    // A plan of a pattern is the plan of its Cypher.
+    let body = json!({ "query": { "pattern": pattern }, "mode": "explain", "variables": { "wer": "Ana" } });
+    let (status, p) = t.send(Method::POST, &format!("/datasources/{id}/plan"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{p}");
+    assert!(p["query"].as_str().unwrap().starts_with("MATCH kz_p0 = "), "{p}");
+
+    // Compile shows the text; the way back reads it, and refuses what is not a pattern.
+    let body = json!({ "pattern": pattern, "variables": { "wer": "Ana" } });
+    let (status, c) = t.send(Method::POST, &format!("/datasources/{id}/patterns/compile"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    assert_eq!(c["parameters"], json!({ "wer": "Ana", "kz_v0": 2000 }), "{c}");
+    let body = json!({ "text": c["text"], "parameters": c["parameters"] });
+    let (status, back) = t.send(Method::POST, &format!("/datasources/{id}/patterns/parse"), Some(body)).await;
+    assert_eq!((status, back["representable"].clone()), (StatusCode::OK, json!(true)), "{back}");
+    assert_eq!(back["pattern"]["edges"][0]["conditions"][0]["value"], json!({ "value": 2000 }), "{back}");
+    let body = json!({ "text": "MATCH (a) WHERE a.x = 1 OR a.y = 2 RETURN a" });
+    let (_, back) = t.send(Method::POST, &format!("/datasources/{id}/patterns/parse"), Some(body)).await;
+    assert_eq!(
+        (back["representable"].clone(), back["reason"].clone()),
+        (json!(false), json!("pattern.not_representable"))
+    );
+    let body = json!({ "pattern": { "nodes": [{ "id": "a" }, { "id": "b" }] } });
+    let (status, e) = t.send(Method::POST, &format!("/datasources/{id}/patterns/compile"), Some(body)).await;
+    assert_eq!(
+        (status, e["error"]["reason"].clone()),
+        (StatusCode::UNPROCESSABLE_ENTITY, json!("pattern.not_connected"))
+    );
+
+    // Saved as a search template, it runs with a value for its parameter.
+    let model = json!({
+        "schemaVersion": 1, "title": "Bekannte von $wer",
+        "targets": [{ "refId": "A", "datasourceId": id, "query": { "pattern": pattern } }],
+        "visualization": { "type": "table" }
+    });
+    let (status, a) = t.send(Method::POST, "/analyses", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{a}");
+    let body = json!({ "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 }, "variables": { "wer": "Ana" } });
+    let (status, r) = t.send(Method::POST, &format!("/analyses/{}/query", a["id"].as_str().unwrap()), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["results"]["A"]["result"]["graph"]["nodes"].as_array().map(Vec::len), Some(2), "{r}");
+
+    let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
+    assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
+}
+
 /// A dashboard on the graph source: a free (textbox) variable may not name a label or property,
 /// a custom one may; a query variable reads its options from the graph through `valuesFrom`.
 async fn graph_dashboard_variables(t: &T, id: &str) {
@@ -1027,6 +1150,7 @@ async fn neo4j_reads_graphs_in_read_transactions() {
     assert_eq!(h["params"]["engine"], "Neo4j", "{h}");
     graph_reads(&t, &id).await;
     graph_dashboard_variables(&t, &id).await;
+    graph_patterns_schema_plans(&t, &id, "neo4j").await;
 
     // The node limit cuts the graph with a reason.
     let mut limited = settings;
@@ -1071,6 +1195,7 @@ async fn memgraph_refuses_users_who_may_write_unless_allowed() {
     assert_eq!(h["reason"], "health.connected_write_capable", "{h}");
     assert!(h["params"]["privileges"].as_str().unwrap().contains("CREATE"), "{h}");
     graph_reads(&t, &id).await;
+    graph_patterns_schema_plans(&t, &id, "memgraph").await;
 }
 
 const STEPS_SETUP: &[&str] = &[

@@ -1336,7 +1336,10 @@ async fn run(
     if row.deleted_at.is_some() {
         return Err(ApiError::not_found());
     }
-    let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
+    let analysis = saved_analyses::stored(&row.body)?;
+    // A search template's values in their declared types (`saved_analyses::AnalysisModel`).
+    analysis.typed_values(&mut req.variables)?;
+    let model = analysis.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
     Ok(super::query::answer(
@@ -1351,13 +1354,15 @@ async fn distribution(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, id)): Path<(String, String)>,
-    JsonBody(req): JsonBody<PanelDistributionRequest>,
+    JsonBody(mut req): JsonBody<PanelDistributionRequest>,
 ) -> ApiResult<Json<FieldDistribution>> {
     let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
     if row.deleted_at.is_some() {
         return Err(ApiError::not_found());
     }
-    let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
+    let analysis = saved_analyses::stored(&row.body)?;
+    analysis.typed_values(&mut req.variables)?;
+    let model = analysis.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     crate::datasources::check_range(req.time_range)?;
     crate::datasources::check_interval(req.interval_ms)?;

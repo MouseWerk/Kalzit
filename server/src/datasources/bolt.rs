@@ -381,6 +381,9 @@ pub struct BoltConn {
     /// The connection is in an unknown state (a result read only in part, a failed reset, a broken
     /// stream) and must be closed, not reused.
     pub broken: bool,
+    /// The metadata at the end of the last result read to its end: the plan of an `EXPLAIN` or
+    /// `PROFILE` is there (Neo4j). Taken with `take_summary`.
+    summary: Option<Bv>,
 }
 
 fn tls_config(tls: &Tls) -> Result<rustls::ClientConfig, SourceError> {
@@ -484,6 +487,7 @@ pub async fn connect(policy: &TargetPolicy, opts: ConnectOptions<'_>) -> Result<
             utc: false,
             server: String::new(),
             broken: false,
+            summary: None,
         };
         conn.handshake().await?;
         conn.login(opts.user, opts.password).await?;
@@ -651,6 +655,20 @@ impl BoltConn {
         self.run_with(query, Vec::new(), extra).await
     }
 
+    /// RUN outside a transaction (auto-commit) with parameters, in `db` when set.
+    pub async fn run_auto_with(
+        &mut self,
+        query: &str,
+        params: Vec<(String, Bv)>,
+        db: Option<&str>,
+    ) -> Result<Vec<String>, BoltError> {
+        let extra = match db.filter(|d| !d.is_empty()) {
+            Some(db) => vec![("db".to_string(), Bv::String(db.into()))],
+            None => Vec::new(),
+        };
+        self.run_with(query, params, extra).await
+    }
+
     async fn run_with(
         &mut self,
         query: &str,
@@ -697,6 +715,9 @@ impl BoltConn {
                 }
                 (Response::Success(meta), _) => {
                     let more = matches!(meta.get("has_more"), Some(Bv::Bool(true)));
+                    if !more {
+                        self.summary = Some(meta);
+                    }
                     return Ok(if more { PullEnd::More } else { PullEnd::Done });
                 }
                 (Response::Ignored, _) => return Err(protocol("PULL was ignored")),
@@ -712,6 +733,11 @@ impl BoltConn {
         let mut cx = Context::from_waker(std::task::Waker::noop());
         // Pending: nothing to read, the connection waits as it should.
         matches!(std::pin::Pin::new(&mut self.stream).poll_fill_buf(&mut cx), Poll::Pending)
+    }
+
+    /// The metadata at the end of the last result read to its end, once.
+    pub fn take_summary(&mut self) -> Option<Bv> {
+        self.summary.take()
     }
 
     pub async fn rollback(&mut self) -> Result<(), BoltError> {

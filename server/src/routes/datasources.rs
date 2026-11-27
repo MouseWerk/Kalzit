@@ -27,6 +27,7 @@ use crate::net::RequestInfo;
 use crate::secrets::{self, SecretPatch};
 use crate::shapes::{DatasourceAccess, Page, Shape};
 
+pub(crate) mod graph;
 mod overview;
 
 pub fn routes() -> Vec<RouteDef> {
@@ -61,6 +62,28 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health)
             .long_running(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema).long_running(),
+        // Graph sources: the schema as a graph, query plans, patterns (`graph.rs`).
+        route(
+            Method::GET,
+            "/orgs/{orgId}/datasources/{datasourceId}/graph-schema",
+            Access::OrgMember,
+            graph::graph_schema,
+        )
+        .long_running(),
+        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/plan", Access::OrgMember, graph::plan)
+            .long_running(),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/datasources/{datasourceId}/patterns/compile",
+            Access::OrgMember,
+            graph::compile_pattern,
+        ),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/datasources/{datasourceId}/patterns/parse",
+            Access::OrgMember,
+            graph::parse_pattern,
+        ),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/usage", Access::OrgMember, usage),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/history", Access::OrgMember, history),
     ]
