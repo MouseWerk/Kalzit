@@ -475,6 +475,7 @@
   "datasources.reason.steps.cancelled": "The export was cancelled.",
   "datasources.reason.expression.text_too_long": "The text would be longer than {max} characters.",
   "datasources.reason.export.too_large": "The file would be larger than {max} bytes. Filter or group in the query to export fewer rows.",
+  "datasources.reason.export.scope_too_large": "Too many nodes for one file: at most {max}. Export everything loaded instead.",
   "datasources.reason.export.busy": "Other exports are running right now. Try again in a moment.",
   "datasources.reason.export.stalled": "The download was given up because nothing was taken for a minute.",
   "datasources.reason.export.download_too_long": "The download was given up because it took longer than 15 minutes.",

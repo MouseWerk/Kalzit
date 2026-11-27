@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://kalzit.mousewerk.de/">Website</a> ·
+  <a href="https://kalzit.dev/">Website</a> ·
   <a href="https://github.com/MouseWerk/Kalzit/releases/latest">Download</a> ·
   <a href="docs/guide/README.md">User guide</a> ·
   <a href="docs/releases/v0.7.5.md">Release notes</a>
@@ -695,7 +695,7 @@ counted, and nothing on this list is promised for a date.
 
 ## Documentation
 
-- [kalzit.mousewerk.de](https://kalzit.mousewerk.de/): the website, with an overview of the
+- [kalzit.dev](https://kalzit.dev/): the website, with an overview of the
   published release, in English and German.
 - [docs/guide/](docs/guide/README.md): the user guide in English and German, one page per area:
   installation, Linux without a package, HTTPS, reverse proxy, offline operation, backup and

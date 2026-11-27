@@ -286,12 +286,19 @@ test.describe("the overflow check itself", () => {
 
   for (const [name, inject] of Object.entries(PROBES)) {
     for (const main of MAIN_PAGES.filter((m) => m.name === "add member")) {
+      // Asserted, not marked as expected to fail: a probe that fails for any other reason (the
+      // dialog not opening) must not pass, and the report shows it as passed, not as a red cross.
       test(`${name} in the ${main.name} dialog is caught`, async ({ page, world }) => {
-        test.fail(true, "the probe makes the dialog too wide on purpose");
         await signInOwner(page);
         await openMainPage(page, main, world, "en");
-        await page.locator(DIALOG_BODIES).first().evaluate(inject);
+        // The page as it is fits, so what is caught below is the probe.
         await expectNothingSticksOut(page);
+        await page.locator(DIALOG_BODIES).first().evaluate(inject);
+        const overflow = await findOverflow(page);
+        expect(
+          overflow.offenders.length > 0 || overflow.scrollWidth > overflow.width,
+          `the probe was not caught: ${JSON.stringify(overflow)}`,
+        ).toBe(true);
       });
     }
   }

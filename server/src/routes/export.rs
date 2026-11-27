@@ -59,7 +59,8 @@ use crate::extract::JsonBody;
 use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
-    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryOutcome, QueryResponse, TimeRange,
+    ExportFormat, ExportLanguage, ExportRequest, GraphExportScope, PanelExportRequest, QueryOutcome, QueryResponse,
+    TimeRange,
 };
 
 /// Exports that make their file at the same time, per server (`AppState::exports`).
@@ -167,10 +168,16 @@ impl Drop for CancelOnDrop {
     }
 }
 
+/// The largest request body: a graph's scope may name `export::SCOPE_MAX_NODES` nodes with their
+/// positions, which is more than the default of 2 MiB holds.
+const BODY_LIMIT: usize = 8 * 1024 * 1024;
+
 pub fn routes() -> Vec<RouteDef> {
     vec![
         // And `datasources:query` per data source (role or grant), checked in the handler.
-        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query).long_running(),
+        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query)
+            .body_limit(BODY_LIMIT)
+            .long_running(),
         // And `dashboards:read` on the dashboard, checked in the handler.
         route(
             Method::POST,
@@ -178,6 +185,7 @@ pub fn routes() -> Vec<RouteDef> {
             Access::Org(Permission::DataExport),
             export_panel,
         )
+        .body_limit(BODY_LIMIT)
         .long_running(),
     ]
 }
@@ -193,6 +201,26 @@ struct Wanted {
     frame: Option<String>,
     time_range: TimeRange,
     calendar: Calendar,
+    /// For a graph result: the part to export and the drawn positions (`GraphExportScope`).
+    graph: Option<GraphExportScope>,
+}
+
+/// A scope within its bounds: at most `SCOPE_MAX_NODES` node ids. Positions are only a decoration
+/// of GraphML: more than that many are left out, so a large graph still exports.
+fn graph_scope(scope: Option<GraphExportScope>) -> ApiResult<Option<GraphExportScope>> {
+    let Some(mut scope) = scope else { return Ok(None) };
+    let max = export::SCOPE_MAX_NODES;
+    if let Some(count) = scope.positions.as_ref().map(|p| p.len()).filter(|&n| n > max) {
+        tracing::debug!("graph export without positions: {count} sent, at most {max} kept");
+        scope.positions = None;
+    }
+    if scope.nodes.as_ref().is_some_and(|n| n.len() > max) {
+        return Err(ApiError::validation(format!("graph names at most {max} nodes"))
+            .with_field("graph")
+            .because("export.scope_too_large")
+            .param("max", max));
+    }
+    Ok(Some(scope))
 }
 
 /// The calendar calculated fields read times in, from the request: a known IANA zone (UTC when
@@ -227,6 +255,10 @@ impl Wanted {
         m.insert("format".into(), json!(self.format));
         m.insert("timeRange".into(), json!(self.time_range));
         m.insert("frame".into(), json!(self.frame));
+        // Whether the file holds a chosen part of a graph; never which nodes.
+        if self.graph.as_ref().is_some_and(|g| g.nodes.is_some()) {
+            m.insert("part".into(), json!(true));
+        }
         m
     }
 }
@@ -268,6 +300,7 @@ async fn export_query(
         frame: req.frame.clone(),
         time_range: req.time_range,
         calendar: calendar(req.time_zone.as_deref(), req.week_start.as_deref())?,
+        graph: graph_scope(req.graph.clone())?,
     };
     let sources: BTreeSet<String> = req.queries.iter().map(|q| q.datasource_id.clone()).collect();
     let mut where_ = wanted.summary();
@@ -321,6 +354,7 @@ async fn export_panel(
         frame: req.frame.clone(),
         time_range: req.time_range,
         calendar: calendar(req.time_zone.as_deref(), req.week_start.as_deref())?,
+        graph: graph_scope(req.graph.clone())?,
     };
     let mut where_ = wanted.summary();
     where_.insert("panelId".into(), json!(panel_id));
@@ -463,6 +497,7 @@ async fn produce(
         }
     }
     let (format, language, frame) = (wanted.format, wanted.language, wanted.frame.clone());
+    let scope = wanted.graph.clone();
     let cancelled = Arc::new(AtomicBool::new(false));
     let _cancel = CancelOnDrop(cancelled.clone());
     let control = Control::new(cancelled, timeout).with_calendar(wanted.calendar);
@@ -479,6 +514,12 @@ async fn produce(
             step_error(message, f.detail)
         })?;
         let (name, content) = choose(&outputs, frame.as_deref(), format)?;
+        // A scope names a part of a graph result; other shapes have none and export whole.
+        let part = match (content, scope.as_ref().and_then(|s| s.nodes.as_ref())) {
+            (export::Content::Graph(graph), Some(ids)) => Some(export::graph_part(graph, ids)),
+            _ => None,
+        };
+        let content = part.as_ref().map_or(content, export::Content::Graph);
         let io = |e: std::io::Error| ApiError::internal("export", format!("the spool file: {e}"));
         std::fs::create_dir_all(&spool).map_err(io)?;
         // The file may be as large as its content suggests, up to the limit; the disk keeps what
@@ -513,7 +554,14 @@ async fn produce(
                 .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")))
         };
         let caps = export::Caps { file_bytes: limits.file_bytes };
-        export::encode_content_to(content, name, format, language, &control, caps, &spool, true, &mut write)
+        let encoded = match (content, scope.as_ref()) {
+            (export::Content::Graph(graph), Some(scope)) => {
+                let places = scope.positions.as_ref();
+                export::encode_graph_to(graph, places, format, language, &control, caps, true, &mut write)
+            }
+            _ => export::encode_content_to(content, name, format, language, &control, caps, &spool, true, &mut write),
+        };
+        encoded
             .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
         let file = out.into_inner().map_err(|e| io(e.into_error()))?;
         let len = file.metadata().map_err(io)?.len();
@@ -746,7 +794,7 @@ impl Pending {
 }
 
 fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
-    let name = export::file_name(title, file.kind.extension);
+    let name = export::file_name_of(title, file.kind);
     let (tx, rx) = mpsc::channel::<Msg>(QUEUED_CHUNKS);
     let kind = file.kind;
     let limits = *pending.state.export_limits.read_or_recover();

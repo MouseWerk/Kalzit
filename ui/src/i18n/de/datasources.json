@@ -475,6 +475,7 @@
   "datasources.reason.steps.cancelled": "Der Export wurde abgebrochen.",
   "datasources.reason.expression.text_too_long": "Der Text wäre länger als {max} Zeichen.",
   "datasources.reason.export.too_large": "Die Datei wäre größer als {max} Bytes. Filtere oder gruppiere in der Abfrage, um weniger Zeilen zu exportieren.",
+  "datasources.reason.export.scope_too_large": "Zu viele Knoten für eine Datei: höchstens {max}. Exportiere stattdessen alles Geladene.",
   "datasources.reason.export.busy": "Gerade laufen andere Exporte. Versuche es gleich noch einmal.",
   "datasources.reason.export.stalled": "Der Download wurde aufgegeben, weil eine Minute lang nichts abgeholt wurde.",
   "datasources.reason.export.download_too_long": "Der Download wurde aufgegeben, weil er länger als 15 Minuten dauerte.",

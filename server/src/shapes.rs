@@ -1061,7 +1061,9 @@ pub struct DistributionBin {
 }
 
 /// Export file formats (docs/api/datasources.md, "Export"), per result shape: frames as CSV, JSON
-/// or Excel, documents as JSON or NDJSON, graphs as GraphML or JSON.
+/// or Excel, documents as JSON or NDJSON, graphs as GraphML, JSON or two CSV lists: `csvNodes`
+/// (`id`, `labels`, then one column per property) and `csvEdges` (`id`, `type`, `source`,
+/// `target`, then one column per property).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1071,6 +1073,25 @@ pub enum ExportFormat {
     Xlsx,
     Ndjson,
     Graphml,
+    CsvNodes,
+    CsvEdges,
+}
+
+/// Which part of a graph result a file holds, and where its nodes are drawn (docs/api/
+/// datasources.md, "Export"). It narrows what the caller may export anyway; it never adds to it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphExportScope {
+    /// Only the nodes with these ids, the edges between them and the paths that stay whole.
+    /// Absent: the whole result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub nodes: Option<Vec<String>>,
+    /// Where nodes are drawn, by id, as `[x, y]`: written into GraphML files as `x` and `y`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, [number, number]>"))]
+    pub positions: Option<BTreeMap<String, [f64; 2]>>,
 }
 
 /// Decides the CSV separator and decimal mark: German `;` and `,`, English `,` and `.`.
@@ -1123,6 +1144,10 @@ pub struct ExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
     pub week_start: Option<String>,
+    /// For a graph result: the part of it to export and the drawn positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph: Option<GraphExportScope>,
 }
 
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: the stored
@@ -1157,6 +1182,10 @@ pub struct PanelExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
     pub week_start: Option<String>,
+    /// For a graph result: the part of it to export and the drawn positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph: Option<GraphExportScope>,
 }
 
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
@@ -1471,6 +1500,7 @@ mod tests {
             Page::<()>::decl(&cfg),
             DatasourceAccess::decl(&cfg),
             ExportFormat::decl(&cfg),
+            GraphExportScope::decl(&cfg),
             ExportLanguage::decl(&cfg),
             ExportRequest::decl(&cfg),
             PanelExportRequest::decl(&cfg),
