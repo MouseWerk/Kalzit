@@ -347,6 +347,12 @@ export function evaluateRules(
       styles[item] = style;
     }
     style.rules.push(rule);
+    // A color and its shade are one target: a plain color from a lower rule drops the shade of
+    // a color by value above it.
+    if (set.color !== undefined && set.shade === undefined) {
+      delete style.set.shade;
+      delete style.from.shade;
+    }
     for (const key of Object.keys(set) as TargetKey[]) {
       (style.set as Record<string, unknown>)[key] = set[key];
       style.from[key] = rule;

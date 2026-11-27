@@ -37,6 +37,23 @@ describe("color by value", () => {
     });
   });
 
+  it("gives way to a plain color of a lower rule, shade and all", () => {
+    const byValue: NodeRule = {
+      id: "r1",
+      on: true,
+      scope: "",
+      when: { kind: "always" },
+      set: { colorBy: { property: "pagerank", color: "chart-3" } },
+    };
+    const plain: NodeRule = { ...byValue, id: "r2", set: { color: "critical" } };
+    const out = evaluateRules([byValue, plain], items);
+    expect(out.styles[0]?.set.color).toBe("critical");
+    expect(out.styles[0]?.set).not.toHaveProperty("shade");
+    // The other way round the color by value wins with its shade.
+    const back = evaluateRules([plain, byValue], items);
+    expect(back.styles[1]?.set).toMatchObject({ color: "chart-3", shade: 1 });
+  });
+
   it("draws the tone mixed toward the canvas the lighter it is", () => {
     expect(shaded("#000000", 0.25, "#ffffff")).toBe("#bfbfbf");
     expect(shaded("#336699", 1, "#ffffff")).toBe("#336699");

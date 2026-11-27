@@ -194,5 +194,6 @@
   "graphCanvas.quick.suggestionsToggle": "Vorgeschlagene Kanten zeigen",
   "graphCanvas.quick.suggestionsShown": "{count} vorgeschlagene Kanten eingeblendet. Vorschläge sind nicht in der Datenbank.",
   "graphCanvas.quick.suggestionsHidden": "Vorgeschlagene Kanten ausgeblendet.",
-  "graphCanvas.quick.ruleAdded": "Regel {n} angelegt: Größe nach {property}."
+  "graphCanvas.quick.ruleAdded": "Regel {n} angelegt: Größe nach {property}.",
+  "graphCanvas.quick.connectNoAdopt": "Als Schritt lässt sich das nicht übernehmen: ein Pfad-Schritt zeigt nur seine eigenen Pfade. Übernimm einzelne Pfade über „Pfad finden“."
 }

@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../../api/client";
 import type { GraphSet } from "../../../api/generated/shapes";
 import { loadAreas } from "../../../i18n/i18n";
 import { buildGraphModel } from "../model";
@@ -103,7 +104,12 @@ describe("quick actions on the canvas", () => {
     expect(weighted.getAttribute("aria-disabled")).toBe("true");
     expect(within(weighted).getByText("no number on the edges")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Shortest path" }));
-    expect(request).toHaveBeenCalledWith("POST", "/orgs/o1/graph/actions", expect.anything());
+    expect(request).toHaveBeenCalledWith(
+      "POST",
+      "/orgs/o1/graph/actions",
+      expect.anything(),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     const body = request.mock.calls[0]?.[2] as { steps: unknown[]; graph: GraphSet };
     expect(body.steps[0]).toMatchObject({ type: "paths", from: "a", to: "b", direction: "both" });
     expect(body.graph.nodes).toHaveLength(3);
@@ -221,6 +227,51 @@ describe("quick actions on the canvas", () => {
     pageRank.focus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("radio", { name: "Degree" }).getAttribute("aria-checked")).toBe("true");
+    request.mockReset();
+  });
+
+  it("drop the question on its way when the measure changes, and ask again once when busy", async () => {
+    request.mockReset();
+    let first: AbortSignal | undefined;
+    // The first question hangs until it is aborted.
+    request.mockImplementationOnce(
+      (_m: string, _p: string, _b: unknown, options: { signal: AbortSignal }) =>
+        new Promise((_, reject) => {
+          first = options.signal;
+          options.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    // The second is turned away once while the first still holds the place, then answered.
+    const busy = new ApiError(
+      "busy",
+      503,
+      "busy",
+      undefined,
+      {
+        error: { code: "busy", message: "busy", reason: "graph_actions.user_busy" },
+      },
+      10,
+    );
+    request.mockRejectedValueOnce(busy);
+    request.mockResolvedValueOnce({
+      results: [{ id: "top", ranIn: "server", values: { a: 3, b: 1, c: 2 } }],
+    });
+    const user = userEvent.setup();
+    render(<Canvas chosen={[]} />);
+    await user.click(screen.getByRole("button", { name: "Most important nodes" }));
+    await user.click(screen.getByRole("radio", { name: "Degree" }));
+    expect(first?.aborted).toBe(true);
+    const list = await screen.findByRole("list");
+    expect(within(list).getAllByRole("listitem")[0]?.textContent).toContain("Anna");
+    expect(request).toHaveBeenCalledTimes(3);
+    const asked = request.mock.calls.map(
+      (c) => (c[2] as { steps: { type: string }[] }).steps[0]?.type,
+    );
+    expect(asked).toEqual(["centrality", "degree", "degree"]);
+    // Nothing failed in the person's eyes.
+    expect(screen.queryByText(/did not come through/)).toBeNull();
     request.mockReset();
   });
 

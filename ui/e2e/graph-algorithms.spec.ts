@@ -23,12 +23,18 @@ const STEP_MS = 20_000;
  */
 const SHOP =
   "MATCH (c:Customer)-[p:PLACED]->(o:Order)-[k:CONTAINS]->(x:Product) RETURN c, p, o, k, x";
+/**
+ * The whole shop, its category tree included: Ana reaches the monitor arm along several loopless
+ * paths (src/panels/graph/canvas/shopFixture.test.ts counts them), so k shortest paths walk.
+ */
+const WHOLE = "MATCH (n) OPTIONAL MATCH (n)-[r]->(m) RETURN n, r, m";
 /** Customers and their orders only: no number on any edge. */
 const ORDERS = "MATCH (c:Customer)-[p:PLACED]->(o:Order) RETURN c, p, o";
 const PANELS = {
   shop: "Shop for algorithms",
   orders: "Orders without weights",
   suggested: "Shop with suggestions",
+  whole: "Whole shop",
 } as const;
 
 const SIGMA_WEBGL_NOTICES = [
@@ -56,6 +62,7 @@ function dashboard(title: string, datasourceId: string) {
     panels: [
       panel("shop", PANELS.shop, 0, SHOP),
       panel("orders", PANELS.orders, 14, ORDERS),
+      panel("whole", PANELS.whole, 42, WHOLE),
       panel("suggested", PANELS.suggested, 28, SHOP, {
         transformations: [
           {
@@ -117,7 +124,8 @@ async function addPageRank(page: Page, steps: Locator) {
 }
 
 test.describe("graph algorithms", () => {
-  test.use({ viewport: { width: 1440, height: 1400 } });
+  // Tall enough for all four panels at once: each draws only once it is on screen.
+  test.use({ viewport: { width: 1440, height: 2600 } });
 
   let dashboardId = "";
   let viewer: Member | null = null;
@@ -182,34 +190,39 @@ test.describe("graph algorithms", () => {
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
     const panel = card(page, PANELS.shop);
     const drawing = await drawn(panel, PANELS.shop);
+    const whole = card(page, PANELS.whole);
+    await whole.scrollIntoViewIfNeeded();
+    const wholeDrawing = await drawn(whole, PANELS.whole);
     const before = queries.length;
 
     await test.step("three shortest paths, walked with J and Shift+J", async () => {
-      await choose(panel, PANELS.shop, ["Ana", "Monitor arm"]);
-      await bar(panel)
+      await whole.scrollIntoViewIfNeeded();
+      await choose(whole, PANELS.whole, ["Ana", "Monitor arm"]);
+      await bar(whole)
         .getByRole("button", { name: t("graphCanvas.quick.findPath") })
         .click();
       // Focus is in the menu; a weight per number on the edges.
       await expect(
-        bar(panel).getByRole("button", { name: t("graphCanvas.quick.path.shortest") }),
+        bar(whole).getByRole("button", { name: t("graphCanvas.quick.path.shortest") }),
       ).toBeFocused();
       await expect(
-        bar(panel).getByRole("button", {
+        bar(whole).getByRole("button", {
           name: t("graphCanvas.quick.path.weightedBy", { property: "quantity" }),
         }),
       ).toBeVisible();
-      await bar(panel)
+      await bar(whole)
         .getByRole("button", { name: t("graphCanvas.quick.path.kShortestN", { k: 3 }) })
         .click();
-      const sheet = panel.getByRole("region", {
+      const sheet = whole.getByRole("region", {
         name: t("graphCanvas.quick.path.kShortestN", { k: 3 }),
         exact: true,
       });
-      const first = sheet.getByRole("button", { name: /^Path 1: Ana › .*Ben.* › Monitor arm/ });
+      const first = sheet.getByRole("button", { name: /^Path 1: Ana › .* › Monitor arm/ });
       await expect(first).toHaveAttribute("aria-pressed", "true", { timeout: STEP_MS });
+      await expect(sheet.getByRole("button", { name: /^Path 3: Ana › / })).toBeVisible();
       // One sheet at a time: the answer stands where the node sheet would, beside the drawing.
-      await expect(panel.locator(".graph__details")).toHaveCount(1);
-      const canvasBox = await drawing.boundingBox();
+      await expect(whole.locator(".graph__details")).toHaveCount(1);
+      const canvasBox = await wholeDrawing.boundingBox();
       const sheetBox = await sheet.boundingBox();
       if (canvasBox === null || sheetBox === null) throw new Error("no layout");
       const overlaps =
@@ -219,7 +232,7 @@ test.describe("graph algorithms", () => {
         canvasBox.y < sheetBox.y + sheetBox.height;
       expect(overlaps).toBe(false);
       expect(await seriousViolations(page)).toEqual([]);
-      await drawing.focus();
+      await wholeDrawing.focus();
       await page.keyboard.press("j");
       await expect(sheet.getByRole("button", { name: /^Path 2: / })).toHaveAttribute(
         "aria-pressed",

@@ -194,5 +194,6 @@
   "graphCanvas.quick.suggestionsToggle": "Show suggested edges",
   "graphCanvas.quick.suggestionsShown": "{count} suggested edges shown. Suggestions are not in the database.",
   "graphCanvas.quick.suggestionsHidden": "Suggested edges hidden.",
-  "graphCanvas.quick.ruleAdded": "Rule {n} added: size by {property}."
+  "graphCanvas.quick.ruleAdded": "Rule {n} added: size by {property}.",
+  "graphCanvas.quick.connectNoAdopt": "This cannot be taken over as a step: a path step shows only its own paths. Take over single paths through “Find path”."
 }

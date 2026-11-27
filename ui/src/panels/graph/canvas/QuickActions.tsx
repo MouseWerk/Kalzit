@@ -1,6 +1,6 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { summaryNumber, summarySentence } from "../../../analysis/algoText";
-import { request } from "../../../api/client";
+import { isApiError, request } from "../../../api/client";
 import { errorReason, reasonText } from "../../../features/datasources/reasons";
 import { useI18n } from "../../../i18n/i18n";
 import { isComposingKey } from "../../../lib/ime";
@@ -32,6 +32,10 @@ import "../../../features/dashboards/ui/shared.css";
 import "../../../analysis/analysis.css";
 import "../graph.css";
 import "./canvas.css";
+
+/** How long to wait before asking again when the person's previous question still held its place. */
+const RETRY_MS = 300;
+const MAX_RETRY_MS = 2_000;
 
 /** The person's choice "Richtung der Kanten beachten", remembered in this browser (decision 11). */
 const DIRECTED_KEY = "kalzit.graph.pathDirected";
@@ -110,6 +114,7 @@ export function useQuickActions({
   const [failure, setFailure] = useState<string | null>(null);
   const [directed, setDirectedState] = useState(() => readPreference(DIRECTED_KEY) === "true");
   const run = useRef(0);
+  const pendingRequest = useRef<AbortController | null>(null);
   if (orgId === undefined) return null;
 
   const caption = (id: string) => {
@@ -119,15 +124,32 @@ export function useQuickActions({
 
   async function ask(steps: ActionStep[]): Promise<ActionAnswer[] | null> {
     const mine = ++run.current;
+    // A new question replaces the one still on its way: the server stops it and frees its place.
+    pendingRequest.current?.abort();
+    const controller = new AbortController();
+    pendingRequest.current = controller;
     setPending(true);
     setFailure(null);
+    const body = { graph: loadedGraph(model, view, visibility), steps };
+    const send = () =>
+      request("POST", `/orgs/${orgId}/graph/actions`, body, {
+        signal: controller.signal,
+      }) as Promise<{ results: ActionAnswer[] }>;
     try {
-      const answer = (await request("POST", `/orgs/${orgId}/graph/actions`, {
-        graph: loadedGraph(model, view, visibility),
-        steps,
-      })) as { results: ActionAnswer[] };
+      let answer: { results: ActionAnswer[] };
+      try {
+        answer = await send();
+      } catch (e) {
+        // The question before still held this person's place for a moment: ask once more.
+        if (errorReason(e)?.reason !== "graph_actions.user_busy") throw e;
+        const wait = isApiError(e) && e.retryAfterMs !== undefined ? e.retryAfterMs : RETRY_MS;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(wait, MAX_RETRY_MS)));
+        if (controller.signal.aborted) return null;
+        answer = await send();
+      }
       return mine === run.current ? answer.results : null;
     } catch (e) {
+      if (controller.signal.aborted) return null;
       if (mine === run.current) {
         // A busy server or user, or a graph too large, is said as such; anything else as "did
         // not come through".
@@ -259,6 +281,8 @@ export function useQuickActions({
     },
     close: () => {
       run.current++;
+      pendingRequest.current?.abort();
+      pendingRequest.current = null;
       setPending(false);
       setFailure(null);
       setState(null);
@@ -365,7 +389,7 @@ function PathMenu({
             ),
           )}
       {item("kShortest", t("graphCanvas.quick.path.kShortestN", { k: String(K_PATHS) }), () =>
-        run("kShortest", quick.weights[0]),
+        run("kShortest"),
       )}
       {item("swap", t("graphCanvas.quick.swap"), () => setSwapped(!swapped))}
       <label className="checkbox">
@@ -645,7 +669,8 @@ export function QuickSheet({
   } else if (state.kind === "connect") {
     title = t("graphCanvas.quick.connect");
     const answers = state.answers;
-    adopt = connectSteps(state.ids).map((s) => ({ ...s, keepAll: true }));
+    // A paths step lists its own paths only, so one per pair would show the last pair alone: the
+    // connection is not taken over; a single path is, through "Pfad finden".
     const nodes =
       answers === null
         ? []
@@ -666,6 +691,9 @@ export function QuickSheet({
             {connectSentence(t, state.ids, answers, caption)}
           </p>
           <p className="field__hint">{t("graphCanvas.quick.connectHint")}</p>
+          {onAdopt === undefined ? null : (
+            <p className="field__hint">{t("graphCanvas.quick.connectNoAdopt")}</p>
+          )}
           <div className="graph-quick__actions">
             {button(t("graphCanvas.quick.selectAll"), () => onSelect(nodes))}
             {button(t("graphCanvas.quick.onlyThese"), () => onOnly(nodes))}
