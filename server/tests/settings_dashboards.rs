@@ -2558,9 +2558,7 @@ async fn graph_algorithm_limits_follow_the_server_and_organizations_only_lower(t
 /// other organizations and strangers are refused, and only paths, centrality and degree run.
 async fn graph_quick_actions_compute_for_members_within_the_limits(t: TestApp) {
     let node = |id: &str| json!({ "id": id, "labels": ["Kunde"], "properties": { "name": id.to_uppercase() } });
-    let edge = |id: &str, from: &str, to: &str| {
-        json!({ "id": id, "type": "KENNT", "from": from, "to": to, "properties": { "aufwand": 2 } })
-    };
+    let edge = |id: &str, from: &str, to: &str| json!({ "id": id, "type": "KENNT", "from": from, "to": to, "properties": { "aufwand": 2 } });
     let graph = json!({
         "nodes": [node("a"), node("b"), node("c"), node("d")],
         "edges": [edge("1", "a", "b"), edge("2", "b", "c"), edge("3", "c", "d")],

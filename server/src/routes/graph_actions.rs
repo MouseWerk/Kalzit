@@ -187,9 +187,8 @@ async fn run_actions(
         let (graph, flag) = (graph.clone(), cancelled.clone());
         let result = tokio::task::spawn_blocking(move || {
             let _slot = slot;
-            let control = Control::new(flag, limits.timeout_secs.max(1))
-                .with_algorithm_limits(limits)
-                .with_algorithm_slot(true);
+            let control =
+                Control::new(flag, limits.timeout_secs.max(1)).with_algorithm_limits(limits).with_algorithm_slot(true);
             run_one(&step, &graph, &control)
         })
         .await
@@ -234,7 +233,9 @@ mod tests {
     }
 
     fn control() -> Control {
-        Control::new(Arc::new(AtomicBool::new(false)), 30).with_algorithm_limits(AlgoLimits::default()).with_algorithm_slot(true)
+        Control::new(Arc::new(AtomicBool::new(false)), 30)
+            .with_algorithm_limits(AlgoLimits::default())
+            .with_algorithm_slot(true)
     }
 
     fn step(value: Value) -> Step {
@@ -262,8 +263,14 @@ mod tests {
             (0..=MAX_ACTIONS).map(|i| json!({ "id": format!("s{i}"), "type": "degree", "frame": "A" })).collect();
         assert!(checked(&many).is_err());
         // The steps keep the checks of the steps themselves.
-        assert!(checked(&[json!({ "id": "s", "type": "paths", "frame": "A", "mode": "shortest", "from": "a", "to": "a" })]).is_err());
-        assert!(checked(&[json!({ "id": "s", "type": "paths", "frame": "B", "mode": "shortest", "from": "a", "to": "c" })]).is_err());
+        assert!(
+            checked(&[json!({ "id": "s", "type": "paths", "frame": "A", "mode": "shortest", "from": "a", "to": "a" })])
+                .is_err()
+        );
+        assert!(
+            checked(&[json!({ "id": "s", "type": "paths", "frame": "B", "mode": "shortest", "from": "a", "to": "c" })])
+                .is_err()
+        );
     }
 
     #[test]
@@ -278,7 +285,9 @@ mod tests {
         assert_eq!(shortest.paths[0].nodes, vec!["a", "b", "c"]);
         assert_eq!(shortest.summary.as_ref().map(|s| s.key.as_str()), Some("analysis.summary.paths"));
         let weighted = run_one(
-            &step(json!({ "id": "w", "type": "paths", "frame": "A", "mode": "weighted", "weight": "cost", "from": "a", "to": "c" })),
+            &step(
+                json!({ "id": "w", "type": "paths", "frame": "A", "mode": "weighted", "weight": "cost", "from": "a", "to": "c" }),
+            ),
             &graph(),
             &control(),
         );
@@ -318,8 +327,11 @@ mod tests {
         let small = Control::new(Arc::new(AtomicBool::new(false)), 30)
             .with_algorithm_limits(AlgoLimits { max_nodes: 2, ..AlgoLimits::default() })
             .with_algorithm_slot(true);
-        let too_large =
-            run_one(&step(json!({ "id": "r", "type": "centrality", "frame": "A", "measure": "pageRank" })), &graph(), &small);
+        let too_large = run_one(
+            &step(json!({ "id": "r", "type": "centrality", "frame": "A", "measure": "pageRank" })),
+            &graph(),
+            &small,
+        );
         assert_eq!(too_large.error.and_then(|e| e.reason).as_deref(), Some("steps.algorithm_too_large"));
     }
 }

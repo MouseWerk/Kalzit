@@ -71,6 +71,7 @@ export const HANDBOOK_PAGES: readonly CatalogPage[] = [
   guide("explore", "data"),
   guide("saved-analyses", "data"),
   guide("calculated-fields", "data"),
+  guide("graph-algorithms", "data"),
   guide("traces", "data"),
   guide("export", "data"),
   guide("performance", "data"),
@@ -120,6 +121,7 @@ export type HandbookSlug =
   | "explore"
   | "saved-analyses"
   | "calculated-fields"
+  | "graph-algorithms"
   | "traces"
   | "export"
   | "performance"

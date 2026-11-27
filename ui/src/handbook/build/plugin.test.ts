@@ -69,6 +69,7 @@ describe("the handbook's content", () => {
       explore: true,
       "saved-analyses": true,
       "calculated-fields": true,
+      "graph-algorithms": true,
       traces: true,
       export: true,
       performance: true,
