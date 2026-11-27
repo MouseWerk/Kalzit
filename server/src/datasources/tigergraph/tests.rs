@@ -432,6 +432,11 @@ async fn fake_with(fake: Fake) -> (std::net::SocketAddr, S) {
 }
 
 async fn connection(addr: std::net::SocketAddr, user: &str, extra: Value) -> Connection {
+    connection_as("ds", addr, user, extra).await
+}
+
+/// `connection` for the data source `id` (the per-source lock of the algorithm queries is keyed by it).
+async fn connection_as(id: &str, addr: std::net::SocketAddr, user: &str, extra: Value) -> Connection {
     let mut settings = json!({ "url": format!("http://{addr}"), "graph": "social", "user": user });
     for (k, v) in extra.as_object().unwrap() {
         settings[k] = v.clone();
@@ -442,7 +447,7 @@ async fn connection(addr: std::net::SocketAddr, user: &str, extra: Value) -> Con
     let own = Arc::new(OwnDatabase::new(db, "sqlite::memory:"));
     let secrets: BTreeMap<String, Zeroizing<String>> =
         [("password".to_string(), Zeroizing::new("geheim".to_string()))].into();
-    Connection::new("ds", settings, secrets, policy, own)
+    Connection::new(id, settings, secrets, policy, own)
 }
 
 fn req(query: Value, variables: Value) -> SourceQuery {
@@ -1258,4 +1263,34 @@ fn the_install_user_is_another_user() {
     assert_eq!(kind().validate_settings(&s).unwrap_err().detail.reason, "settings.install_user_same");
     let s = json!({ "url": "http://tg:14240", "graph": "social", "user": "leser", "installUser": "a b" });
     assert_eq!(kind().validate_settings(&s).unwrap_err().detail.reason, "settings.name_invalid");
+}
+
+/// While Kalzit installs or removes the queries of a source, its algorithm steps run on the
+/// server with `algorithm.busy`, which is not remembered: the next run uses the database again.
+/// A second install or removal meanwhile is answered at once.
+#[tokio::test]
+async fn an_install_in_progress_keeps_steps_out_only_meanwhile() {
+    use crate::analysis::algo::library::reason;
+    let cases: Value = serde_json::from_str(include_str!("../../analysis/conformance.json")).unwrap();
+    let graph = tigergraph_graph(&cases, "triangles");
+    let installed: BTreeMap<String, String> =
+        algorithms::shipped("social").into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+    let (addr, fake) = fake_with(Fake { installed: Mutex::new(installed), ..Fake::default() }).await;
+    *fake.algo_graph.lock().unwrap() = Some(graph.clone());
+    let approved = json!({ "approvedQueries": "kalzit_kcore" });
+    // An id of its own: the lock is per source and process-wide.
+    let conn = connection_as("ds-busy", addr, "leser", approved).await;
+    let lock = crate::datasources::tigergraph_lock("ds-busy");
+    {
+        let _install = crate::datasources::install_guard(&lock).unwrap();
+        let second = crate::datasources::install_guard(&lock).unwrap_err();
+        assert_eq!(second.reason.unwrap().code, "tigergraph.install_busy");
+        let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+        assert_eq!(place.ran_in, crate::shapes::RanIn::Server);
+        assert_eq!(place.reason.as_deref(), Some(reason::BUSY), "{place:?}");
+    }
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.ran_in, crate::shapes::RanIn::Database, "not remembered: {place:?}");
+    // A reader looking at the status takes no lock, so steps keep running in the database.
+    assert!(crate::datasources::install_guard(&lock).is_ok());
 }

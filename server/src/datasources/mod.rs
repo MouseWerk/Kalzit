@@ -2392,7 +2392,10 @@ async fn graph_steps_after(
                                     conn.pushdown.remember(&missing_key(&job, detail.reason));
                                     specific = Some(detail.reason);
                                 }
-                                library::reason::SUBGRAPH_DIFFERS => specific = Some(detail.reason),
+                                // Not remembered: the next run asks the database again.
+                                library::reason::SUBGRAPH_DIFFERS | library::reason::BUSY => {
+                                    specific = Some(detail.reason)
+                                }
                                 _ => {}
                             }
                             detail.message
@@ -2980,6 +2983,19 @@ fn tigergraph_lock(id: &str) -> Arc<tokio::sync::RwLock<()>> {
     locks.entry(id.to_string()).or_default().clone()
 }
 
+/// The write lock of an install or removal, or `tigergraph.install_busy` while another one holds it.
+fn install_guard(lock: &tokio::sync::RwLock<()>) -> ApiResult<tokio::sync::RwLockWriteGuard<'_, ()>> {
+    lock.try_write().map_err(|_| {
+        api_error(
+            SourceError::rejected(
+                "tigergraph.install_busy",
+                "Kalzit is installing or removing the algorithm queries of this source; try again when it is done",
+            ),
+            None,
+        )
+    })
+}
+
 /// How long installing TigerGraph queries may take (TigerGraph compiles them).
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
@@ -2995,10 +3011,15 @@ pub async fn tigergraph_algorithms(
         return Err(ApiError::not_found());
     }
     let registry = &state.datasources;
-    // One status, install or removal per source at a time on this server, from reading what Kalzit
-    // installed to recording what changed, so two of them never act on a stale record.
+    // One install or removal per source at a time on this server, from reading what Kalzit
+    // installed to recording what changed, so two of them never act on a stale record; another one
+    // meanwhile is answered at once (`tigergraph.install_busy`), not queued. A status only reads
+    // and takes no lock, so viewing it never keeps algorithm steps out of the database.
     let lock = tigergraph_lock(&ds.id);
-    let _held = lock.write().await;
+    let _held = match &action {
+        TigerGraphAlgorithmsAction::Status(_) => None,
+        _ => Some(install_guard(&lock)?),
+    };
     let recorded: Vec<String> =
         sqlx::query_scalar("SELECT name FROM tigergraph_installed_queries WHERE datasource_id = $1 ORDER BY name")
             .bind(&ds.id)

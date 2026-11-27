@@ -1399,7 +1399,12 @@ impl DataSourcePlugin for TigerGraph {
         let lock = super::tigergraph_lock(conn.datasource_id());
         let _held = match lock.try_read() {
             Ok(held) => held,
-            Err(_) => return Err(algorithms::not_verified(&name, "Kalzit is installing or removing the queries")),
+            Err(_) => {
+                return Err(SourceError::rejected(
+                    crate::analysis::algo::library::reason::BUSY,
+                    "Kalzit is installing or removing the algorithm queries of this source",
+                ));
+            }
         };
         let stored: Option<String> = if c.install.is_some() {
             sqlx::query_scalar(

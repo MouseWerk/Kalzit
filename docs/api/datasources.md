@@ -1646,9 +1646,11 @@ Both need `datasources:write` for the organization or an `admin` grant on the so
 (`tigergraph.install_script_changed` otherwise); nothing is installed while a `foreign` query has
 one of the names (`tigergraph.install_name_taken`) or, without `replaceChanged`, while one is
 `changed` (`tigergraph.install_changed_query`). After an install every query must be `current`
-(`tigergraph.install_failed` otherwise). One status, install or removal runs per source at a time
-on a server, and no algorithm step of the source runs in the database meanwhile (it runs on the
-Kalzit server). Kalzit stores name, version and checksum of each query it installed in its own
+(`tigergraph.install_failed` otherwise). One install or removal runs per source at a time on a
+server; another one meanwhile is answered at once with `tigergraph.install_busy`. Meanwhile no
+algorithm step of the source runs in the database: it runs on the Kalzit server with
+`algorithm.busy`, which is not remembered, so the next run asks the database again. The status
+only reads and takes no lock. Kalzit stores name, version and checksum of each query it installed in its own
 database. A Kalzit update with a new version of the texts replaces nothing on its own: the older
 queries stop running in the database (`older`) until an administrator confirms the update. With the
 install access, only a query with Kalzit's exact current text runs: one Kalzit installed against the
@@ -2835,6 +2837,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.install_credential_missing` | | the source has no install access: the switch `installAlgorithms` is off, or `installUser` or `installPassword` is missing |
 | `tigergraph.install_user_unverifiable` | | the install access's privileges cannot be read or lack `CREATE_QUERY` or `INSTALL_QUERY`; it is not used |
 | `tigergraph.install_user_too_much` | `privileges` | the install access holds more than `READ_SCHEMA`, `READ_QUERY`, `CREATE_QUERY`, `DROP_QUERY` and `INSTALL_QUERY`, a broad built-in role or superuser; it is not used |
+| `tigergraph.install_busy` | | another install or removal of the source's algorithm queries is running; nothing ran, try again when it is done |
 | `tigergraph.install_changed_query` | `name` | a query Kalzit installed was changed in the database; an install replaces it only with `replaceChanged` |
 | `tigergraph.install_script_changed` | | the confirmed checksum is not the one of the GSQL Kalzit would run now; nothing ran; read the status again and confirm that |
 | `tigergraph.install_name_taken` | `name` | the graph has a query of that name that Kalzit did not install; nothing was installed |
@@ -2954,6 +2957,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `algorithm.answer` | `detail` | the TigerGraph algorithm query answered without its edge count or values; the server computes the step |
 | `algorithm.not_installed` | `name`, `detail` | step `reason` (TigerGraph): Kalzit's algorithm query is not installed on the graph, or takes other parameters; the server computes the step and does not ask again for ten minutes |
 | `algorithm.not_verified` | `name`, `detail` | step `reason` (TigerGraph): the algorithm query cannot be shown to only read (its text is unreadable and it is not approved, TigerGraph marks it as changing data, an older version Kalzit installed, or TigerGraph 3.x); the server computes the step |
+| `algorithm.busy` | | step `reason` (TigerGraph): Kalzit is installing or removing the source's algorithm queries right now; the server computes the step this time, and the next run asks the database again |
 | `algorithm.changed_in_database` | `name` | step `reason` (TigerGraph): the query Kalzit installed no longer has the text whose checksum Kalzit stored; it does not run until an administrator installs it again |
 | `algorithm.subgraph_differs` | `database`, `result` | step `reason` (TigerGraph): the database holds other edges between the result's vertices than the result, so the query's answer would differ; the server computes the step |
 | `analysis.paths_cut` | `shown`, `total` | notice: only `shown` of `total` shortest paths are listed (the step's `maxCount`); a higher bound lists more |

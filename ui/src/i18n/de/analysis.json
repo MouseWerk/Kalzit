@@ -427,5 +427,6 @@
   "analysis.place.algorithm.not_installed": "Rechnet im Server: Kalzits Algorithmus-Abfrage ist in der Datenbank nicht installiert.",
   "analysis.place.algorithm.not_verified": "Rechnet im Server: Für die Algorithmus-Abfrage der Datenbank lässt sich nicht zeigen, dass sie nur liest.",
   "analysis.place.algorithm.changed_in_database": "Rechnet im Server: Die Algorithmus-Abfrage wurde in der Datenbank geändert.",
-  "analysis.place.algorithm.subgraph_differs": "Rechnet im Server: Die Datenbank hat zwischen diesen Knoten andere Kanten als das Ergebnis."
+  "analysis.place.algorithm.subgraph_differs": "Rechnet im Server: Die Datenbank hat zwischen diesen Knoten andere Kanten als das Ergebnis.",
+  "analysis.place.algorithm.busy": "Rechnet im Server: Kalzit installiert oder entfernt gerade die Algorithmus-Abfragen der Datenbank."
 }

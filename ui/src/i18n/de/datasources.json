@@ -1587,5 +1587,7 @@
   "datasources.reason.algorithm.not_verified": "Rechnet im Server: Für {name} lässt sich nicht zeigen, dass sie nur liest ({detail}).",
   "datasources.reason.algorithm.changed_in_database": "Rechnet im Server: {name} wurde in der Datenbank geändert. Ein Admin installiert sie neu.",
   "datasources.reason.algorithm.subgraph_differs": "Rechnet im Server: Die Datenbank hat zwischen diesen Knoten andere Kanten als das Ergebnis.",
-  "datasources.reason.tigergraph.install_changed_query": "{name} wurde in der Datenbank geändert, seit Kalzit sie installiert hat. Bestätige das Ersetzen, um zu installieren."
+  "datasources.reason.tigergraph.install_changed_query": "{name} wurde in der Datenbank geändert, seit Kalzit sie installiert hat. Bestätige das Ersetzen, um zu installieren.",
+  "datasources.reason.tigergraph.install_busy": "Kalzit installiert oder entfernt die Algorithmus-Abfragen dieser Datenquelle gerade. Versuche es danach erneut.",
+  "datasources.reason.algorithm.busy": "Rechnet im Server: Kalzit installiert oder entfernt gerade die Algorithmus-Abfragen der Datenbank."
 }

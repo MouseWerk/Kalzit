@@ -1587,5 +1587,7 @@
   "datasources.reason.algorithm.not_verified": "Computed on the server: {name} cannot be shown to only read ({detail}).",
   "datasources.reason.algorithm.changed_in_database": "Computed on the server: {name} was changed in the database. An admin installs it again.",
   "datasources.reason.algorithm.subgraph_differs": "Computed on the server: the database has other edges between these nodes than the result.",
-  "datasources.reason.tigergraph.install_changed_query": "{name} was changed in the database since Kalzit installed it. Confirm replacing it to install."
+  "datasources.reason.tigergraph.install_changed_query": "{name} was changed in the database since Kalzit installed it. Confirm replacing it to install.",
+  "datasources.reason.tigergraph.install_busy": "Kalzit is already installing or removing the algorithm queries of this data source. Try again when it is done.",
+  "datasources.reason.algorithm.busy": "Computed on the server: Kalzit is installing or removing the database’s algorithm queries right now."
 }

@@ -150,6 +150,9 @@ pub mod reason {
     /// TigerGraph: the variant Kalzit installed no longer has the text whose checksum Kalzit
     /// stored; it does not run until an administrator installs it again.
     pub const CHANGED_IN_DATABASE: &str = "algorithm.changed_in_database";
+    /// TigerGraph: Kalzit is installing or removing the algorithm queries of the source right
+    /// now; the step runs on the server this time, and the next run asks the database again.
+    pub const BUSY: &str = "algorithm.busy";
     /// The library answered in a form Kalzit does not read; nothing is guessed, the step fails
     /// with `steps.algorithm_answer` and may be run on the server (`"place": "server"`).
     pub const ANSWER_UNREADABLE: &str = "algorithm.answer_unreadable";
