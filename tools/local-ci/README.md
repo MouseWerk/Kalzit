@@ -40,30 +40,31 @@ tools/local-ci/gh-run.sh --gate 391  # the fast gate on GitHub's runners
 tools/local-ci/gh-run.sh --on 388 386 -- 391 390   # on GitHub, 391 and 390 on top of main + 388 + 386
 ```
 
-**What a pass covers.** `run.sh` tests the pull requests merged onto `origin/main`, as the merge
-queue did, and posts `local/windows` and `local/linux` to every head, naming the tested content
-first: the tree of the merged result (`passed gate tree 6dedf534832d on main cae59d2e4 batch
-391,388 in 30 min` for the gate, `passed tree ...` for the full suite). `merge.sh` computes the
-tree that merging the heads onto the current main would make (git merge-tree, one after another)
-and merges only with a pass of exactly that tree on every head, from the gate or the full suite;
-otherwise it runs the gate first, and a failure of that tree stops it. So a result stays good
-while main moves in ways that leave the merged content the same, and never covers anything else:
-a later push to a pull request, another main or another order make a new tree. After each squash
-merge, `merge.sh` checks that the commit sits on the main it was checked against and holds the
-predicted tree; before each merge after the first, main must be exactly the commit the one before
-made. If GitHub refuses a merge partway, it says which pull requests are merged and which are
-left. A failure of exactly that tree, in either stage and on either leg, stops it even under a
-later pass: a second run does not turn a failure into a pass. The one exception is a leg that
-died without a failed job (`failed ... : the leg itself`, for example WSL gone or a full disk):
-that gets one rerun, whose statuses say `rerun after a failed leg`; a second such failure, or any
-failed job, stops it. After a merged batch (also one that
-stopped partway) it leaves `main-watch.trigger` for `main-watch.sh`.
+**What a pass covers.** `run.sh` tests the pull requests squash-merged onto `origin/main`, one
+after another, as GitHub merges them, and posts `local/windows` and `local/linux` to every head,
+naming the tested content first: the tree of the merged result (`passed gate tree 6dedf534832d on
+main cae59d2e4 batch 391,388 in 30 min` for the gate, `passed tree ...` for the full suite).
+`merge.sh` computes the tree that merging the heads onto the current main would make (git
+merge-tree, one after another, each as a squash commit with one parent, as GitHub makes them, so
+stacked pull requests and shared commits are predicted right) and merges only with a pass of
+exactly that tree on every head, from the gate or the full suite; otherwise it runs the gate
+first, and a failure of that tree stops it. So a result stays good while main moves in ways that
+leave the merged content the same, and never covers anything else: a later push to a pull request,
+another main or another order make a new tree. After each squash merge, `merge.sh` checks that the
+commit sits on the main it was checked against and holds the predicted tree; before each merge
+after the first, main must be exactly the commit the one before made. If GitHub refuses a merge
+partway, it says which pull requests are merged and which are left. A failure of exactly that
+tree, in either stage and on either leg, stops it even under a later pass: a second run does not
+turn a failure into a pass. The one exception is a leg that died without a failed job (`failed ...
+: the leg itself`, for example WSL gone or a full disk): that gets one rerun, whose statuses say
+`rerun after a failed leg`; a second such failure, or any failed job, stops it. After a merged
+batch (also one that stopped partway) it leaves `main-watch.trigger` for `main-watch.sh`.
 
 **Batches.** As the merge queue built up to four pull requests at once, `run.sh PR PR...`
-merges them onto main one after another and tests the result once: the build, databases, e2e
-and image run once for all of them (at most 8). If a batch fails: for a conflict the status
-names the pull request; for a failing test, which runs on the combined tree, run smaller
-batches to find it.
+squash-merges them onto main one after another and tests the result once: the build, databases,
+e2e and image run once for all of them (at most 8). If a batch fails: for a conflict the status
+names the pull request; for a failing test, which runs on the combined tree, run smaller batches
+to find it.
 
 **On GitHub's runners.** `gh-run.sh` makes the same merged commit without a checkout, pushes it
 to a branch of its own (`local-ci/gh-...`, deleted afterwards), starts `ci.yml` there by hand
@@ -72,7 +73,13 @@ to a branch of its own (`local-ci/gh-...`, deleted afterwards), starts `ci.yml` 
 `merge.sh` takes it like a local pass. With `--on A... --`, it tests ahead: the second list on top
 of main with the first list merged first, posting to the second list only. Once the first list
 has merged, main plus the second list is exactly that tree, so the second list merges without
-another run.
+another run. On GitHub the pushed commit's own `ci.yml` runs, so `gh-run.sh` refuses a batch that
+changes `.github/` or `tools/local-ci` (it would be judged by its own rules) unless
+`GH_RUN_ALLOW_CI_CHANGES=1` says those changes were reviewed; run such a batch locally. It
+follows the run of exactly the pushed commit. Only a failed run posts `failure`; a run that is
+cancelled, times out, ends otherwise without a result or has not finished after 8 hours (it is
+cancelled then) posts `error` (`no result for ...`), so `merge.sh` runs the CI again instead of
+stopping.
 
 Options of `run.sh`: `--full` runs the full suite (every job regardless of the change), `--msi`
 adds the Windows installer test (it installs and removes Kalzit as a service, with a firewall rule
@@ -83,8 +90,9 @@ these jobs and posts nothing (for bisecting), `--tests FILE` narrows them to the
 diagnostic rerun, `--runner-from-pr` runs the pull request's own copy of these scripts (see
 Trust).
 
-`--ref` tests the commit as it is, not merged onto main; its statuses name its tree too
-(`passed tree ... at <commit> as it is`).
+`--ref` tests the commit as it is, not merged onto main; its statuses name its tree last
+(`passed at <commit> as it is, [gate ]tree ...`), so `merge.sh` never takes such a run as a pull
+request's pass.
 
 ## Failures and reruns
 
