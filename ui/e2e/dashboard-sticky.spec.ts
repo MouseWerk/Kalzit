@@ -218,3 +218,65 @@ for (const { viewport, editing } of [
     }
   });
 }
+
+// A dashboard of one panel, far shorter than the window: the rail still runs down to the window's
+// lower edge, viewing and editing, and the page gets no scrollbar for it.
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 900, height: 720 },
+]) {
+  for (const editing of [false, true]) {
+    test(`${viewport.width}x${viewport.height}, ${editing ? "editing" : "viewing"}: on a short dashboard the rail runs to the window's lower edge without a scrollbar`, async ({
+      page,
+      world,
+    }) => {
+      await page.setViewportSize(viewport);
+      await signInOwner(page);
+      await page.goto(`/dashboards/${world.dashboardId}`);
+      await expect(page.getByRole("group", { name: "Sales", exact: true })).toBeVisible();
+      if (editing) {
+        await startEditing(page);
+      }
+      const free = await tokenPx(page, "--space-sticky-bottom");
+      const { railBottom, scrolls } = await page.evaluate(() => {
+        const main = document.querySelector(".shell__main");
+        const column = document.querySelector(".dash-rail__column");
+        if (main === null || column === null) throw new Error("main area or rail missing");
+        return {
+          railBottom: column.getBoundingClientRect().bottom,
+          scrolls: main.scrollHeight > main.clientHeight,
+        };
+      });
+      expect(scrolls, "the main area scrolls").toBe(false);
+      expect(viewport.height - railBottom).toBeGreaterThanOrEqual(-0.5);
+      expect(viewport.height - railBottom).toBeLessThanOrEqual(free + 0.5);
+    });
+  }
+}
+
+// Where the canvas has no room for a pane beside the panels (900 px with the sidebar open), edit
+// mode starts with the outline closed, and an opened pane floats over the panels instead of
+// squeezing them: the panels keep the canvas' width.
+test("900x720, editing: the outline floats over the panels instead of narrowing them", async ({
+  page,
+  world,
+}) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${world.dashboardId}`);
+  await expect(page.getByRole("group", { name: "Sales", exact: true })).toBeVisible();
+  await startEditing(page);
+  const outline = page.getByRole("button", { name: t("toolbar.rail.outline") });
+  await expect(outline).toHaveAttribute("aria-expanded", "false");
+  const grid = page.locator(".dash-canvas__main");
+  const closed = await grid.evaluate((element) => element.getBoundingClientRect().width);
+  await outline.click();
+  await expect(page.locator(".dash-pane")).toBeVisible();
+  const open = await grid.evaluate((element) => element.getBoundingClientRect().width);
+  expect(Math.abs(open - closed)).toBeLessThanOrEqual(0.5);
+  // The panel still shows its title beside its actions.
+  const title = page
+    .getByRole("article", { name: "Sales", exact: true })
+    .getByRole("heading", { level: 2 });
+  await expect(title).toBeVisible();
+});
