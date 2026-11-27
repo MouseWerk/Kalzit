@@ -5,6 +5,10 @@
 - New passkeys are saved so the browser can offer them without an email address.
 - Recent sign-ins name sign-ins with a passkey alone.
 
+## Fixed
+
+- Adding a passkey works in Chrome and Edge again; they refused the request ("Requested protection policy is inconsistent").
+
 ## Checklist for Windows (manual)
 
 - Open Kalzit by its host name (not an IP address) in Edge with Windows Hello, add a passkey under Settings > Sign-in and security, sign out, and choose "Sign in with a passkey": Windows Hello asks for the PIN or face, and you are signed in without a second step.
