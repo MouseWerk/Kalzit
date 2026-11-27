@@ -4,6 +4,9 @@
 - "Shared or borrowed computer" now also ends the session when the browser closes, at the latest after 12 hours.
 - New passkeys are saved so the browser can offer them without an email address.
 - Recent sign-ins name sign-ins with a passkey alone.
+- A successful sign-in draws a check in its button before the app opens (not with reduced motion).
+- The password reset mail and page say that passkeys stay valid with a new password, and where to review them.
+- A security key that keeps a passkey shows it to a sign-in without an account only after its PIN.
 
 ## Fixed
 
