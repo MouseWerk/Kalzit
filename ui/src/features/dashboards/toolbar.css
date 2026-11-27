@@ -234,6 +234,34 @@
 
   .dash-canvas--rail {
     grid-template-columns: minmax(0, 1fr) auto;
+    container: dash-canvas / inline-size;
+  }
+
+  /*
+   * Next to the sidebar a dashboard with the rail fills the main area at least down to its
+   * bottom padding: the canvas takes what the bars above it leave, so on a dashboard of a few
+   * panels the rail still runs to the window's lower edge. Never more than that room, so a short
+   * dashboard gets no scrollbar; a long one grows past it and scrolls as before. Phones have no
+   * rail, and the main area scrolls only next to the sidebar (components.css).
+   */
+  @media screen and (width > 48rem) {
+    .shell__main:has(> .shell__content > .dashboard > .dash-canvas--rail),
+    .shell__content:has(> .dashboard > .dash-canvas--rail),
+    .dashboard:has(> .dash-canvas--rail) {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .shell__content:has(> .dashboard > .dash-canvas--rail),
+    .dashboard:has(> .dash-canvas--rail),
+    .dashboard > .dash-canvas--rail {
+      flex: 1 0 auto;
+    }
+
+    /* An empty dashboard's notice keeps its own height; only the rail runs down. */
+    .dash-canvas--rail > .empty-state {
+      align-self: start;
+    }
   }
 
   /*
@@ -258,14 +286,16 @@
     flex-direction: column;
     /*
      * As tall as the window below its sticky top, less what sticky columns leave free at the
-     * bottom (or as the canvas, when that is shorter), so it sticks and never gets pushed under
-     * the toolbar at the page's end. A low window scrolls its buttons inside it, but it never
-     * shrinks below the least height of a sticky column. The padding leaves room for the focus
-     * rings of the buttons at its edges (the contrast theme's included), which it would clip.
+     * bottom (or as the rail, when that is shorter), so it sticks and never gets pushed under
+     * the toolbar at the page's end. A short dashboard's canvas fills the window (below), so the
+     * rail and its column run down to the same place there. A low window scrolls its buttons
+     * inside it, but it never shrinks below the least height of a sticky column. The padding
+     * leaves room for the focus rings of the buttons at its edges (the contrast theme's
+     * included), which it would clip.
      */
     align-self: flex-start;
     height: min(
-      calc(100% - var(--space-sticky-reach)),
+      100%,
       max(
         var(--size-sticky-column-min),
         calc(
@@ -921,6 +951,35 @@
    */
   .dash-rail--editing .dash-pane {
     width: var(--size-drawer);
+  }
+
+  /*
+   * Where the canvas is too narrow to give a pane its room (a laptop at 900 px with the sidebar
+   * open), the panels would shrink to a sliver beside it. There the pane floats over the panels
+   * instead, still sticky, beside the rail: a negative start margin of its width and the gap
+   * takes it out of the canvas' columns. Edit mode then starts with the outline closed
+   * (DashboardRail.tsx reads --dash-pane-floats), so it covers nothing until it is opened. A
+   * literal, as container conditions cannot read tokens: the toolbar's own narrow width.
+   */
+  @container dash-canvas (max-width: 60rem) {
+    .dash-rail {
+      --dash-pane-floats: 1;
+    }
+
+    .dash-pane {
+      z-index: var(--z-sticky-column);
+      margin-inline-start: calc((var(--size-column) + var(--space-2)) * -1);
+      box-shadow: var(--shadow-menu);
+    }
+
+    .dash-pane--add {
+      margin-inline-start: calc((var(--size-add-pane) + var(--space-2)) * -1);
+    }
+
+    .dash-pane:has(.inspector),
+    .dash-rail--editing .dash-pane {
+      margin-inline-start: calc((var(--size-drawer) + var(--space-2)) * -1);
+    }
   }
 
   .dash-pane__outline {

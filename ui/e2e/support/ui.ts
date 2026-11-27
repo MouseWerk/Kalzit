@@ -41,10 +41,14 @@ export async function panelAction(
  */
 export async function toolbarButton(page: Page, key: string, language: Language = "en") {
   const button = page.getByRole("button", { name: t(key, {}, language), exact: true }).first();
+  const more = page.getByRole("button", { name: t("toolbar.more", {}, language), exact: true });
+  // The toolbar comes with the dashboard: wait until it shows one of the two before deciding,
+  // or a check right after the page opens finds neither and takes the phone's way.
+  await expect(button.or(more).filter({ visible: true }).first()).toBeVisible();
   if (await button.isVisible()) {
     await button.click();
   } else {
-    await page.getByRole("button", { name: t("toolbar.more", {}, language), exact: true }).click();
+    await more.click();
     await page.getByRole("menuitem", { name: t(key, {}, language), exact: true }).click();
   }
 }
