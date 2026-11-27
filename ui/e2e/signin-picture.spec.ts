@@ -1,5 +1,5 @@
 import type { Page, TestInfo } from "@playwright/test";
-import { Api, OWNER, unique } from "./support/api";
+import { Api, baseUrl, OWNER, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { findOverflow } from "./support/overflow";
 import { expect, test } from "./support/test";
@@ -250,7 +250,7 @@ test.describe("sign-in picture, movement and fallbacks", () => {
 test.describe("sign-in picture, the server's switch", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("only a server admin may turn the picture off", async ({ playwright, baseURL }) => {
+  test("only a server admin may turn the picture off", async ({ playwright }) => {
     const owner = await Api.owner();
     try {
       const member = await owner.createMember(unique("Vera Viewer"), "viewer");
@@ -260,7 +260,7 @@ test.describe("sign-in picture, the server's switch", () => {
       });
       expect(refused.status()).toBe(403);
       await viewer.dispose();
-      const anonymous = await playwright.request.newContext({ baseURL });
+      const anonymous = await playwright.request.newContext({ baseURL: baseUrl() });
       const unknown = await anonymous.patch("/api/admin/settings/signin.backdrop", {
         data: { value: false, version: 0 },
       });

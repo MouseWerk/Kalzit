@@ -1399,6 +1399,11 @@
       height: calc(100dvh - var(--space-6) - var(--border-width) * 2);
     }
 
+    /* The notice stands at the top of the panel: the picture moves down, clear of a short one. */
+    .access--split .access__panel:has(.access__notice) .access-art {
+      inset-block-start: 58%;
+    }
+
     .access--split .access__panel-body:has(.access__notice) {
       grid-row: 3 / -1;
       grid-column: 1;
