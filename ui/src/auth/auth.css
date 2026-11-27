@@ -1276,6 +1276,10 @@
     --access-art-far: var(--access-art-far-quiet);
     --access-art-echo: var(--access-art-echo-quiet);
     --access-art-clear: var(--access-art-clear-quiet);
+    --access-art-edge: var(--access-art-edge-quiet);
+    --access-art-ridge: var(--access-art-ridge-quiet);
+    --access-art-face: var(--access-art-face-quiet);
+    --access-art-face-side: var(--access-art-face-side-quiet);
   }
 
   @container (min-height: 75rem) {

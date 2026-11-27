@@ -14,9 +14,25 @@ const LIGHT_TIMEOUT_MS = 900;
 
 let picture: HTMLElement | null = null;
 
-/** The picture on the page, or null when it leaves; Backdrop passes it as its ref. */
-export function registerPicture(element: HTMLElement | null): void {
-  picture = element;
+/**
+ * The picture on the page; Backdrop passes this as its ref. What it returns takes the picture
+ * off again when it leaves, and only that one: with two layouts on a page for a moment (one
+ * leaving, one arriving), the one that leaves must not take the other's picture with it.
+ */
+export function registerPicture(element: HTMLElement | null): () => void {
+  if (element !== null) {
+    picture = element;
+  }
+  return () => {
+    if (picture === element) {
+      picture = null;
+    }
+  };
+}
+
+/** Forgets the picture, whichever it is (tests). */
+export function forgetPicture(): void {
+  picture = null;
 }
 
 function matches(query: string): boolean {

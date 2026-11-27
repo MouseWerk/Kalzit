@@ -9,7 +9,8 @@
  *
  * Units are the board's (its drawing is 700 by 760). The crystal is Kalzit's mark; a test holds
  * the two against each other. Around the board's drawing the table goes on to the left and the
- * graph to the right, fainter with the distance, for the panel of a very wide window.
+ * graph to the right, fainter with the distance, for the panel of a very wide window. Both run
+ * out of the drawing's box with open lines, so neither ends at an edge inside a panel.
  */
 
 /** A point in the drawing's units. */
@@ -68,10 +69,16 @@ export const CRYSTAL = {
 
 /*
  * The table: rows and columns, and a short line in each cell where a value stands. The board's
- * four column lines lie half behind the crystal; five more go on to the left.
+ * four column lines lie half behind the crystal; more go on to the left, and the rows run on
+ * past the last of them to the drawing's left bound.
  */
 const TABLE_ROWS = [250, 290, 330, 370, 410, 450] as const;
 const TABLE_COLUMNS: readonly { x: number; tier: Tier }[] = [
+  { x: -810, tier: "far" },
+  { x: -725, tier: "far" },
+  { x: -640, tier: "far" },
+  { x: -555, tier: "far" },
+  { x: -470, tier: "far" },
   { x: -385, tier: "far" },
   { x: -300, tier: "far" },
   { x: -215, tier: "far" },
@@ -99,10 +106,12 @@ function tablePaths(): Record<Tier, string> {
   // Each tier draws the rows from its first column line to the next tier's.
   for (const tier of TIERS) {
     const own = TABLE_COLUMNS.filter((column) => column.tier === tier);
-    const from = own[0]?.x;
-    if (from === undefined) {
+    const first = own[0]?.x;
+    if (first === undefined) {
       continue;
     }
+    // The farthest rows start at the drawing's bound: open, with no line closing the table.
+    const from = tier === "far" ? VIEW.x : first;
     const after = TABLE_COLUMNS.find((column) => column.x > (own[own.length - 1]?.x ?? from));
     const to = after?.x ?? (own[own.length - 1]?.x as number);
     for (const y of TABLE_ROWS) {
@@ -174,6 +183,14 @@ export const GRAPH_NODES: readonly { at: Point; tier: Tier }[] = [
   { at: [806, 590], tier: "far" },
   { at: [1030, 236], tier: "far" },
   { at: [1084, 500], tier: "far" },
+  { at: [1150, 356], tier: "far" },
+  { at: [1196, 196], tier: "far" },
+  { at: [1250, 520], tier: "far" },
+  { at: [1322, 318], tier: "far" },
+  { at: [1392, 566], tier: "far" },
+  { at: [1436, 188], tier: "far" },
+  { at: [1516, 404], tier: "far" },
+  { at: [1572, 262], tier: "far" },
 ];
 export const GRAPH_EDGES: readonly (readonly [from: number, to: number])[] = [
   [0, 1],
@@ -198,6 +215,24 @@ export const GRAPH_EDGES: readonly (readonly [from: number, to: number])[] = [
   [11, 15],
   [13, 15],
   [13, 16],
+  [15, 17],
+  [15, 18],
+  [16, 17],
+  [16, 19],
+  [17, 20],
+  [18, 20],
+  [18, 22],
+  [19, 21],
+  [20, 23],
+  [21, 23],
+  [22, 24],
+  [23, 24],
+];
+/** Edges that leave the drawing at its right bound, to nodes that are not in the picture. */
+export const GRAPH_OPEN_EDGES: readonly (readonly [from: number, to: Point])[] = [
+  [24, [1640, 222]],
+  [23, [1640, 452]],
+  [21, [1640, 628]],
 ];
 /** Half a node's diagonal. */
 export const NODE_RADIUS = 12;
@@ -219,6 +254,12 @@ function graphPaths(): Record<Tier, { edges: string; nodes: string }> {
     // An edge is as faint as its farther end.
     const tier = ORDER[a.tier] >= ORDER[b.tier] ? a.tier : b.tier;
     paths[tier].edges.push(`M${point(a.at)} ${point(b.at)}`);
+  }
+  for (const [from, to] of GRAPH_OPEN_EDGES) {
+    const a = GRAPH_NODES[from];
+    if (a !== undefined) {
+      paths.far.edges.push(`M${point(a.at)} ${point(to)}`);
+    }
   }
   for (const { at, tier } of GRAPH_NODES) {
     const [x, y] = at;

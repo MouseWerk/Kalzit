@@ -871,6 +871,10 @@
     --access-art-far-quiet: color-mix(in oklch, var(--text) 4.5%, transparent);
     --access-art-echo-quiet: color-mix(in oklch, var(--text) 20%, transparent);
     --access-art-clear-quiet: color-mix(in oklch, var(--text) 42%, transparent);
+    --access-art-edge-quiet: color-mix(in oklch, var(--text) 38%, transparent);
+    --access-art-ridge-quiet: color-mix(in oklch, var(--text) 24%, transparent);
+    --access-art-face-quiet: color-mix(in oklch, var(--text) 3.5%, transparent);
+    --access-art-face-side-quiet: color-mix(in oklch, var(--text) 1.75%, transparent);
     --access-art-light: var(--text);
     /* The small pictures of the four themes in the setup's theme choice. */
     --preview-light-bg: oklch(95.8% 0.002 286);

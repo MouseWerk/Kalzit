@@ -10,6 +10,7 @@ import {
   CRYSTAL_INNER,
   GRAPH_EDGES,
   GRAPH_NODES,
+  GRAPH_OPEN_EDGES,
   NODE_RADIUS,
   SCENE,
   TIERS,
@@ -95,6 +96,18 @@ describe("the picture in the sign-in panel", () => {
       expect(at[0] + NODE_RADIUS).toBeLessThan(VIEW.x + VIEW.width);
       expect(at[1] - NODE_RADIUS).toBeGreaterThan(VIEW.y);
       expect(at[1] + NODE_RADIUS).toBeLessThan(VIEW.y + VIEW.height);
+    }
+  });
+
+  it("runs out of the drawing on both sides instead of ending inside a wide panel", () => {
+    // The table's farthest rows start at the left bound, with no column line closing them.
+    expect(SCENE.far.lines).toContain(`M${VIEW.x} 250H`);
+    expect(SCENE.far.lines).not.toContain(`M${VIEW.x} 250V`);
+    // The graph's last edges leave at the right bound, from nodes of the picture.
+    expect(GRAPH_OPEN_EDGES.length).toBeGreaterThan(0);
+    for (const [from, to] of GRAPH_OPEN_EDGES) {
+      expect(GRAPH_NODES[from]?.tier).toBe("far");
+      expect(to[0]).toBeGreaterThan(VIEW.x + VIEW.width);
     }
   });
 

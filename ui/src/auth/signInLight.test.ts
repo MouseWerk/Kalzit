@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LIGHT_ANIMATION, LIT_ATTRIBUTE, playSignInLight, registerPicture } from "./signInLight";
+import {
+  forgetPicture,
+  LIGHT_ANIMATION,
+  LIT_ATTRIBUTE,
+  playSignInLight,
+  registerPicture,
+} from "./signInLight";
 
 /** A picture on the page; jsdom lays nothing out, so the test says whether it is drawn. */
 function picture(drawn = true): HTMLElement {
@@ -25,7 +31,7 @@ function end(element: HTMLElement, animationName: string) {
 }
 
 afterEach(() => {
-  registerPicture(null);
+  forgetPicture();
   document.body.replaceChildren();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -69,12 +75,33 @@ describe("the light after a sign-in", () => {
     const hidden = picture(false);
     await playSignInLight();
     expect(hidden.hasAttribute(LIT_ATTRIBUTE)).toBe(false);
-    registerPicture(null);
+    forgetPicture();
     await playSignInLight();
     const gone = picture();
     gone.remove();
     await playSignInLight();
     expect(gone.hasAttribute(LIT_ATTRIBUTE)).toBe(false);
+  });
+
+  it("keeps the picture of the layout that arrives when the one before it leaves", async () => {
+    media([MOTION]);
+    const leaving = document.createElement("div");
+    document.body.append(leaving);
+    leaving.getClientRects = () => [new DOMRect(0, 0, 600, 800)] as never;
+    const leave = registerPicture(leaving);
+    // The next layout is on the page before the one before it is gone.
+    const arriving = picture();
+    leave();
+    leaving.remove();
+    const light = playSignInLight();
+    expect(arriving.hasAttribute(LIT_ATTRIBUTE)).toBe(true);
+    end(arriving, LIGHT_ANIMATION);
+    await light;
+    // Leaving itself, the current picture is forgotten.
+    const leaveArriving = registerPicture(arriving);
+    leaveArriving();
+    await playSignInLight();
+    expect(arriving.hasAttribute(LIT_ATTRIBUTE)).toBe(false);
   });
 
   it("never keeps anyone from the app: it gives up when the end is not told", async () => {
