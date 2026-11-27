@@ -217,6 +217,67 @@ describe("signing in with a passkey alone", () => {
     expect(browser.requests[1]?.mediation).toBeUndefined();
   });
 
+  it("says calmly that passkeys pause when the address used up its dialogs", async () => {
+    installPasskeys({ suggestions: false });
+    const server = installFakeServer({ signedIn: false });
+    withPasskeys(server);
+    server.areas.sso.passkeyBusy = true;
+    const { user } = renderApp("/login");
+    await user.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
+    const title = await screen.findByText("Passkeys are taking a short break here.");
+    expect(title.closest(".access-notice")?.className).toContain("access-notice--info");
+    expect(
+      screen.getByText("Sign in with your password, or try again in a few minutes."),
+    ).toBeTruthy();
+    // The password goes on.
+    expect(screen.getByLabelText("Password")).toBeTruthy();
+  });
+
+  it("does not ask again at once when the suggestion's dialog is refused", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      installPasskeys();
+      const server = installFakeServer({ signedIn: false });
+      withPasskeys(server);
+      server.areas.sso.passkeyBusy = true;
+      renderApp("/login");
+      await screen.findByRole("button", { name: "Sign in with a passkey" });
+      await waitFor(() => expect(server.areas.sso.passkeyStarts).toBe(1));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(server.areas.sso.passkeyStarts).toBe(1);
+      // No message: the suggestion stepping aside says nothing to the person.
+      expect(screen.queryByText("Passkeys are taking a short break here.")).toBeNull();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await waitFor(() => expect(server.areas.sso.passkeyStarts).toBe(2));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("draws a check in the button before the app opens", async () => {
+    installPasskeys({ suggestions: false });
+    const server = installFakeServer({ signedIn: false });
+    withPasskeys(server);
+    document.documentElement.style.setProperty("--duration-icon-draw", "280ms");
+    try {
+      const { user, location } = renderApp("/login?redirect=%2Fdashboards");
+      await user.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
+      // The form stands again, the button that signed in drawing its check.
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: "Sign in with a passkey" })
+            .querySelector('[data-motion="draw"]')
+            ?.hasAttribute("data-play"),
+        ).toBe(true),
+      );
+      expect(location().pathname).toBe("/login");
+      await waitFor(() => expect(location().pathname).toBe("/dashboards"));
+    } finally {
+      document.documentElement.style.removeProperty("--duration-icon-draw");
+    }
+  });
+
   it("stands next to the providers' buttons, not as the main action", async () => {
     installPasskeys({ suggestions: false });
     const server = installFakeServer({ signedIn: false });

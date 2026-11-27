@@ -74,13 +74,17 @@ pub fn start_registration(
     if let Some(selection) = options.pointer_mut("/publicKey/authenticatorSelection").and_then(Value::as_object_mut) {
         selection.insert("residentKey".into(), Value::from("preferred"));
     }
-    // Chromium refuses a credProtect policy of "userVerificationRequired" next to a preferred
-    // user verification ("Requested protection policy is inconsistent", NotSupportedError), so
-    // the extension webauthn-rs adds is left out: the sign-in with a passkey alone requires the
-    // verification itself (`start_discoverable`).
+    // Chromium refuses the credProtect policy "userVerificationRequired" webauthn-rs asks for next
+    // to a preferred user verification ("Requested protection policy is inconsistent",
+    // NotSupportedError). The level below it is asked for instead, and not enforced: a security
+    // key that keeps the passkey names it (and so the account) to a request without an account
+    // only after its PIN or fingerprint, so a lost key tells a finder nothing; with its credential
+    // id (the second step, which knows the account) it answers as before. The sign-in with a
+    // passkey alone requires the verification itself (`start_discoverable`).
     if let Some(extensions) = options.pointer_mut("/publicKey/extensions").and_then(Value::as_object_mut) {
-        extensions.remove("credentialProtectionPolicy");
-        extensions.remove("enforceCredentialProtectionPolicy");
+        extensions
+            .insert("credentialProtectionPolicy".into(), Value::from("userVerificationOptionalWithCredentialIDList"));
+        extensions.insert("enforceCredentialProtectionPolicy".into(), Value::from(false));
     }
     Ok((options, state))
 }

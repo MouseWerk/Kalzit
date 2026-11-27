@@ -1042,8 +1042,9 @@ not off on the server; otherwise both answer `403 forbidden` with `reason`
 (`mediation` absent) or the suggestion (`"conditional"`). `kalzit_passkey`
 (`__Host-kalzit_passkey` over HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 5 minutes) names the
 started dialog, stored as the SHA-256 of its token; a new start replaces the browser's previous
-one, and the first answer uses it up, right or wrong. Starts are limited to 60 per address in 10
-minutes (`429 rate_limited`).
+one, and the first answer uses it up, right or wrong. New dialogs are limited to 120 per address in
+10 minutes (`429 rate_limited`, `reason` `passkey_sign_in.busy`); a start that replaces the
+browser's own dialog while it lasts is not counted.
 
 `POST /auth/passkey` takes `{ "credential": PublicKeyCredentialJSON, "forgetBrowser"?: boolean }`.
 Without a started dialog it answers `401 invalid_credentials` with `reason`
@@ -1299,6 +1300,7 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.last_method` | `409 conflict` | the last method while a second factor is required |
 | `second_factor.method_off` | `403 forbidden` | the method is turned off on this server |
 | `passkey_sign_in.off` | `403 forbidden` | signing in with a passkey alone does not work here (passkeys off, an IP address, or password sign-in off on the server) |
+| `passkey_sign_in.busy` | `429 rate_limited` | too many new passkey dialogs from this address; the page falls back to the password |
 | `passkey_sign_in.expired` | `401 invalid_credentials` | no started passkey dialog for this answer, or it ended |
 | `passkey_sign_in.refused` | `401 invalid_credentials` | the passkey signs no one in (one answer for every reason) |
 | `second_factor.admin_needs_factor` | `403 forbidden` | a reset by an admin without a second factor of their own |

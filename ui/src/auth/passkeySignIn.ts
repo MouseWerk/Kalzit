@@ -29,6 +29,8 @@ export type PasskeyFailure =
   | "cancelled"
   /** The passkey held for no account that may sign in with it (one answer for every reason). */
   | "refused"
+  /** Too many passkey dialogs from this address (a shared office line): the password goes on. */
+  | "busy"
   /** Anything else (the server did not answer, rate limits, errors); the page shows it. */
   | { error: unknown };
 
@@ -37,9 +39,15 @@ export type PasskeyPhase = "idle" | "waiting" | "checking";
 
 const REFUSED = "passkey_sign_in.refused";
 
+/** How long the suggestion waits before it starts again after a failure it did not show. */
+const SUGGESTION_RETRY_MS = 30_000;
+
 function failureOf(error: unknown): PasskeyFailure {
   if (isPasskeyCancelled(error)) {
     return "cancelled";
+  }
+  if (isApiError(error, "rate_limited")) {
+    return "busy";
   }
   if (isApiError(error, "invalid_credentials")) {
     // Refused, or the dialog had ended (`passkey_sign_in.expired`): then it only needs a retry.
@@ -158,10 +166,21 @@ export function usePasskeySignIn({
         }
         window.clearTimeout(renew);
         // The suggestion ending on its own says nothing to the person; an answer that failed does.
-        if (picked || (!isPasskeyCancelled(error) && !isApiError(error, "rate_limited"))) {
+        // A suggestion the server did not start (its budget for this address, an error) waits
+        // before it asks again, so a busy address is not asked over and over; the form and the
+        // password go on meanwhile.
+        const cancelled = isPasskeyCancelled(error);
+        const limited = isApiError(error, "rate_limited");
+        if (picked || (!cancelled && !limited)) {
           setFailure(failureOf(error));
         }
-        setRound((value) => value + 1);
+        if (picked || cancelled) {
+          setRound((value) => value + 1);
+          return;
+        }
+        const wait = limited ? (error.retryAfterMs ?? SUGGESTION_RETRY_MS) : SUGGESTION_RETRY_MS;
+        const retry = window.setTimeout(() => setRound((value) => value + 1), wait);
+        controller.signal.addEventListener("abort", () => window.clearTimeout(retry));
       }
     })();
     return () => {

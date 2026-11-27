@@ -49,9 +49,12 @@ pub const SECURE_COOKIE: &str = "__Host-kalzit_passkey";
 /// How long a started dialog may wait for its answer. The suggestion in the address field waits
 /// while the person types; the page starts a new one before this ends.
 pub const CEREMONY_TTL_MS: i64 = 5 * 60_000;
-/// Started dialogs per client address in `STARTS_WINDOW_SECS`: each page load starts one for the
-/// suggestion in the address field, each click of the button another.
-pub const STARTS_PER_ADDRESS: u32 = 60;
+/// New dialogs per client address in `STARTS_WINDOW_SECS`: each sign-in page a browser opens starts
+/// one for the suggestion in the address field. A start that replaces the browser's own dialog
+/// while it lasts (the suggestion renewed, a click of the button) keeps no further row and is not
+/// counted, so many people behind one address (an office, a proxy) share a budget of page views,
+/// not of renewals.
+pub const STARTS_PER_ADDRESS: u32 = 120;
 pub const STARTS_WINDOW_SECS: u64 = 10 * 60;
 
 pub fn routes() -> Vec<RouteDef> {
@@ -107,23 +110,39 @@ async fn options(
     if !available(&state, &info).await? {
         return Err(off());
     }
-    let mono = state.clock.monotonic_ms();
-    state
-        .passkey_start_limiter
-        .try_acquire(&address_key("passkey-start", info.client_ip), &network_key(info.client_ip), mono)
-        .map_err(|wait| ApiError::rate_limited("too many passkey dialogs, wait a few minutes", wait))?;
+    let now = state.clock.now_ms();
+    // The browser's own dialog, while it lasts: a new one replaces it and adds no row.
+    let old = session::cookie_value(&headers, cookie_name(info.https)).map(|t| session::hash_token(&t));
+    let replaces = match &old {
+        Some(hash) => {
+            let (live,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM passkey_sign_ins WHERE token_hash = $1 AND expires_at > $2")
+                    .bind(hash)
+                    .bind(now)
+                    .fetch_one(&state.db)
+                    .await?;
+            live > 0
+        }
+        None => false,
+    };
+    if !replaces {
+        let mono = state.clock.monotonic_ms();
+        state
+            .passkey_start_limiter
+            .try_acquire(&address_key("passkey-start", info.client_ip), &network_key(info.client_ip), mono)
+            .map_err(|wait| {
+                ApiError::rate_limited("too many passkey dialogs, wait a few minutes", wait)
+                    .because("passkey_sign_in.busy")
+            })?;
+    }
     let rp = sf::relying_party(&state, &info).await?;
     let (options, ceremony) = passkeys::start_discoverable(&rp)?;
     let stored = serde_json::to_string(&ceremony).map_err(|e| ApiError::internal("passkey sign-in", e))?;
     let token = hex::encode(rand::random::<[u8; 32]>());
-    let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     // One dialog per browser: a new one replaces the one before.
-    if let Some(old) = session::cookie_value(&headers, cookie_name(info.https)) {
-        sqlx::query("DELETE FROM passkey_sign_ins WHERE token_hash = $1")
-            .bind(session::hash_token(&old))
-            .execute(&mut *tx)
-            .await?;
+    if let Some(old) = &old {
+        sqlx::query("DELETE FROM passkey_sign_ins WHERE token_hash = $1").bind(old).execute(&mut *tx).await?;
     }
     sqlx::query("INSERT INTO passkey_sign_ins (token_hash, ceremony, created_at, expires_at) VALUES ($1, $2, $3, $4)")
         .bind(session::hash_token(&token))
@@ -303,6 +322,9 @@ async fn sign_in(
         .await?
         .rows_affected();
     if enabled == 0 {
+        // Recorded like every refusal, once this transaction let go of the database.
+        drop(tx);
+        record_refusal(&state, &info, &headers, Some(&user.id), "disabled", now).await;
         return Err(refused());
     }
     // A second step this browser had begun with a password ends here.

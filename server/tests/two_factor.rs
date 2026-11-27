@@ -776,7 +776,7 @@ async fn check_organization_rules_never_lock_everyone_out(t: TestApp) {
     assert_eq!(r.reason(), "second_factor.setup_first", "{}", r.body);
 
     // Password sign-in off: not without a provider that leads into the organization, and not from
-    // a session signed in with a password or as the break-glass admin.
+    // a session signed in with a password, a passkey alone or as the break-glass admin.
     let r = t.put_setting(&owner, &path("signin.local_password"), json!("off")).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "sso.org_local_off_blocked"), "{}", r.body);
     assert_eq!(r.body["error"]["params"]["check"], "providerReady");
@@ -793,7 +793,7 @@ async fn check_organization_rules_never_lock_everyone_out(t: TestApp) {
     .execute(&t.state.db)
     .await
     .unwrap();
-    for method in ["password", "break_glass"] {
+    for method in ["password", "passkey", "break_glass"] {
         set_session_method(&t, &owner, method).await;
         let r = t.put_setting(&owner, &path("signin.local_password"), json!("off")).await;
         assert_eq!(r.reason(), "sso.org_local_off_blocked", "{method}: {}", r.body);
@@ -1132,8 +1132,15 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     let setup = t.post("/api/me/security/passkeys/setup", json!({}), &owner).await;
     // New passkeys are asked to be discoverable, so they can sign in without a password later.
     assert_eq!(setup.body["publicKey"]["authenticatorSelection"]["residentKey"], "preferred", "{}", setup.body);
-    // No credProtect policy, which Chromium refuses next to a preferred user verification.
-    assert!(setup.body["publicKey"]["extensions"].get("credentialProtectionPolicy").is_none(), "{}", setup.body);
+    // The credProtect level Chromium accepts next to a preferred user verification: a security key
+    // names the passkey to a request without an account only after its PIN.
+    let extensions = &setup.body["publicKey"]["extensions"];
+    assert_eq!(
+        (&extensions["credentialProtectionPolicy"], &extensions["enforceCredentialProtectionPolicy"]),
+        (&json!("userVerificationOptionalWithCredentialIDList"), &json!(false)),
+        "{}",
+        setup.body
+    );
     key.discoverable(&setup.body);
     let r =
         t.post("/api/me/security/passkeys", json!({ "credential": key.register(&setup.body, ORIGIN) }), &owner).await;
@@ -1216,6 +1223,42 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "passkey_sign_in.refused"), "{}", r.body);
     assert_eq!(last_refusal(&t).await["reason"], "disabled");
     sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(&owner_id).execute(&t.state.db).await.unwrap();
+
+    // An account without a password of its own (made by an identity provider or a directory):
+    // the passkey would pass the provider by, so it is refused, the reason recorded.
+    let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
+        .bind(&owner_id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE id = $1")
+        .bind(&owner_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "passkey_sign_in.refused"), "{}", r.body);
+    assert_eq!(last_refusal(&t).await["reason"], "password_off");
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&hash)
+        .bind(&owner_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    // A service account signs in only with its tokens: a passkey stored for one names no account.
+    sqlx::query("UPDATE users SET service_account = 1 WHERE id = $1")
+        .bind(&owner_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "passkey_sign_in.refused"), "{}", r.body);
+    assert!(last_refusal(&t).await.get("userId").is_none(), "no account is named");
+    sqlx::query("UPDATE users SET service_account = 0 WHERE id = $1")
+        .bind(&owner_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
 
     // A member while the server requires a second factor of everyone: the passkey is both, and
     // her organization lets the session in.
@@ -1352,18 +1395,32 @@ async fn check_passkey_sign_ins_are_rate_limited(t: TestApp) {
     let wrong = json!({ "email": "joerg@example.de", "password": "not the password" });
     let r = t.post("/api/auth/login", wrong, &Browser::default()).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the password shares the budget: {}", r.body);
-    // Starts: each keeps a row, so they have a budget of their own.
+    // New dialogs: each keeps a row, so they have a budget of their own.
     let mut started = refused + 1;
-    loop {
+    let mut last = Browser::default();
+    let busy = loop {
         let r = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
         if r.status == StatusCode::TOO_MANY_REQUESTS {
-            break;
+            break r;
         }
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        last = Browser { session: r.cookie("kalzit_passkey"), pending: None };
         started += 1;
         assert!(started < 1000, "the starts are never limited");
-    }
+    };
     assert_eq!(started, kalzit::routes::passkey_sign_in::STARTS_PER_ADDRESS);
+    assert_eq!(busy.reason(), "passkey_sign_in.busy", "{}", busy.body);
+    // A browser renewing its own dialog (the suggestion in the address field) adds no row and is
+    // not counted, also once the address's budget is used up.
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkey_sign_ins").fetch_one(&t.state.db).await.unwrap();
+    for _ in 0..3 {
+        let r = t.post("/api/auth/passkey/options", json!({}), &last).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        last = Browser { session: r.cookie("kalzit_passkey"), pending: None };
+    }
+    let (after,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM passkey_sign_ins").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(after, rows);
     // Unanswered dialogs end and are cleaned up with the sessions.
     t.clock.advance_ms(kalzit::routes::passkey_sign_in::CEREMONY_TTL_MS);
     kalzit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms()).await.unwrap();

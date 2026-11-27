@@ -77,6 +77,8 @@ export interface FakeSsoState {
   /** The bodies of `POST /auth/passkey`, and how many dialogs were started. */
   passkeyAnswers: Record<string, unknown>[];
   passkeyStarts: number;
+  /** `POST /auth/passkey/options` answers `429` (`passkey_sign_in.busy`) while set. */
+  passkeyBusy: boolean;
 }
 
 const T0 = Date.UTC(2026, 9, 29, 9);
@@ -247,6 +249,7 @@ function initialState(): FakeSsoState {
     passkeyAnswer: "ok",
     passkeyAnswers: [],
     passkeyStarts: 0,
+    passkeyBusy: false,
     checks: {
       providerReady: { ok: false },
       breakGlassReady: { ok: false },
@@ -754,6 +757,9 @@ export function handleSsoRoute(
   }
   if (path === "/api/auth/passkey/options" && method === "POST") {
     state.passkeyStarts += 1;
+    if (state.passkeyBusy) {
+      return refusal(429, "rate_limited", "passkey_sign_in.busy");
+    }
     return json(200, {
       publicKey: {
         challenge: "Y2hhbGxlbmdl",

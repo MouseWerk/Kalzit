@@ -184,7 +184,14 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     };
   }, [afterProvider]);
 
-  async function signedIn(me: Me, to?: string) {
+  /** The way the sign-in just succeeded; its button draws a check before the app opens. */
+  const [finished, setFinished] = useState<"password" | "passkey" | null>(null);
+
+  async function signedIn(me: Me, to?: string, via: "password" | "passkey" = "password") {
+    // The check in the button draws itself (board Auth.dc.html, "Bewegung"), then the app opens;
+    // with reduced motion the token is 0 ms and the app opens at once.
+    setFinished(via);
+    await pause(drawMs());
     // Whatever the previous session left (its preferences above all) is not this account's.
     forgetAccountData(queryClient);
     queryClient.setQueryData(meQuery.queryKey, me);
@@ -232,8 +239,10 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const passkey = usePasskeySignIn({
     allowed: variant === "main" && providersQuery.data?.passkeySignIn === true,
     shared,
-    onSignedIn: (me) => signedIn(me),
+    onSignedIn: (me) => signedIn(me, undefined, "passkey"),
   });
+
+  const passkeyView = finished === null ? passkey.phase : "idle";
 
   function startPasskey() {
     signIn.reset();
@@ -452,16 +461,14 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     );
   }, [search.signedOut, search.expired]);
   let status = null;
-  if (passkey.phase !== "idle") {
+  if (passkeyView !== "idle") {
     // The browser's dialog belongs to the browser; the page only says what is happening.
     status = (
       <AccessNotice
         tone="info"
         icon="shieldCheck"
-        title={t(
-          passkey.phase === "waiting" ? "access.passkey.waiting" : "access.login.submitting",
-        )}
-        detail={passkey.phase === "waiting" ? t("access.passkey.waitingDetail") : undefined}
+        title={t(passkeyView === "waiting" ? "access.passkey.waiting" : "access.login.submitting")}
+        detail={passkeyView === "waiting" ? t("access.passkey.waitingDetail") : undefined}
       />
     );
   } else if (alert !== null) {
@@ -534,7 +541,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     status = <AccessNotice tone="info" icon="clock" title={t("security.signIn.expired")} />;
   }
 
-  const busy = signIn.isPending || passkey.phase !== "idle";
+  const busy = signIn.isPending || passkey.phase !== "idle" || finished !== null;
   const orgLine = <OrgLine organization={organization} serverName={serverName} />;
   if (signIn.isIdle && ssoArrival === "disabled") {
     return (
@@ -586,7 +593,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         }
       }}
     >
-      <Icon name="passkey" />
+      {finished === "passkey" ? <Icon name="check" play /> : <Icon name="passkey" />}
       {t("access.passkey.button")}
     </button>
   ) : null;
@@ -626,8 +633,8 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         <div className="access__status" role="status">
           {status}
         </div>
-        <AccessAlert>{passkey.phase === "idle" ? alert : null}</AccessAlert>
-        {passkey.phase === "waiting" ? (
+        <AccessAlert>{passkeyView === "idle" ? alert : null}</AccessAlert>
+        {passkeyView === "waiting" ? (
           <button
             type="button"
             className="button button--secondary button--block"
@@ -636,7 +643,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
             {t("access.passkey.cancel")}
           </button>
         ) : null}
-        {passkey.phase !== "idle" ? null : mode === "plain" ? (
+        {passkeyView !== "idle" ? null : mode === "plain" ? (
           ready && passkeyButton !== null ? (
             <>
               {passkeyButton}
@@ -670,7 +677,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
             {passkeyButton}
           </div>
         )}
-        {passkey.phase !== "idle" ? null : mode === "expanded" ||
+        {passkeyView !== "idle" ? null : mode === "expanded" ||
           (mode === "collapsed" && formShown) ? (
           <p className="access__or">{t("access.sso.orPassword")}</p>
         ) : mode === "collapsed" ? (
@@ -686,7 +693,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
             </button>
           </>
         ) : null}
-        {ready && formShown && passkey.phase === "idle" ? (
+        {ready && formShown && passkeyView === "idle" ? (
           <>
             <TextField
               ref={refs.email}
@@ -764,7 +771,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               }
               aria-disabled={busy || waiting}
             >
-              {busy ? <Icon name="refresh" className="icon--busy" /> : null}
+              {finished === "password" ? (
+                <Icon name="check" play />
+              ) : busy ? (
+                <Icon name="refresh" className="icon--busy" />
+              ) : null}
               {waiting && !addressLocked ? <span className="access__wait">{submit}</span> : submit}
             </button>
           </>
@@ -783,6 +794,19 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
       )}
     </AccessLayout>
   );
+}
+
+/** How long the check of a sign-in draws itself: `--duration-icon-draw`, 0 for reduced motion. */
+function drawMs(): number {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--duration-icon-draw")
+    .trim();
+  const ms = value.endsWith("ms") ? Number.parseFloat(value) : Number.parseFloat(value) * 1000;
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+function pause(ms: number): Promise<void> {
+  return ms === 0 ? Promise.resolve() : new Promise((done) => window.setTimeout(done, ms));
 }
 
 /** "MS" for "Müller & Söhne Analytics": the first letters of the first two words. */
@@ -851,23 +875,18 @@ function PasskeyNotice({ t, failure }: { t: Translate; failure: PasskeyFailure }
       />
     );
   }
-  const code = errorCode(failure.error);
-  if (code === "rate_limited") {
-    const wait = waitUntil(failure.error);
-    const seconds = wait === null ? 0 : Math.ceil((wait - Date.now()) / 1000);
+  if (failure === "busy") {
+    // Calm: nothing is broken, and the password goes on.
     return (
       <AccessNotice
-        tone="danger"
+        tone="info"
         icon="clock"
-        title={t("access.login.rateLimited")}
-        detail={
-          seconds > 60
-            ? t("access.login.pauseMinutes", { count: Math.ceil(seconds / 60) })
-            : t("access.login.pauseUnderMinute")
-        }
+        title={t("access.passkey.busy")}
+        detail={t("access.passkey.busyDetail")}
       />
     );
   }
+  const code = errorCode(failure.error);
   if (code === "network") {
     return (
       <AccessNotice

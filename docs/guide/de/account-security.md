@@ -78,6 +78,11 @@ Browser ohne E-Mail-Adresse an; fehlt deiner, füge ihn unter **Einstellungen > 
 Sicherheit** noch einmal hinzu. Admins schalten Passkeys mit der Einstellung der erlaubten
 Methoden für den zweiten Faktor aus; außerdem brauchen Passkeys einen Hostnamen, keine IP-Adresse.
 
+Ein neues Passwort (auch über **Passwort vergessen?**) beendet deine anderen Sitzungen, aber deine
+Passkeys bleiben gültig, und jeder davon meldet dich allein an. Öffne nach einem Zurücksetzen des
+Passworts, oder wenn du vermutest, dass jemand anderes Zugriff auf dein Konto hatte,
+**Einstellungen > Anmeldung und Sicherheit** und entferne jeden Passkey, den du nicht kennst.
+
 ### Geteilter oder fremder Computer
 
 Hak **Geteilter oder fremder Computer** an, bevor du dich an einem Computer anmeldest, der nicht

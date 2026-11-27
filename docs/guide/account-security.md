@@ -72,6 +72,11 @@ again under **Settings > Sign-in and security** if yours is missing. Administrat
 off with the setting for the allowed second-factor methods; passkeys also need Kalzit to be opened
 by a host name, not an IP address.
 
+A new password (also through **Forgot password?**) ends your other sessions, but your passkeys
+stay valid, and each of them signs in on its own. After a password reset, or whenever you suspect
+someone else had access to your account, open **Settings > Sign-in and security** and remove every
+passkey you do not know.
+
 ### Shared or borrowed computer
 
 Tick **Shared or borrowed computer** before you sign in on a computer that is not yours. Kalzit

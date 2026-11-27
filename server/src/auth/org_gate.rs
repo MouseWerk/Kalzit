@@ -154,7 +154,7 @@ async fn provider_leads_into(state: &AppState, org_id: &str) -> ApiResult<bool> 
 /// organization, or lock its members out (docs/api/access.md, "Organization sign-in rules"):
 /// - password sign-in `off` while no enabled provider or directory leads into the organization
 ///   (`409`, `sso.org_local_off_blocked`, `check` = `providerReady`), or while the saving session
-///   was signed in with a password (`check` = `selfViaProvider`);
+///   was signed in with a password or a passkey alone (`check` = `selfViaProvider`);
 /// - a second factor rule that would refuse the saving member (`409`, `second_factor.setup_first`).
 pub async fn check_change(
     state: &AppState,
@@ -179,7 +179,7 @@ pub async fn check_change(
         }
         let check = if !provider_leads_into(state, org_id).await? {
             Some("providerReady")
-        } else if matches!(session.method.as_str(), "password" | "break_glass" | "") {
+        } else if matches!(session.method.as_str(), "password" | "passkey" | "break_glass" | "") {
             Some("selfViaProvider")
         } else {
             None
