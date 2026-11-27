@@ -410,8 +410,8 @@ left), **Node spacing** and **Layer spacing** in px and the **Edge routing** (or
 polyline; edges are still drawn straight, the routing sets how much room ELK keeps for them). ELK
 loads only when a panel uses it, so the first drawing takes a moment longer and says "Loading ELK
 and arranging the graph"; the same result always gets the same layout. If ELK cannot run, the panel
-shows Kalzit's layout and says so. ELK runs in a web worker; a browser without workers arranges at
-most 300 nodes with ELK and shows Kalzit's layout for larger graphs. **Paths** shows the first path
+shows Kalzit's layout and says so. ELK runs in a web worker; a browser without workers shows
+Kalzit's layout. **Paths** shows the first path
 open and the others folded with their chain of nodes; each edge shows its type, direction and
 properties, each node its labels and first two properties; at most 50 paths, with a note when there
 are more, and **Show as table**. Browsers without WebGL 2 show every graph as a table; **Show as

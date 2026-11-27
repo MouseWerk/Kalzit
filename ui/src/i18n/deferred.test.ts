@@ -185,6 +185,23 @@ describe("keys of a deferred area", () => {
       "panels/graph/style/tableStyle.tsx",
       "panels/graph/style/usePanelStyle.tsx",
     ],
+    // The graph panels' canvas: behind the same gates as the style rules (network, hierarchy and
+    // path panels), which load both areas.
+    graphCanvas: [
+      "panels/graph/GraphPanels.tsx",
+      "panels/graph/GraphPanel.tsx",
+      "panels/path/PathPanel.tsx",
+      "panels/graph/GraphEditor.tsx",
+      "panels/graph/GraphTable.tsx",
+      "panels/graph/style/usePanelStyle.tsx",
+      "panels/graph/canvas/CanvasParts.tsx",
+      "panels/graph/canvas/EdgeSheet.tsx",
+      "panels/graph/canvas/InfoCard.tsx",
+      "panels/graph/canvas/InfoCardOptions.tsx",
+      "panels/graph/canvas/Minimap.tsx",
+      "panels/graph/canvas/SearchBox.tsx",
+      "panels/graph/canvas/ToolStrip.tsx",
+    ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
   };
 
@@ -230,6 +247,7 @@ describe("keys of a deferred area", () => {
     apps: 5,
     handbook: 1,
     graphStyle: 8,
+    graphCanvas: 6,
   };
 
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
@@ -249,12 +267,15 @@ describe("keys of a deferred area", () => {
           offenders.push(`${name} imports ${target} outside the gate: ${statement.split("\n")[0]}`);
         }
       }
-      // Lazy imports: each one right behind this area's `loadArea`.
+      // Lazy imports: each one right behind this area's `loadArea`, or a `loadAreas` naming it.
+      const gate = new RegExp(
+        `(loadArea\\("${area}"\\)|loadAreas\\(("\\w+", )*"${area}"(, "\\w+")*\\))\\s*\\.then\\(\\(\\) =>\\s*$`,
+      );
       for (const match of text.matchAll(/import\("([^"]+)"\)/g)) {
         const target = resolved(name, match[1] ?? "");
         if (target === undefined || !gated.has(target)) continue;
         const before = text.slice(Math.max(0, (match.index ?? 0) - 80), match.index);
-        if (new RegExp(`loadArea\\("${area}"\\)\\s*\\.then\\(\\(\\) =>\\s*$`).test(before)) {
+        if (gate.test(before)) {
           gates += 1;
         } else {
           offenders.push(`${name} imports ${target} without loadArea("${area}")`);

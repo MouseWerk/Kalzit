@@ -53,7 +53,7 @@ export function setLayoutWorkerFactory(factory: WorkerFactory): () => void {
  * Why a hierarchy that asked for ELK shows Kalzit's layout: ELK failed (or could not load), the
  * graph is too large for ELK without a worker, or it has more nodes than ELK lays out at all.
  */
-export type ElkNotice = "elkFailed" | "elkTooLarge" | "elkAboveLimit";
+export type ElkNotice = "elkFailed" | "elkNoWorker" | "elkAboveLimit";
 
 export interface LayoutState {
   positions: Float32Array | null;
@@ -439,8 +439,8 @@ export function useGraphLayout(
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        const tooLarge = error instanceof ElkUnavailable && error.reason === "tooLarge";
-        stop = kalzit(tooLarge ? "elkTooLarge" : "elkFailed");
+        const noWorker = error instanceof ElkUnavailable && error.reason === "noWorker";
+        stop = kalzit(noWorker ? "elkNoWorker" : "elkFailed");
       },
     );
     return () => {

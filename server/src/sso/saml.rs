@@ -1015,6 +1015,61 @@ mod tests {
         assert!(person(&config, &asserted).mfa_done);
     }
 
+    /// A response with one signature on its assertion, in the given form. The signature value is
+    /// not real: every refusal below is decided before any cryptography.
+    fn response(prolog: &str, method: &str, digest: &str, name_id: &str) -> String {
+        let c14n = C14N[0];
+        format!(
+            "{prolog}<samlp:Response xmlns:samlp=\"{PROTOCOL}\" xmlns:saml=\"{ASSERTION}\" xmlns:ds=\"{DSIG}\" \
+             ID=\"_r\" Version=\"2.0\" InResponseTo=\"_q\" Destination=\"https://k.example/acs\">\
+             <samlp:Status><samlp:StatusCode Value=\"{STATUS_SUCCESS}\"/></samlp:Status>\
+             <saml:Assertion ID=\"_a\" Version=\"2.0\"><saml:Issuer>https://idp</saml:Issuer>\
+             <ds:Signature><ds:SignedInfo><ds:CanonicalizationMethod Algorithm=\"{c14n}\"/>\
+             <ds:SignatureMethod Algorithm=\"{method}\"/><ds:Reference URI=\"#_a\"><ds:Transforms>\
+             <ds:Transform Algorithm=\"{ENVELOPED}\"/><ds:Transform Algorithm=\"{c14n}\"/></ds:Transforms>\
+             <ds:DigestMethod Algorithm=\"{digest}\"/><ds:DigestValue>AAAA</ds:DigestValue></ds:Reference>\
+             </ds:SignedInfo><ds:SignatureValue>AAAA</ds:SignatureValue></ds:Signature>\
+             <saml:Subject><saml:NameID>{name_id}</saml:NameID></saml:Subject></saml:Assertion></samlp:Response>"
+        )
+    }
+
+    fn check(xml: &str) -> Result<Asserted, SamlError> {
+        let expected = Expected {
+            idp_entity_id: "https://idp",
+            certificates: &[],
+            sp_entity_id: "https://k.example/sp",
+            acs_url: "https://k.example/acs",
+            request_id: "_q",
+            now_ms: 0,
+        };
+        check_response(xml, &expected)
+    }
+
+    const RSA_SHA256: &str = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+    const SHA256: &str = "http://www.w3.org/2001/04/xmlenc#sha256";
+
+    #[test]
+    fn a_response_with_a_dtd_or_entities_is_refused() {
+        // The well-formed answer gets as far as the signature check, so the refusals below come
+        // from the parser and nothing later.
+        let plain = response("", RSA_SHA256, SHA256, "lea@example.de");
+        assert!(matches!(check(&plain), Err(SamlError::SignatureInvalid(_))));
+        let entity = response("<!DOCTYPE r [<!ENTITY e \"lea@example.de\">]>", RSA_SHA256, SHA256, "&e;");
+        assert!(matches!(check(&entity), Err(SamlError::XmlInvalid(_))), "{:?}", check(&entity));
+        let external = response("<!DOCTYPE r SYSTEM \"file:///etc/passwd\">", RSA_SHA256, SHA256, "lea@example.de");
+        assert!(matches!(check(&external), Err(SamlError::XmlInvalid(_))), "{:?}", check(&external));
+    }
+
+    #[test]
+    fn sha1_signatures_and_digests_are_refused() {
+        for method in ["http://www.w3.org/2000/09/xmldsig#rsa-sha1", "http://www.w3.org/2000/09/xmldsig#dsa-sha1"] {
+            let xml = response("", method, SHA256, "lea@example.de");
+            assert!(matches!(check(&xml), Err(SamlError::SignatureUnsupported(_))), "{method}: {:?}", check(&xml));
+        }
+        let xml = response("", RSA_SHA256, "http://www.w3.org/2000/09/xmldsig#sha1", "lea@example.de");
+        assert!(matches!(check(&xml), Err(SamlError::SignatureUnsupported(_))), "{:?}", check(&xml));
+    }
+
     #[test]
     fn only_known_status_codes_are_reported() {
         let refused = "urn:oasis:names:tc:SAML:2.0:status:AuthnFailed";
