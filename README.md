@@ -16,7 +16,7 @@
   <a href="https://kalzit.dev/">Website</a> ·
   <a href="https://github.com/MouseWerk/Kalzit/releases/latest">Download</a> ·
   <a href="docs/guide/README.md">User guide</a> ·
-  <a href="docs/releases/v0.7.5.md">Release notes</a>
+  <a href="docs/releases/v0.8.1.md">Release notes</a>
 </p>
 
 Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, Explore,
@@ -31,7 +31,7 @@ Kalzit is for teams that run their own servers and want to look at all of their 
 place: operations and monitoring, but just as well business figures, document stores and graph
 models. It is free software under the AGPL-3.0, self-hosted only; there is no cloud offering.
 
-> **Status: early development.** The current version is 0.7.5;
+> **Status: early development.** The current version is 0.8.1;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
@@ -458,7 +458,7 @@ cosign-signed checksum file and loads it with `docker load` or `podman load`, as
 Either way the image is then called `ghcr.io/mousewerk/kalzit:<version>`:
 
 ```sh
-v=0.7.5   # the release you use
+v=0.8.1   # the release you use
 docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit "ghcr.io/mousewerk/kalzit:$v"
 docker exec kalzit kalzit setup-code     # the one-time setup code for the first start
 ```
