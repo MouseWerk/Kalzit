@@ -443,7 +443,10 @@ mod tests {
                 nodes(json!([rule("r1", always(), json!({ "colorBy": { "property": "", "color": "chart-1" } }))])),
                 "options.style.nodes[0].set.colorBy.property",
             ),
-            (nodes(json!([rule("r1", always(), json!({ "colorBy": { "property": "p", "color": "#ff0000" } }))])), "options.style"),
+            (
+                nodes(json!([rule("r1", always(), json!({ "colorBy": { "property": "p", "color": "#ff0000" } }))])),
+                "options.style",
+            ),
             (nodes(json!([rule("r1", always(), json!({ "shape": "star" }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "../x" }))])), "options.style.nodes[0].set.icon"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "User" }))])), "options.style.nodes[0].set.icon"),

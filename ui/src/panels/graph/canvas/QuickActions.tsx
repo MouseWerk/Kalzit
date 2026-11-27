@@ -3,6 +3,7 @@ import { summaryNumber, summarySentence } from "../../../analysis/algoText";
 import { request } from "../../../api/client";
 import { errorReason, reasonText } from "../../../features/datasources/reasons";
 import { useI18n } from "../../../i18n/i18n";
+import { isComposingKey } from "../../../lib/ime";
 import { readPreference, writePreference } from "../../../lib/storage";
 import { shortcutSpoken } from "../../../shortcuts/registry";
 import type { Emphasis } from "../drawing";
@@ -340,7 +341,7 @@ function PathMenu({
       className="graph-quick__choices"
       ref={ref}
       onKeyDown={(event: KeyboardEvent) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !isComposingKey(event)) {
           event.stopPropagation();
           onClose(true);
         }
