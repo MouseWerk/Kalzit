@@ -981,7 +981,7 @@ mod tests {
     }
 
     fn one_path() -> Option<Vec<GraphPath>> {
-        Some(vec![GraphPath { nodes: vec!["a".into(), "b".into()], edges: vec!["e1".into()] }])
+        Some(vec![GraphPath::new(vec!["a".into(), "b".into()], vec!["e1".into()])])
     }
 
     #[test]

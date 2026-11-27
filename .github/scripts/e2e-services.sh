@@ -50,14 +50,16 @@ start() {
     -e cluster.routing.allocation.disk.threshold_enabled=false \
     -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" \
     opensearchproject/opensearch:3.9.0 > /dev/null
+  # With their algorithm libraries (Graph Data Science, MAGE) as in the datasources job; the
+  # image carries the GDS release of its Neo4j version and installs it at start, offline.
   docker run -d --name "$NEO4J" -p 127.0.0.1:7687:7687 \
-    -e NEO4J_AUTH="neo4j/$NEO4J_PASSWORD" \
+    -e NEO4J_AUTH="neo4j/$NEO4J_PASSWORD" -e NEO4J_PLUGINS='["graph-data-science"]' \
     -e NEO4J_server_memory_heap_initial__size=256m -e NEO4J_server_memory_heap_max__size=512m \
     -e NEO4J_server_memory_pagecache_size=128m \
     neo4j:2026.10.0-community > /dev/null
   # Memgraph's limit is in MiB; the fixture needs a few.
   docker run -d --name "$MEMGRAPH" -p 127.0.0.1:7688:7687 \
-    memgraph/memgraph:3.14.0 --memory-limit=512 > /dev/null
+    memgraph/memgraph-mage:3.14.0 --memory-limit=512 > /dev/null
   echo "started $MONGO, $OPENSEARCH, $NEO4J and $MEMGRAPH"
 }
 

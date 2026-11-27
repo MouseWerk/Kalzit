@@ -2767,6 +2767,29 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
+| `steps.algorithm_timeout` | `seconds` | a graph algorithm step computed longer than its time limit (`datasources.algorithm_timeout_secs`) and was stopped |
+| `steps.algorithm_too_large` | `nodes`, `maxNodes` | the result has more nodes than a graph algorithm step reads (`datasources.algorithm_max_nodes`, a fifth for the costly steps); nothing was computed |
+| `steps.algorithm_memory` | `neededMb`, `maxMb` | a graph algorithm step would need more memory than allowed (`datasources.algorithm_max_memory_bytes`), estimated before it starts |
+| `steps.algorithm_bound` | `param`, `max` | a parameter of a graph algorithm step (`maxCount`, `maxLength`, `k`, `maxPaths`, `topK`) is above the server or organization setting |
+| `steps.algorithm_answer` | | the database's algorithm library answered in a form Kalzit does not read; the step may run with `"place": "server"` |
+| `algorithm.no_library` | | the source has no graph algorithm library Kalzit uses, or not the one the step was planned for; the server computes the step itself, nothing to do |
+| `algorithm.unsupported` | `detail` | the source's algorithm library lacks the procedure or syntax the step needs (not installed, or an older version); the server computes the step itself and does not ask the library again for ten minutes; installing or updating the library lets the database compute it |
+| `algorithm.timeout` | `detail` | the source's algorithm library did not finish the step in time; the server computes the step itself and for ten minutes does not ask the library for that step on results of the same size or larger (by powers of two of nodes plus edges) |
+| `algorithm.local` | | the `reason` of a graph algorithm step that ran on the server (`steps[]`, not an error): the step needs only the result, which is already on the server |
+| `algorithm.not_in_library` | | step `reason`: the source's library has no read-only variant of the algorithm limited to the result |
+| `algorithm.enumerating` | | step `reason`: the step lists paths or cycles, which runs on the server with its count and length bounds |
+| `algorithm.not_cancellable` | | step `reason`: the source cannot stop a running library procedure (Memgraph), so the steps whose work grows fastest always run on the server |
+| `algorithm.option` | | step `reason`: the library does not offer an option the step uses (a label filter, a direction, ...) |
+| `algorithm.isolated_nodes` | | step `reason`: the library's projection leaves out nodes without edges, which would change the answer |
+| `algorithm.empty` | | step `reason`: nothing to compute, the result has no edges or no nodes |
+| `algorithm.library_failed` | | step `reason`: the library failed or did not answer in time; the server computed the same result |
+| `algorithm.place_server` | | step `reason`: the step asks to run on the server (`"place": "server"`) |
+| `algorithm.answer_unreadable` | | step `reason`: the library answered in a form Kalzit does not read; nothing is guessed, the step fails with `steps.algorithm_answer` and can run with `"place": "server"` |
+| `analysis.paths_cut` | `shown`, `total` | notice: only `shown` of `total` shortest paths are listed (the step's `maxCount`); a higher bound lists more |
+| `analysis.cycles_cut` | `limit` | notice: the cycle step stopped at `limit` cycles (its `maxCount`); there are more, how many is not counted |
+| `analysis.paths_too_long` | `maxLength`, `edges` | notice: no path fits within `maxLength` edges, the shortest has `edges`; a higher `maxLength` finds it |
+| `steps.weight_invalid` | `edge`, `key` | the weight property of an edge is no number of 0 or more |
+| `steps.node_missing` | `node` | a path or reachability step names a node the result does not have |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
 | `steps.field_missing` | `field` | the table has no such field |
 | `steps.field_ambiguous` | `field` | several fields have this name |

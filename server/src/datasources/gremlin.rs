@@ -255,7 +255,7 @@ fn add(g: &mut GraphBuilder, v: &Gv, omitted: &mut BTreeSet<String>, key: &str, 
             std::slice::from_ref(in_label),
         ),
         Gv::Path(objects) if graphson::has_elements(v, 0) => {
-            let mut path = GraphPath { nodes: Vec::new(), edges: Vec::new() };
+            let mut path = GraphPath::new(Vec::new(), Vec::new());
             for o in objects {
                 match o {
                     Gv::Vertex { id, .. } => path.nodes.push(id.clone()),
