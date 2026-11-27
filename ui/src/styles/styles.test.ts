@@ -495,20 +495,17 @@ describe("scrollbars", () => {
     expect(main).toContainEqual({ property: "scrollbar-gutter", value: "stable" });
     // Anchor jumps land below the sticky bars in the main area, as they did in the document.
     expect(main.some((d) => d.property === "scroll-padding-block-start")).toBe(true);
-    // The document keeps its gutter on the pages without the shell (sign-in, public links).
-    const base = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
-    expect(
-      base.find(
-        (rule) =>
-          rule.selector === "html" &&
-          rule.context.length === 1 &&
-          rule.declarations.some((d) => d.property === "scrollbar-gutter"),
-      )?.declarations,
-    ).toContainEqual({ property: "scrollbar-gutter", value: "stable" });
-    expect(wide(":root:has(.shell)")).toContainEqual({
-      property: "scrollbar-gutter",
-      value: "auto",
-    });
+  });
+
+  it("reserves a gutter only in the main area next to the sidebar", () => {
+    // Pages that scroll as a whole (sign-in, setup, help, public links, the app on a phone)
+    // keep even margins on both sides; phones draw overlay scrollbars.
+    const gutters = allRules().filter((rule) =>
+      rule.declarations.some((d) => d.property === "scrollbar-gutter"),
+    );
+    expect(gutters.map((rule) => [rule.selector, rule.context.at(-1)])).toEqual([
+      [".shell__main", WIDE],
+    ]);
   });
 });
 

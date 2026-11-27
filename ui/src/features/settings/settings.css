@@ -1000,8 +1000,12 @@
     overflow-wrap: anywhere;
   }
 
-  /* Side by side only where the section has room for both, whatever the window and sidebar. */
-  @container (width < 44rem) {
+  /*
+   * Side by side only where the section has room for both, whatever the window and sidebar. At
+   * 1280 px with the sidebar open and the main area's scrollbar gutter the section is 43.6rem
+   * wide: it stays two columns there (the same break in security.css and sso.css).
+   */
+  @container (width < 43rem) {
     .about-hero {
       grid-template-columns: minmax(0, 1fr);
     }

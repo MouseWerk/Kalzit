@@ -991,10 +991,6 @@
    * print the document scrolls as before.
    */
   @media screen and (width > 48rem) {
-    :root:has(.shell) {
-      scrollbar-gutter: auto;
-    }
-
     .shell {
       grid-template-rows: minmax(0, 1fr);
       height: 100dvh;

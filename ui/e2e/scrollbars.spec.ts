@@ -148,17 +148,24 @@ test("another page starts at its top, and Back returns to where the page was", a
     .toBeLessThan(2);
 });
 
-test("on a phone and on the sign-in page the document scrolls, thin and with a stable gutter", async ({
+test("on a phone and on the sign-in page the document scrolls, thin and without a reserved gutter", async ({
   page,
 }) => {
+  const root = () =>
+    page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement);
+      return {
+        gutter: style.scrollbarGutter,
+        width: style.scrollbarWidth,
+        // No room kept for a scrollbar the page does not show: even margins on both sides.
+        reserved: window.innerWidth - document.documentElement.clientWidth,
+      };
+    });
   await page.goto("/login");
-  const root = await page.evaluate(() => {
-    const style = getComputedStyle(document.documentElement);
-    return { gutter: style.scrollbarGutter, width: style.scrollbarWidth };
-  });
-  expect(root).toEqual({ gutter: "stable", width: "thin" });
+  expect(await root()).toEqual({ gutter: "auto", width: "thin", reserved: 0 });
 
   await page.setViewportSize({ width: 360, height: 640 });
   await signInOwner(page);
   expect((await mainStyle(page)).overflowY).toBe("visible");
+  expect((await root()).gutter).toBe("auto");
 });

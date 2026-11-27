@@ -36,13 +36,11 @@
   }
 
   /*
-   * Pages that scroll as a whole (sign-in, public links, the app on a phone) keep room for the
-   * scrollbar, so nothing shifts sideways when the content grows past the window. In the app
-   * on wider screens the main area scrolls instead (components.css).
+   * Only the app's main area next to the sidebar keeps room for its scrollbar (components.css).
+   * Pages that scroll as a whole (sign-in, setup, mail links, help, public links, the app on a
+   * phone) reserve none: their frames stay even on both sides, and phones draw overlay
+   * scrollbars anyway.
    */
-  html {
-    scrollbar-gutter: stable;
-  }
 
   /* Forced colors: the system draws its own scrollbars. */
   @media (forced-colors: active) {
