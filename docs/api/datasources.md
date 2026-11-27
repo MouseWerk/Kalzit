@@ -799,7 +799,9 @@ that text through the same read-only check as a typed query.
   `idList` also at spaces; empty entries and repeats are left out and reported). A list holds at
   most `datasources.pattern_max_values` values (server setting, default 10,000; ceiling 100,000;
   `pattern.too_many_values` with `max`). List parameters of a pattern are exempt from the
-  variables' 1,000 values and 64 KiB; together they may take 4 MiB.
+  variables' 1,000 values and 64 KiB; together they may take 4 MiB. The exemption is the
+  pattern's only: a query of another kind in the same request (or panel) that names such a long
+  list (`$ids`) is refused with `variables.list_too_long`.
 - `count: true` counts the matches instead of returning them ("Treffer zählen"): a frame with one
   field `matches`.
 - Limits: 20 nodes, 30 edges, 20 conditions per node or edge, 20 parameters, `limit` at least 1
@@ -831,16 +833,21 @@ LIMIT 500
 Several labels are written as a condition, `(k:Kunde OR k:Interessent)`; "any" conditions as one
 group joined by `OR`. A count ends with `RETURN count(*) AS matches` and no limit. Memgraph writes
 `id(k) IN $nummern`. GSQL (syntax v2) is an interpreted query whose header declares every value
-with its type (`SET<VERTEX<Kunde>>` for ids, which seed the node): a first `SELECT` picks the
-limited set of first nodes (`kz_m ... LIMIT n`), a second one collects the nodes and single edges
-of only the matches that start there (GSQL runs `ACCUM` before `LIMIT`, so collecting in the
-first one would gather every match); a count adds one per match. TigerGraph refuses with a
+with its type (`SET<VERTEX<Kunde>>` for ids, which seed the node). GSQL runs `ACCUM` over every
+match before `LIMIT`, and its `LIMIT` counts output vertices, not matches; so a first `SELECT`
+limits the start nodes (`kz_m ... LIMIT n`), and a second keeps at most `n` matches as tuples in a
+`HeapAccum` of size `n`, whose nodes and single edges are then collected. As in Cypher, `limit` is
+the most matches the answer holds; the query prints how many it kept (`kz_found`, taken out of
+the answer), and a full heap gives `pattern.limit_reached`. The tuple type (`kz_match`) is declared
+only where the graph's installed query names can be read and none is called so, since the read-only
+check allows a `TYPEDEF` only then; otherwise (TigerGraph 3.x) the limit bounds the start nodes,
+the matches starting there are collected, and there is no `pattern.limit_reached`. A count adds
+one per match. TigerGraph refuses with a
 reason what GSQL cannot say: optional edges (`pattern.gsql_optional`), more than one type per
 node (`pattern.gsql_one_type`), ids without a vertex type (`pattern.gsql_ids_type`), and the
 operators `contains`, `startsWith`, `endsWith`, `isNull` and `isNotNull`
 (`pattern.gsql_operator`). In GSQL a path of more than one edge has no edge alias, so its edges
-are not in the result, only its nodes. `pattern.limit_reached` is not given for TigerGraph, whose
-answer does not say how many matches there were.
+are not in the result, only its nodes.
 
 ### Compile: `POST /orgs/{orgId}/datasources/{datasourceId}/patterns/compile`
 
@@ -899,14 +906,18 @@ value answers `pattern.parameter_missing` for its `refId`. Each value takes the 
 then reaches the query as that language takes variables: bound in SQL, Cypher, GSQL and patterns,
 escaped text where the language has no parameters (PromQL, LogQL; "Variables").
 
-A parameter with `choices` offers the values of one property ("Auswahl aus Werten"): `POST
+A parameter with `choices` (`{ "label", "property", "refId"? }`) offers the values of one
+property ("Auswahl aus Werten"). They come from the data source of the pattern target that
+declares the parameter, else of the target `refId` names; a template that names neither is
+refused when saved (`model.parameters[i].choices.refId`). `POST
 /orgs/{orgId}/analyses/{analysisId}/parameters/{name}/choices` with `{ "search": "nord" }`
 (optional, at most 200 characters, without regard to case) answers `{ "values": [...], "more":
 false }`, at most 200 values in order, `more` when there are more. It runs a fixed query of the
-template on the source of the first pattern target that declares the parameter (else the first
-target): in Cypher `MATCH (n:L) WHERE n.p IS NOT NULL AND toLower(toString(n.p)) CONTAINS
-toLower($kz_search) RETURN DISTINCT n.p ... LIMIT 201` with the search bound, in GSQL the set of
-the property's values, searched by Kalzit. Reading the analysis authorizes it, as it authorizes
+template on that source: in Cypher `MATCH (n:L) WITH n.p AS value WHERE value IS NOT NULL AND
+NOT valueType(value) STARTS WITH 'LIST' AND NOT valueType(value) STARTS WITH 'MAP' WITH value
+WHERE toLower(toString(value)) CONTAINS toLower($kz_search) RETURN DISTINCT value ... LIMIT 201` with the search bound (lists and maps are no choices); in GSQL
+the values of at most 10,000 nodes whose property is `LIKE` the search (bound as `kz_search`),
+searched, sorted and cut again by Kalzit. Reading the analysis authorizes it, as it authorizes
 the template's stored queries; readers see the values of that one property only. A parameter
 without `choices` is `404`.
 

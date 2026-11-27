@@ -1010,7 +1010,12 @@ export type Direction = "out" | "in" | "both";
 
 export type Match = "all" | "any";
 
-export type Choices = { label: string, property: string, };
+export type Choices = { label: string, property: string, 
+/**
+ * The template's target whose data source the values come from. A pattern target that
+ * declares the parameter names its own; a parameter of the analysis names one here.
+ */
+refId?: string, };
 
 export type ListReport = { name: string, values: number, duplicates: number, empty: number, };
 

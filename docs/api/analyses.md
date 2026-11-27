@@ -25,9 +25,10 @@ interface AnalysisModel {
   `floatList` or `idList` (docs/api/datasources.md, "Graph patterns"). Names are letters, digits
   and `_`, starting with a letter. A graph pattern target (`{"pattern": {...}}`) is checked when
   saved, and its own parameters count as declared; one declared here too must have the same
-  type. `choices: { label, property }` offers the values of that property
+  type. `choices: { label, property, refId? }` offers the values of that property
   (`POST /analyses/{analysisId}/parameters/{name}/choices`, docs/api/datasources.md, "Search
-  templates").
+  templates"), read from the pattern target that declares the parameter or else the target
+  `refId` names; naming neither is `422` on `model.parameters[i].choices.refId`.
 
 - The model is checked as one panel of a dashboard would be: the same rules for title, time range,
   targets and steps (a step reads the `refId` of a target of this analysis), and for the panel

@@ -196,6 +196,34 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
     check_variables_with(variables, &BTreeSet::new(), MAX_LIST_VALUES)
 }
 
+/// A pasted list longer than other variables may be (`check_variables_with`) reaches only the graph
+/// patterns that declare it: a query of another kind in the same request that names it (`$name`)
+/// is refused as if the list were its own, so its 1,000 values and 64 KiB still hold.
+pub(crate) fn big_lists_only_in_patterns<'a>(
+    queries: impl Iterator<Item = &'a Value>,
+    variables: &BTreeMap<String, Value>,
+    lists: &BTreeSet<String>,
+) -> ApiResult<()> {
+    let big: BTreeSet<&String> = lists
+        .iter()
+        .filter(|name| {
+            variables.get(*name).is_some_and(|v| {
+                v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES)
+                    || serde_json::to_string(v).map_or(true, |t| t.len() > MAX_VARIABLES_BYTES)
+            })
+        })
+        .collect();
+    if big.is_empty() {
+        return Ok(());
+    }
+    for query in queries.filter(|q| q.get("pattern").is_none()) {
+        if let Some(name) = mentioned_names(query).iter().find(|n| big.contains(n)) {
+            return Err(list_too_long(name).with_field("variables"));
+        }
+    }
+    Ok(())
+}
+
 /// The bytes the list parameters of graph patterns (pasted ids) may take together, apart from the
 /// other variables' `MAX_VARIABLES_BYTES`.
 const MAX_PATTERN_LIST_BYTES: usize = 4 * 1024 * 1024;
@@ -279,6 +307,7 @@ async fn query(
     let max_list =
         if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(&state).await? };
     check_variables_with(&req.variables, &lists, max_list)?;
+    big_lists_only_in_patterns(req.queries.iter().map(|i| &i.query), &req.variables, &lists)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run. The caller's
     // rights on data sources are read once per request, however many sources the items query.
@@ -966,6 +995,7 @@ pub(crate) async fn stored_items(
     let max_list =
         if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(state).await? };
     check_variables_with(variables, &lists, max_list)?;
+    big_lists_only_in_patterns(panel.targets.iter().map(|t| &t.query), variables, &lists)?;
     let (resolved, identifiers) = resolve_variables(model, variables)?;
     let filters = adhoc_filters(model, variables)?;
     let read = frames_read(&panel.transformations);
@@ -1619,6 +1649,26 @@ mod tests {
         assert!(check_variables(&list(MAX_LIST_VALUES)).is_ok());
         let e = check_variables(&list(MAX_LIST_VALUES + 1)).unwrap_err();
         assert_eq!(e.reason.as_ref().unwrap().code, "variables.list_too_long");
+    }
+
+    #[test]
+    fn pasted_lists_are_longer_only_for_the_patterns_that_declare_them() {
+        let ids: Vec<String> = (0..5_000).map(|i| format!("4:x:{i}")).collect();
+        let vars = BTreeMap::from([("ids".to_string(), json!(ids)), ("land".to_string(), json!("AT"))]);
+        let lists = BTreeSet::from(["ids".to_string()]);
+        // Past the 1,000 values and 64 KiB of other variables, within the setting.
+        assert!(check_variables(&vars).is_err());
+        assert!(check_variables_with(&vars, &lists, 10_000).is_ok());
+        let e = check_variables_with(&vars, &lists, 4_000).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "pattern.too_many_values");
+        // A pattern may take it; a SQL query in the same request that names it may not.
+        let pattern = json!({ "pattern": { "nodes": [{ "id": "a", "ids": { "param": "ids" } }],
+                                          "parameters": [{ "name": "ids", "type": "idList" }] } });
+        let sql = json!({ "sql": "SELECT * FROM t WHERE id IN ($ids)" });
+        let other = json!({ "sql": "SELECT * FROM t WHERE land = $land" });
+        assert!(big_lists_only_in_patterns([&pattern, &other].into_iter(), &vars, &lists).is_ok());
+        let e = big_lists_only_in_patterns([&pattern, &sql].into_iter(), &vars, &lists).unwrap_err();
+        assert_eq!((e.reason.as_ref().unwrap().code.as_str(), e.field), ("variables.list_too_long", Some("variables")));
     }
 
     fn all_model() -> DashboardModel {

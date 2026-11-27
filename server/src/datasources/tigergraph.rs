@@ -1279,9 +1279,12 @@ impl DataSourcePlugin for TigerGraph {
                     .with("detail", "pattern"));
             }
             let dialect = super::pattern::Dialect::TigerGraph;
-            let compiled =
-                super::pattern::compile(&pattern, dialect, Some(&c.graph), &req.variables, &req.limits.pattern)
-                    .map_err(SourceError::Rejected)?;
+            // The tuple that keeps at most `limit` matches needs the installed query names.
+            let names = c.query_names().await;
+            let mut limits = req.limits.pattern;
+            limits.gsql_tuples = names.is_some_and(|n| !n.iter().any(|q| q.eq_ignore_ascii_case("kz_match")));
+            let compiled = super::pattern::compile(&pattern, dialect, Some(&c.graph), &req.variables, &limits)
+                .map_err(SourceError::Rejected)?;
             q.gsql = Some(compiled.text.clone());
             q.params = compiled.parameters.clone().into_iter().collect();
             from_pattern = Some((pattern, compiled));
@@ -1357,13 +1360,15 @@ impl DataSourcePlugin for TigerGraph {
         let body = c.parse(status, &bytes)?;
         drop(bytes);
         let mut body = c.ok_or_error(Answer { status, body })?;
-        let results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
+        let mut results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
         drop(body);
+        // A pattern prints how many matches it kept; that is no part of the result.
+        let found = from_pattern.as_ref().and_then(|_| super::pattern::take_found(&mut results));
         let mut result = to_result(&results, &req, conn.settings(), executed);
         // The raw answer is gone; only the result's own charge remains.
         drop(charge);
         if let Some((pattern, compiled)) = &from_pattern {
-            super::pattern::annotate(&mut result, pattern, compiled, None);
+            super::pattern::annotate(&mut result, pattern, compiled, found);
         }
         Ok(result)
     }

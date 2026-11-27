@@ -177,11 +177,15 @@ pub struct PatternLimits {
     pub max_hops: u32,
     /// The most matches: the data source's row limit.
     pub max_limit: u32,
+    /// GSQL may declare its tuple type (`kz_match`) to keep at most `limit` matches: only where
+    /// the graph's installed query names are known and none is called so (`gsql.rs` refuses a
+    /// `TYPEDEF` otherwise, since a call of the tuple could call such a query).
+    pub gsql_tuples: bool,
 }
 
 impl Default for PatternLimits {
     fn default() -> Self {
-        Self { max_values: DEFAULT_MAX_VALUES, max_hops: DEFAULT_MAX_HOPS, max_limit: MAX_LIMIT }
+        Self { max_values: DEFAULT_MAX_VALUES, max_hops: DEFAULT_MAX_HOPS, max_limit: MAX_LIMIT, gsql_tuples: true }
     }
 }
 
@@ -445,7 +449,15 @@ pub struct PatternParameter {
 pub struct Choices {
     pub label: String,
     pub property: String,
+    /// The template's target whose data source the values come from. A pattern target that
+    /// declares the parameter names its own; a parameter of the analysis names one here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub ref_id: Option<String>,
 }
+
+/// Matching nodes a TigerGraph choices query reads its values from, at most.
+pub const CHOICES_SCAN: usize = 10_000;
 
 impl Choices {
     pub fn check(&self) -> Result<(), Detail> {
@@ -1131,6 +1143,22 @@ pub fn annotate(
     }
 }
 
+/// Takes `kz_found`, the number of matches a GSQL pattern kept, out of TigerGraph's printed
+/// `results`.
+pub fn take_found(results: &mut Value) -> Option<usize> {
+    let key = format!("{RESERVED_PREFIX}found");
+    let mut found = None;
+    if let Value::Array(items) = results {
+        for item in items.iter_mut() {
+            if let Some(v) = item.as_object_mut().and_then(|o| o.remove(&key)) {
+                found = v.as_u64().and_then(|n| usize::try_from(n).ok());
+            }
+        }
+        items.retain(|i| i.as_object().is_none_or(|o| !o.is_empty()));
+    }
+    found
+}
+
 /// The parameter name an operand was bound under: its own for a template parameter; for a literal
 /// the `kz_v` parameter holding the same value.
 fn operand_name(op: &Operand, compiled: &Compiled) -> String {
@@ -1203,10 +1231,15 @@ pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices) -
         Dialect::Neo4j | Dialect::Memgraph => {
             let quote = |s: &str| format!("`{}`", s.replace('`', "``"));
             let (label, property) = (quote(&choices.label), quote(&choices.property));
+            // Lists and maps have no text to search or pick; they are left out first, in a `WITH`
+            // of their own, since `toString` refuses them and `AND` need not stop early.
+            // `valueType` names them `LIST...` and `MAP...` in Neo4j and Memgraph.
             Ok(serde_json::json!({ "cypher": format!(
-                "MATCH (n:{label}) WHERE n.{property} IS NOT NULL \
-                 AND toLower(toString(n.{property})) CONTAINS toLower($kz_search) \
-                 RETURN DISTINCT n.{property} AS value ORDER BY value LIMIT {}",
+                "MATCH (n:{label}) WITH n.{property} AS value \
+                 WHERE value IS NOT NULL AND NOT valueType(value) STARTS WITH 'LIST' \
+                 AND NOT valueType(value) STARTS WITH 'MAP' \
+                 WITH value WHERE toLower(toString(value)) CONTAINS toLower($kz_search) \
+                 RETURN DISTINCT value ORDER BY value LIMIT {}",
                 MAX_CHOICES + 1
             ) }))
         }
@@ -1225,9 +1258,15 @@ pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices) -
             };
             let graph = plain("graph", graph.unwrap_or_default())?;
             let (label, property) = (plain("vertex type", &choices.label)?, plain("property", &choices.property)?);
+            // The search narrows the nodes in TigerGraph (`LIKE`, the text bound as a parameter);
+            // at most `CHOICES_SCAN` of them are read, so the work stays bounded, and Kalzit
+            // searches, sorts and cuts the values again.
             Ok(serde_json::json!({ "gsql": format!(
-                "INTERPRET QUERY () FOR GRAPH {graph} SYNTAX v2 {{\n  SetAccum<STRING> @@kz_values;\n  \
-                 kz_s = {{{label}.*}};\n  kz_r = SELECT s FROM kz_s:s ACCUM @@kz_values += to_string(s.{property});\n  \
+                "INTERPRET QUERY (STRING kz_search) FOR GRAPH {graph} SYNTAX v2 {{\n  SetAccum<STRING> @@kz_values;\n  \
+                 kz_s = {{{label}.*}};\n  \
+                 kz_m = SELECT s FROM kz_s:s WHERE lower(to_string(s.{property})) LIKE \"%\" + lower(kz_search) + \"%\"\n    \
+                 LIMIT {CHOICES_SCAN};\n  \
+                 kz_r = SELECT s FROM kz_m:s ACCUM @@kz_values += to_string(s.{property});\n  \
                  PRINT @@kz_values AS kz_values;\n}}"
             ) }))
         }
@@ -1533,6 +1572,33 @@ Süd AG"
         let mut p = knows();
         p.nodes[0].labels = vec!["Per\\son".into()];
         assert_eq!(reason(&p), "pattern.name_invalid");
+    }
+
+    #[test]
+    fn choices_queries_bind_the_search_and_stay_bounded() {
+        let c = Choices { label: "Firma".into(), property: "name".into(), ref_id: None };
+        let q = choices_query(Dialect::Neo4j, None, &c).unwrap();
+        let cypher = q["cypher"].as_str().unwrap();
+        assert!(cypher.contains("CONTAINS toLower($kz_search)") && cypher.ends_with("LIMIT 201"), "{cypher}");
+        assert!(cypher.contains("NOT valueType(value) STARTS WITH 'LIST'"), "{cypher}");
+        crate::datasources::cypher::check(cypher).unwrap();
+        let q = choices_query(Dialect::TigerGraph, Some("social"), &c).unwrap();
+        let gsql = q["gsql"].as_str().unwrap();
+        assert!(gsql.contains("LIKE \"%\" + lower(kz_search) + \"%\"") && gsql.contains("LIMIT 10000;"), "{gsql}");
+        let checked =
+            crate::datasources::gsql::check_with(gsql, crate::datasources::gsql::Form::Interpret, None).unwrap();
+        assert_eq!(checked.params.len(), 1);
+        let bad = Choices { label: "Firma GmbH".into(), ..c };
+        assert_eq!(choices_query(Dialect::TigerGraph, Some("social"), &bad).unwrap_err().reason, "pattern.gsql_name");
+    }
+
+    #[test]
+    fn the_kept_matches_of_gsql_come_out_of_the_answer() {
+        let mut results = json!([{ "kz_n": [] }, { "@@kz_edges": [] }, { "kz_found": 500 }]);
+        assert_eq!(take_found(&mut results), Some(500));
+        assert_eq!(results, json!([{ "kz_n": [] }, { "@@kz_edges": [] }]));
+        let mut nothing = json!([{ "kz_n": [] }]);
+        assert_eq!(take_found(&mut nothing), None);
     }
 
     #[test]

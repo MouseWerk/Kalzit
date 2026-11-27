@@ -901,6 +901,41 @@ async fn search_templates_run_with_typed_values(t: TestApp) {
     let r = t.post("~/query", free, &vera).await;
     let code = r.body["results"]["A"]["error"]["code"].as_str();
     assert!(matches!(code, Some("forbidden" | "not_found")), "{}", r.body);
+    // Choices: the template names the target their values come from; a reader may ask for them
+    // without any right on the data source (here a SQLite source, which has no graph to read them
+    // from, refused past the rights), an unknown parameter or one without choices is not found,
+    // and so is a template the caller may not read.
+    let mut m = model("Umsatz von $land", &source, sql);
+    m["steps"] = json!([]);
+    m["parameters"] = json!([
+        { "name": "land", "type": "string", "choices": { "label": "Land", "property": "code", "refId": "A" } },
+        { "name": "mindest", "type": "integer" }
+    ]);
+    let with_choices = id_of(t.post("~/analyses", json!({ "model": m.clone() }), &t.owner).await);
+    let choices = |name: &str| format!("~/analyses/{with_choices}/parameters/{name}/choices");
+    let r = t.post(&choices("land"), json!({ "search": "a" }), &vera).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::UNPROCESSABLE_ENTITY, json!("pattern.unsupported_source")),
+        "{}",
+        r.body
+    );
+    assert_eq!(t.post(&choices("mindest"), json!({}), &vera).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.post(&choices("gibtsnicht"), json!({}), &vera).await.status, StatusCode::NOT_FOUND);
+    let secret = t.folder("Geheim", true).await;
+    let hidden = t.post("~/analyses", json!({ "folderId": secret, "model": m.clone() }), &t.owner).await;
+    let hidden = id_of(hidden);
+    let r = t.post(&format!("~/analyses/{hidden}/parameters/land/choices"), json!({}), &vera).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    // Without a pattern target that declares the parameter, `refId` must name a target.
+    m["parameters"][0]["choices"]["refId"] = json!("Z");
+    let r = t.post("~/analyses", json!({ "model": m }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert!(
+        r.body["error"]["message"].as_str().unwrap().starts_with("model.parameters[0].choices.refId"),
+        "{}",
+        r.body
+    );
     // Nor may the viewer save a template of their own.
     let mut own = model("Eigen", &source, sql);
     own["parameters"] = json!([{ "name": "land", "type": "string" }]);

@@ -4,6 +4,8 @@
 //!
 //! ```text
 //! INTERPRET QUERY (STRING firma, INT kz_v0) FOR GRAPH social SYNTAX v2 {
+//!   TYPEDEF TUPLE <INT kz_o, VERTEX a, VERTEX b, EDGE e> kz_match;
+//!   HeapAccum<kz_match>(500, kz_o ASC) @@kz_matches;
 //!   SetAccum<VERTEX> @@kz_nodes;
 //!   SetAccum<EDGE> @@kz_edges;
 //!   kz_m = SELECT a FROM Person:a -(KENNT>:e)- Person:b
@@ -11,15 +13,24 @@
 //!     LIMIT 500;
 //!   kz_r = SELECT a FROM kz_m:a -(KENNT>:e)- Person:b
 //!     WHERE a.name == firma AND e.seit > kz_v0
-//!     ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e;
+//!     ACCUM @@kz_matches += kz_match(0, a, b, e);
+//!   FOREACH kz_t IN @@kz_matches DO
+//!     @@kz_nodes += kz_t.a;
+//!     @@kz_nodes += kz_t.b;
+//!     @@kz_edges += kz_t.e;
+//!   END;
 //!   kz_n = {@@kz_nodes};
 //!   PRINT kz_n;
 //!   PRINT @@kz_edges;
+//!   PRINT @@kz_matches.size() AS kz_found;
 //! }
 //! ```
 //!
-//! The first `SELECT` picks the limited set of first nodes; only the matches that start there are
-//! collected, so the limit bounds the work and the answer (GSQL runs `ACCUM` before `LIMIT`).
+//! GSQL runs `ACCUM` over every match before `LIMIT`, and a `LIMIT` counts output vertices, not
+//! matches. So the first `SELECT` limits the start nodes, and the second keeps at most `limit`
+//! matches in a heap of that size, one tuple per match; only the kept matches are collected. As in
+//! Cypher, `limit` is the most matches the answer holds, and `kz_found` tells `tigergraph.rs` how
+//! many were kept (`pattern.limit_reached` when the heap is full).
 //! A count ("Treffer zählen") adds one per match to `@@kz_count` and prints it as `matches`.
 //!
 //! Every value is a query parameter, declared with its type in the header and sent as a typed
@@ -39,7 +50,9 @@
 //! conditions joined by `AND` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `IN`) or one element's
 //! conditions in parentheses joined by `OR`, `ACCUM` only adding the aliases to accumulators, and
 //! `LIMIT` with a number; or a limited `SELECT` without `ACCUM` and a second, otherwise equal
-//! `SELECT` from its result. Seeds `X = {param};`, `X = {Type.*};` and `X = {ANY};`. Values are
+//! `SELECT` from its result, keeping matches as tuples (`TYPEDEF TUPLE` of `INT`, `VERTEX` and
+//! `EDGE` fields, a `HeapAccum` of them, a `FOREACH` that only adds tuple fields to the sets, and
+//! `PRINT @@m.size()`). Seeds `X = {param};`, `X = {Type.*};` and `X = {ANY};`. Values are
 //! literals or declared parameters. Everything else is `pattern.not_representable`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -184,7 +197,6 @@ pub fn compile(
         }
     }
     let first = parts.edges.first().map_or(parts.nodes[0], |e| e.from.as_str());
-    let mut accum: Vec<String> = Vec::new();
     let mut edges = Vec::new();
     for e in &parts.edges {
         let types: Vec<String> = if e.types.is_empty() {
@@ -201,7 +213,6 @@ pub fn compile(
             })
             .collect();
         let edge = if e.max_hops == 1 {
-            accum.push(format!("@@{RESERVED_PREFIX}edges += {}", e.id));
             format!("{}:{}", alternatives.join("|"), e.id)
         } else {
             let group =
@@ -242,10 +253,13 @@ pub fn compile(
              PRINT @@{RESERVED_PREFIX}count AS matches;\n",
             paths(&node_type[first])
         ));
-    } else {
-        // The limit picks the matches first; only those are collected, from the limited set.
+    } else if !limits.gsql_tuples {
+        // Without the tuple (the query names cannot be read, TigerGraph 3.x): the limit bounds
+        // the start nodes, and the matches that start there are collected.
         let mut adds: Vec<String> = p.nodes.iter().map(|n| format!("@@{RESERVED_PREFIX}nodes += {}", n.id)).collect();
-        adds.extend(accum);
+        adds.extend(
+            parts.edges.iter().filter(|e| e.max_hops == 1).map(|e| format!("@@{RESERVED_PREFIX}edges += {}", e.id)),
+        );
         body.push_str(&format!(
             "  SetAccum<VERTEX> @@{RESERVED_PREFIX}nodes;\n  SetAccum<EDGE> @@{RESERVED_PREFIX}edges;\n"
         ));
@@ -264,6 +278,48 @@ pub fn compile(
         ));
         body.push_str(&format!(
             "  {RESERVED_PREFIX}n = {{@@{RESERVED_PREFIX}nodes}};\n  PRINT {RESERVED_PREFIX}n;\n  PRINT @@{RESERVED_PREFIX}edges;\n"
+        ));
+    } else {
+        // GSQL runs `ACCUM` before `LIMIT`, over every match. So the first `SELECT` limits the
+        // start nodes, and the second keeps at most `limit` matches in a heap of that size (each
+        // match one tuple); only those are collected. `kz_found` is how many were kept.
+        let n = limit.unwrap_or(1);
+        let edge_ids: Vec<&str> = parts.edges.iter().filter(|e| e.max_hops == 1).map(|e| e.id.as_str()).collect();
+        let mut fields = vec![format!("INT {RESERVED_PREFIX}o")];
+        fields.extend(p.nodes.iter().map(|n| format!("VERTEX {}", n.id)));
+        fields.extend(edge_ids.iter().map(|e| format!("EDGE {e}")));
+        let mut args = vec!["0".to_string()];
+        args.extend(p.nodes.iter().map(|n| n.id.clone()));
+        args.extend(edge_ids.iter().map(|e| (*e).to_string()));
+        let mut keep: Vec<String> =
+            p.nodes.iter().map(|n| format!("@@{RESERVED_PREFIX}nodes += {RESERVED_PREFIX}t.{}", n.id)).collect();
+        keep.extend(edge_ids.iter().map(|e| format!("@@{RESERVED_PREFIX}edges += {RESERVED_PREFIX}t.{e}")));
+        body.push_str(&format!(
+            "  TYPEDEF TUPLE <{}> {RESERVED_PREFIX}match;\n  HeapAccum<{RESERVED_PREFIX}match>({n}, {RESERVED_PREFIX}o ASC) @@{RESERVED_PREFIX}matches;\n",
+            fields.join(", ")
+        ));
+        body.push_str(&format!(
+            "  SetAccum<VERTEX> @@{RESERVED_PREFIX}nodes;\n  SetAccum<EDGE> @@{RESERVED_PREFIX}edges;\n"
+        ));
+        for s in &seeds {
+            body.push_str(&format!("  {s}\n"));
+        }
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}m = SELECT {first} FROM {}{filter}\n    LIMIT {n};\n",
+            paths(&node_type[first]),
+        ));
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}r = SELECT {first} FROM {}{filter}\n    ACCUM @@{RESERVED_PREFIX}matches += {RESERVED_PREFIX}match({});\n",
+            paths(&format!("{RESERVED_PREFIX}m")),
+            args.join(", ")
+        ));
+        body.push_str(&format!(
+            "  FOREACH {RESERVED_PREFIX}t IN @@{RESERVED_PREFIX}matches DO\n{}  END;\n",
+            keep.iter().map(|k| format!("    {k};\n")).collect::<String>()
+        ));
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}n = {{@@{RESERVED_PREFIX}nodes}};\n  PRINT {RESERVED_PREFIX}n;\n  PRINT @@{RESERVED_PREFIX}edges;\n  \
+             PRINT @@{RESERVED_PREFIX}matches.size() AS {RESERVED_PREFIX}found;\n"
         ));
     }
     let (compiled, types) = b.finish(String::new(), limit);
@@ -298,6 +354,8 @@ struct Reader<'v> {
     /// Declared parameters: name to type, and the vertex type of a `SET<VERTEX<T>>`.
     declared: BTreeMap<String, (ParameterType, Option<String>)>,
     accumulators: BTreeSet<String>,
+    /// Tuple types declared with `TYPEDEF TUPLE`.
+    tuples: BTreeSet<String>,
     seeds: BTreeMap<String, Seed>,
     nodes: Vec<PatternNode>,
     edges: Vec<PatternEdge>,
@@ -591,7 +649,24 @@ impl Reader<'_> {
                 let acc = self.c.name()?;
                 self.c.expect_sym("+=")?;
                 let alias = self.c.name()?;
-                let known = self.nodes.iter().any(|n| n.id == alias) || self.edges.iter().any(|e| e.id == alias);
+                // `@@m += kz_match(0, a, b, e)`: a match kept as a tuple of the aliases.
+                let mut known = self.nodes.iter().any(|n| n.id == alias) || self.edges.iter().any(|e| e.id == alias);
+                if self.tuples.contains(&alias) && self.c.eat_sym("(") {
+                    known = true;
+                    loop {
+                        match self.c.next() {
+                            Some(Tok::Num(_)) => {}
+                            Some(Tok::Ident { text, .. })
+                                if self.nodes.iter().any(|n| n.id == text)
+                                    || self.edges.iter().any(|e| e.id == text) => {}
+                            _ => known = false,
+                        }
+                        if self.c.eat_sym(")") {
+                            break;
+                        }
+                        self.c.expect_sym(",")?;
+                    }
+                }
                 if !self.accumulators.contains(&acc) || !known {
                     return Err(not_representable(format!("ACCUM @@{acc} += {alias}")));
                 }
@@ -656,10 +731,82 @@ impl Reader<'_> {
                 let name = self.c.name()?;
                 self.accumulators.insert(name);
                 self.c.expect_sym(";")?;
+            } else if self.c.eat_word("TYPEDEF") {
+                // `TYPEDEF TUPLE <INT kz_o, VERTEX a, EDGE e> kz_match;`: the shape of a kept match.
+                self.c.expect_word("TUPLE")?;
+                self.c.expect_sym("<")?;
+                loop {
+                    let ty = self.c.name()?;
+                    if !["INT", "VERTEX", "EDGE"].iter().any(|t| ty.eq_ignore_ascii_case(t)) {
+                        return Err(not_representable(format!("a tuple with a {ty} field")));
+                    }
+                    self.c.name()?;
+                    if self.c.eat_sym(">") {
+                        break;
+                    }
+                    self.c.expect_sym(",")?;
+                }
+                let name = self.c.name()?;
+                self.tuples.insert(name);
+                self.c.expect_sym(";")?;
+            } else if self.c.word("HeapAccum") {
+                // `HeapAccum<kz_match>(n, kz_o ASC) @@m;`: where kept matches go.
+                self.c.i += 1;
+                self.c.expect_sym("<")?;
+                let tuple = self.c.name()?;
+                self.c.expect_sym(">")?;
+                self.c.expect_sym("(")?;
+                let size_ok = matches!(self.c.next(), Some(Tok::Num(_)));
+                self.c.expect_sym(",")?;
+                self.c.name()?;
+                let order_ok = self.c.eat_word("ASC") || self.c.eat_word("DESC");
+                self.c.expect_sym(")")?;
+                self.c.expect_sym("@@")?;
+                let name = self.c.name()?;
+                if !self.tuples.contains(&tuple) || !size_ok || !order_ok {
+                    return Err(not_representable(format!("HeapAccum<{tuple}>")));
+                }
+                self.accumulators.insert(name);
+                self.c.expect_sym(";")?;
+            } else if self.c.eat_word("FOREACH") {
+                // Kept matches into the sets: `@@set += t.field;` only.
+                let var = self.c.name()?;
+                self.c.expect_word("IN")?;
+                self.c.expect_sym("@@")?;
+                let from = self.c.name()?;
+                self.c.expect_word("DO")?;
+                if !self.accumulators.contains(&from) {
+                    return Err(not_representable(format!("FOREACH over @@{from}")));
+                }
+                while !self.c.eat_word("END") {
+                    self.c.expect_sym("@@")?;
+                    let acc = self.c.name()?;
+                    self.c.expect_sym("+=")?;
+                    let of = self.c.name()?;
+                    self.c.expect_sym(".")?;
+                    self.c.name()?;
+                    self.c.expect_sym(";")?;
+                    if of != var || !self.accumulators.contains(&acc) {
+                        return Err(not_representable(format!("FOREACH adding {of} to @@{acc}")));
+                    }
+                }
+                self.c.expect_sym(";")?;
             } else if self.c.eat_word("PRINT") {
                 loop {
                     self.c.eat_sym("@@");
                     self.c.name()?;
+                    // `@@m.size() AS kz_found`: how many matches were kept.
+                    if self.c.eat_sym(".") {
+                        let method = self.c.name()?;
+                        if !method.eq_ignore_ascii_case("size") {
+                            return Err(not_representable(format!("PRINT .{method}()")));
+                        }
+                        self.c.expect_sym("(")?;
+                        self.c.expect_sym(")")?;
+                    }
+                    if self.c.eat_word("AS") {
+                        self.c.name()?;
+                    }
                     if !self.c.eat_sym(",") {
                         break;
                     }
@@ -765,6 +912,7 @@ pub fn parse(text: &str, values: &BTreeMap<String, Value>) -> Result<Pattern, De
         values,
         declared: BTreeMap::new(),
         accumulators: BTreeSet::new(),
+        tuples: BTreeSet::new(),
         seeds: BTreeMap::new(),
         nodes: Vec::new(),
         edges: Vec::new(),
@@ -802,22 +950,47 @@ mod tests {
         let c = compile_any(&knows(), Dialect::TigerGraph, Some("social"), &vars(json!({ "firma": "Acme" }))).unwrap();
         assert_eq!(
             c.text,
-            "INTERPRET QUERY (STRING firma) FOR GRAPH social SYNTAX v2 {\n  SetAccum<VERTEX> @@kz_nodes;\n  \
+            "INTERPRET QUERY (STRING firma) FOR GRAPH social SYNTAX v2 {\n  \
+             TYPEDEF TUPLE <INT kz_o, VERTEX a, VERTEX b, EDGE e> kz_match;\n  \
+             HeapAccum<kz_match>(500, kz_o ASC) @@kz_matches;\n  SetAccum<VERTEX> @@kz_nodes;\n  \
              SetAccum<EDGE> @@kz_edges;\n  kz_m = SELECT a FROM Person:a -(KENNT>:e)- Person:b\n    \
              WHERE a.name == firma\n    LIMIT 500;\n  kz_r = SELECT a FROM kz_m:a -(KENNT>:e)- Person:b\n    \
-             WHERE a.name == firma\n    ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e;\n  \
-             kz_n = {@@kz_nodes};\n  PRINT kz_n;\n  PRINT @@kz_edges;\n}"
+             WHERE a.name == firma\n    ACCUM @@kz_matches += kz_match(0, a, b, e);\n  \
+             FOREACH kz_t IN @@kz_matches DO\n    @@kz_nodes += kz_t.a;\n    @@kz_nodes += kz_t.b;\n    \
+             @@kz_edges += kz_t.e;\n  END;\n  kz_n = {@@kz_nodes};\n  PRINT kz_n;\n  PRINT @@kz_edges;\n  \
+             PRINT @@kz_matches.size() AS kz_found;\n}"
         );
         assert_eq!(c.parameters, vars(json!({ "firma": "Acme" })));
-        let checked = check_with(&c.text, Form::Interpret, None).unwrap();
+        let checked = check_with(&c.text, Form::Interpret, Some(&[])).unwrap();
         assert_eq!(checked.graph.as_deref(), Some("social"));
+        // The heap holds at most the limit of matches, also when it is capped by the source.
+        let limits = PatternLimits { max_limit: 20, ..PatternLimits::default() };
+        let capped =
+            compile(&knows(), Dialect::TigerGraph, Some("social"), &vars(json!({ "firma": "A" })), &limits).unwrap();
+        assert!(
+            capped.text.contains("HeapAccum<kz_match>(20, kz_o ASC)") && capped.text.contains("LIMIT 20;"),
+            "{}",
+            capped.text
+        );
+        // Without the installed query names (3.x) there is no tuple: the start nodes are limited.
+        let no_tuples = PatternLimits { gsql_tuples: false, ..PatternLimits::default() };
+        let plain =
+            compile(&knows(), Dialect::TigerGraph, Some("social"), &vars(json!({ "firma": "A" })), &no_tuples).unwrap();
+        assert!(!plain.text.contains("TYPEDEF") && plain.text.contains("ACCUM @@kz_nodes += a"), "{}", plain.text);
+        check_with(&plain.text, Form::Interpret, None).unwrap();
+        // The tuple is refused where a query of that name exists.
+        let names = ["kz_match".to_string()];
+        assert_eq!(check_with(&c.text, Form::Interpret, Some(&names)).unwrap_err().reason, "gsql.typedef_name");
+        // Read back, the kept-matches form is the same pattern.
+        let back = parse(&c.text, &c.parameters).unwrap();
+        assert_eq!(compile_any(&back, Dialect::TigerGraph, Some("social"), &c.parameters).unwrap(), c);
         // Counting: every match adds one, nothing is collected.
         let mut counted = knows();
         counted.count = true;
         let n = compile_any(&counted, Dialect::TigerGraph, Some("social"), &vars(json!({ "firma": "Acme" }))).unwrap();
         assert!(n.text.contains("ACCUM @@kz_count += 1;\n  PRINT @@kz_count AS matches;"), "{}", n.text);
         assert!(!n.text.contains("LIMIT") && n.limit.is_none(), "{}", n.text);
-        check_with(&n.text, Form::Interpret, None).unwrap();
+        check_with(&n.text, Form::Interpret, Some(&[])).unwrap();
     }
 
     fn rich() -> Pattern {
@@ -865,14 +1038,14 @@ mod tests {
                  LIMIT 7;\n  \
                  kz_r = SELECT a FROM kz_m:a -(ARBEITET_BEI>|LEITET>:e)- Firma:b, kz_s1:c -((<A|<B)*2..4)- Firma:b\n    \
                  WHERE a.alter >= kz_v0 AND (b.land IN laender OR b.aktiv == kz_v1) AND e.seit < kz_v2\n    \
-                 ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_nodes += c, @@kz_edges += e;"
+                 ACCUM @@kz_matches += kz_match(0, a, b, c, e);"
             ),
             "{}",
             c.text
         );
         assert_eq!(c.parameters["ids"], json!(["p1", "p2"]));
         assert_eq!(c.parameters["kz_v2"], json!(-2.5));
-        check_with(&c.text, Form::Interpret, None).unwrap();
+        check_with(&c.text, Form::Interpret, Some(&[])).unwrap();
         let parsed = parse_any(&c.text, Dialect::TigerGraph, &c.parameters);
         let back = parsed.pattern.clone().unwrap_or_else(|| panic!("{parsed:?}"));
         // The pasted list was reported the first time; read back it is a list.
@@ -917,7 +1090,7 @@ mod tests {
             let c = compile_any(&knows(), Dialect::TigerGraph, Some("g"), &vars(json!({ "firma": attack }))).unwrap();
             assert!(!c.text.contains(attack), "{}", c.text);
             assert_eq!(c.parameters["firma"], json!(attack));
-            check_with(&c.text, Form::Interpret, None).unwrap();
+            check_with(&c.text, Form::Interpret, Some(&[])).unwrap();
         }
     }
 
@@ -938,6 +1111,9 @@ mod tests {
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s; R2 = SELECT s FROM Person:s; }",
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s LIMIT 5; R2 = SELECT s FROM R:s -(K>)- Person:t; }",
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s -(K>)- Person:t WHERE (s.a == 1 OR t.b == 2); }",
+            "INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <STRING x> T; R = SELECT s FROM Person:s; }",
+            "INTERPRET QUERY () FOR GRAPH g { SetAccum<VERTEX> @@n; R = SELECT s FROM Person:s ACCUM @@n += s; \
+             FOREACH x IN @@n DO PRINT x; END; }",
             "INTERPRET QUERY () FOR GRAPH g { SumAccum<INT> @@n; R = SELECT s FROM Person:s ACCUM @@n += 1; }",
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s POST-ACCUM s.x = 1; }",
             "INTERPRET QUERY (INT k = 3) FOR GRAPH g { R = SELECT s FROM Person:s; }",

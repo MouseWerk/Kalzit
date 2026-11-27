@@ -1561,6 +1561,7 @@ impl DataSources {
             max_values: self.setting_u64(state, pattern::SETTING_MAX_VALUES).await? as usize,
             max_hops: u32::try_from(self.setting_u64(state, pattern::SETTING_MAX_HOPS).await?).unwrap_or(u32::MAX),
             max_limit: u32::try_from(rows).unwrap_or(u32::MAX),
+            gsql_tuples: true,
         };
         Ok(Limits { timeout: Duration::from_secs(timeout), max_rows: rows as usize, budget, pattern })
     }

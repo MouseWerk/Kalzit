@@ -121,14 +121,19 @@ impl AnalysisModel {
         Ok(())
     }
 
-    /// The data source a parameter's choices are read from: the first pattern target that
-    /// declares it, else the first target.
+    /// The data source a parameter's choices are read from: the pattern target that declares the
+    /// parameter, else the target its `choices.refId` names. Never a guess.
     pub fn choices_source(&self, name: &str) -> Option<&str> {
         let declaring = self
             .targets
             .iter()
             .find(|t| matches!(target_pattern(t), Some(Ok(p)) if p.parameters.iter().any(|p| p.name == name)));
-        declaring.or(self.targets.first()).map(|t| t.datasource_id.as_str())
+        let named = || {
+            let p = self.parameters.iter().find(|p| p.name == name)?;
+            let ref_id = p.choices.as_ref()?.ref_id.as_deref()?;
+            self.targets.iter().find(|t| t.ref_id == ref_id)
+        };
+        declaring.or_else(named).map(|t| t.datasource_id.as_str())
     }
 
     /// The analysis as a dashboard with one panel (`PANEL_ID`), for the dashboard's checks and
@@ -231,6 +236,18 @@ fn check_parameters(analysis: &AnalysisModel) -> Result<(), String> {
         }
         if let Some(c) = &p.choices {
             c.check().map_err(|d| format!("model.parameters[{i}].choices: {}", d.message))?;
+            // The values come from one named source: a pattern target that declares the
+            // parameter, or the target `refId` names.
+            let declared = analysis
+                .targets
+                .iter()
+                .any(|t| matches!(target_pattern(t), Some(Ok(pat)) if pat.parameters.iter().any(|x| x.name == p.name)));
+            let named = c.ref_id.as_deref().is_some_and(|r| analysis.targets.iter().any(|t| t.ref_id == r));
+            if !declared && !named {
+                return Err(format!(
+                    "model.parameters[{i}].choices.refId must name the target whose data source holds the values"
+                ));
+            }
         }
     }
     for (i, t) in analysis.targets.iter().enumerate() {

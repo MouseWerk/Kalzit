@@ -889,6 +889,10 @@ fn graph_settings(url: &str, extra: Value) -> (Value, Value) {
 const GRAPH_SETUP: &[&str] = &[
     "MATCH (n:KalzitTest) DETACH DELETE n",
     "CREATE (a:KalzitTest:Person {name: 'Ana', gross: 9007199254740993, seit: date('2024-01-01')})-[:KENNT {seit: 2020}]->(b:KalzitTest:Person {name: 'Bo'})",
+    // More values than a template offers at once (200), and one list a choice leaves out.
+    "MATCH (n:KalzitChoice) DETACH DELETE n",
+    "UNWIND range(1, 205) AS i CREATE (:KalzitChoice {name: 'Wert ' + toString(1000 + i)})",
+    "CREATE (:KalzitChoice {name: ['eine', 'Liste']})",
 ];
 
 /// The checks both Bolt kinds share: graph and frame answers, native types, refusals, schema.
@@ -1099,6 +1103,26 @@ async fn graph_patterns_schema_plans(t: &T, id: &str, kind: &str) {
     assert_eq!(c["values"], json!([]), "{c}");
     let (_, c) = t.send(Method::POST, &path, Some(json!({ "search": "B" }))).await;
     assert_eq!(c["values"], json!(["Bo"]), "{c}");
+    // More than 200 values: the first 200 in order, and `more`; a list value is left out.
+    let mut many = pattern.clone();
+    many["parameters"][0]["choices"] = json!({ "label": "KalzitChoice", "property": "name" });
+    let model = json!({
+        "schemaVersion": 1, "title": "Werte",
+        "targets": [{ "refId": "A", "datasourceId": id, "query": { "pattern": many } }],
+        "visualization": { "type": "table" }
+    });
+    let (_, a) = t.send(Method::POST, "/analyses", Some(json!({ "model": model }))).await;
+    let path = format!("/analyses/{}/parameters/wer/choices", a["id"].as_str().unwrap());
+    let (status, c) = t.send(Method::POST, &path, Some(json!({}))).await;
+    assert_eq!((status, c["more"].clone()), (StatusCode::OK, json!(true)), "{c}");
+    let values = c["values"].as_array().unwrap();
+    assert_eq!(
+        (values.len(), values[0].clone(), values[199].clone()),
+        (200, json!("Wert 1001"), json!("Wert 1200")),
+        "{c}"
+    );
+    let (_, c) = t.send(Method::POST, &path, Some(json!({ "search": "wert 12" }))).await;
+    assert_eq!((c["values"].as_array().map(Vec::len), c["more"].clone()), (Some(6), json!(false)), "{c}");
 
     let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
     assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
