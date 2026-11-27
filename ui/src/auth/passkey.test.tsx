@@ -143,7 +143,7 @@ describe("signing in with a passkey alone", () => {
     expect(browser.requests[0]?.mediation).toBeUndefined();
     const sent = server.areas.sso.passkeyAnswers[0];
     expect(sent?.forgetBrowser).toBe(true);
-    expect((sent?.credential as { rawId?: string }).rawId).toBe("Y3JlZA");
+    expect((sent?.credential as { rawId?: string } | undefined)?.rawId).toBe("Y3JlZA");
     expect(server.state.signedIn).toBe(true);
   });
 
