@@ -1263,8 +1263,15 @@ Feste Regeln für alle Stufen:
   Vervollständigung filtert danach); Memgraph über eine feste Schema-Abfrage von Kalzit, wenn der
   Server mit Schema-Info läuft, sonst Stichprobe wie bisher.
 - TigerGraph: Explorer (Nachbarn mit Typ und Richtung über erzeugtes GSQL), Ausführung von
-  Schritten in der Datenbank, Algorithmen über vom Admin installierte, nur lesende Varianten der
-  Bibliotheksabfragen (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server;
+  Schritten in der Datenbank, Algorithmen über nur lesende Varianten der Bibliotheksabfragen
+  (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server. Die Abfragen installiert
+  Kalzit selbst über eine eigene Installations-Kennung je Quelle (Entscheidung des Inhabers vom
+  27.11.2026, Board Graph083, D16): standardmäßig aus, nur von Admins der Quelle gesetzt, im
+  verschlüsselten Secret Store; eine Kennung mit Schreibrechten auf Daten oder Schema wird
+  abgelehnt; nur Kalzits eigene, geprüfte `kalzit_…`-Abfragen, exakter GSQL-Text vor der
+  Installation sichtbar, Prüfsumme vor jeder Ausführung, entfernbar, jede Installation im
+  Audit-Log; die Abfrage-Kennung bleibt nur lesend. Ohne Installations-Kennung erkennt Kalzit
+  vom Datenbank-Admin installierte Abfragen;
   GSQL-Vervollständigung (Vertex- und Kantentypen, Attribute, Richtungen, Akkumulator-Typen);
   nächtliche CI auch gegen 3.10, sofern ein frei nutzbares Image verfügbar ist, sonst
   Fake-Tests.
