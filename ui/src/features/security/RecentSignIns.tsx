@@ -60,6 +60,8 @@ function methodText(t: Translate, signIn: SignIn): string | null {
     case "password":
     case "break_glass":
       return t("security.signIns.method.password");
+    case "passkey":
+      return t("security.signIns.method.passkey");
     case "oidc":
       return signIn.providerName ?? t("security.signIns.method.oidc");
     case "saml":
@@ -125,7 +127,9 @@ export function signInLines(
   when: (ms: number) => string,
   signIn: SignIn,
 ): { title: string; detail: string } {
-  const how = [methodText(t, signIn), factorText(t, signIn.secondFactor)]
+  // A passkey alone is both factors: it is named once.
+  const factor = signIn.method === "passkey" ? null : factorText(t, signIn.secondFactor);
+  const how = [methodText(t, signIn), factor]
     .filter((part): part is string => part !== null)
     .join(" + ");
   const title = how === "" ? when(signIn.at) : `${when(signIn.at)} · ${how}`;

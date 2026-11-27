@@ -835,7 +835,8 @@ async fn check_organization_rules_never_lock_everyone_out(t: TestApp) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// A software authenticator: one P-256 key, "none" attestation, user present and verified.
+// A software authenticator: one P-256 key, "none" attestation, user present and (unless told
+// otherwise) verified; with a user handle it answers like a discoverable passkey.
 
 mod authenticator {
     use data_encoding::BASE64URL_NOPAD as B64;
@@ -848,6 +849,10 @@ mod authenticator {
         key: SigningKey,
         pub credential_id: Vec<u8>,
         pub counter: u32,
+        /// The account's id the passkey keeps (discoverable), sent back with every assertion.
+        pub user_handle: Option<Vec<u8>>,
+        /// Whether the person is verified on the device (PIN, fingerprint).
+        pub verified: bool,
     }
 
     /// The parts of CBOR this needs: unsigned and negative integers, byte and text strings, maps.
@@ -888,7 +893,13 @@ mod authenticator {
                     break key;
                 }
             };
-            Self { key, credential_id: rand::random::<[u8; 16]>().to_vec(), counter: 0 }
+            Self {
+                key,
+                credential_id: rand::random::<[u8; 16]>().to_vec(),
+                counter: 0,
+                user_handle: None,
+                verified: true,
+            }
         }
 
         fn cose_key(&self) -> Vec<u8> {
@@ -911,7 +922,7 @@ mod authenticator {
         fn auth_data(&self, rp_id: &str, attested: bool) -> Vec<u8> {
             let mut out = Sha256::digest(rp_id.as_bytes()).to_vec();
             // User present and verified; attested credential data on registration.
-            out.push(0x01 | 0x04 | if attested { 0x40 } else { 0 });
+            out.push(0x01 | if self.verified { 0x04 } else { 0 } | if attested { 0x40 } else { 0 });
             out.extend(self.counter.to_be_bytes());
             if attested {
                 out.extend([0u8; 16]);
@@ -926,6 +937,12 @@ mod authenticator {
             json!({ "type": kind, "challenge": challenge, "origin": origin, "crossOrigin": false })
                 .to_string()
                 .into_bytes()
+        }
+
+        /// Keeps the account's id of a registration's `options` as the passkey's user handle.
+        pub fn discoverable(&mut self, options: &Value) {
+            let id = options["publicKey"]["user"]["id"].as_str().unwrap();
+            self.user_handle = Some(B64.decode(id.as_bytes()).unwrap());
         }
 
         /// The answer of `navigator.credentials.create` to `options` (`{"publicKey": ...}`).
@@ -967,7 +984,7 @@ mod authenticator {
                     "authenticatorData": B64.encode(&auth_data),
                     "clientDataJSON": B64.encode(&client),
                     "signature": B64.encode(signature.as_bytes()),
-                    "userHandle": null
+                    "userHandle": self.user_handle.as_ref().map(|h| B64.encode(h))
                 },
                 "extensions": {}
             })
@@ -1046,6 +1063,283 @@ async fn check_passkeys_sign_in_and_a_cloned_authenticator_is_refused(t: TestApp
     assert!(status.body["recoveryCodes"].is_null(), "{}", status.body);
     let (_, r) = t.password("joerg@example.de").await;
     assert!(r.body["id"].is_string());
+    t.finish().await;
+}
+
+/// The `Set-Cookie` header of the answer for the cookie `name`, whole.
+fn set_cookie_header(r: &Reply, name: &str) -> String {
+    r.headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("no cookie {name}"))
+        .to_string()
+}
+
+/// Registers a discoverable passkey for the signed-in `who` (its first factor confirmed first
+/// when `confirm`).
+async fn enroll_passkey(t: &TestApp, who: &Browser, key: &mut authenticator::Authenticator, confirm: bool) {
+    if confirm {
+        t.confirm_password(who).await;
+    }
+    let options = t.post("/api/me/security/passkeys/setup", json!({}), who).await;
+    assert_eq!(options.status, StatusCode::OK, "{}", options.body);
+    key.discoverable(&options.body);
+    let r = t.post("/api/me/security/passkeys", json!({ "credential": key.register(&options.body, ORIGIN) }), who).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+}
+
+/// One sign-in with a passkey alone: the dialog, then the answer (`answer` makes it from the
+/// options); answers the dialog's cookie and the reply.
+async fn passkey_sign_in(
+    t: &TestApp,
+    key: &mut authenticator::Authenticator,
+    origin: &str,
+    forget_browser: bool,
+) -> (Browser, Reply) {
+    let options = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
+    assert_eq!(options.status, StatusCode::OK, "{}", options.body);
+    let dialog = Browser { session: options.cookie("kalzit_passkey"), pending: None };
+    assert!(dialog.session.is_some(), "the dialog has a cookie of its own");
+    let answer = key.assert(&options.body, origin);
+    let r = t.post("/api/auth/passkey", json!({ "credential": answer, "forgetBrowser": forget_browser }), &dialog).await;
+    (dialog, r)
+}
+
+/// The latest `auth.sign_in_failed` entry's summary.
+async fn last_refusal(t: &TestApp) -> Value {
+    let (summary,): (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'auth.sign_in_failed' ORDER BY created_at DESC, id DESC",
+    )
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    serde_json::from_str(&summary).unwrap()
+}
+
+async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
+    use authenticator::Authenticator;
+    let (owner, org) = t.setup().await;
+    // Without a passkey dialog started, the sign-in page offers it already: it depends on the
+    // server, not on the account.
+    let r = t.get("/api/auth/providers", &Browser::default()).await;
+    assert_eq!(r.body["passkeySignIn"], true, "{}", r.body);
+    let mut key = Authenticator::new();
+    t.confirm_password(&owner).await;
+    let setup = t.post("/api/me/security/passkeys/setup", json!({}), &owner).await;
+    // New passkeys are asked to be discoverable, so they can sign in without a password later.
+    assert_eq!(setup.body["publicKey"]["authenticatorSelection"]["residentKey"], "preferred", "{}", setup.body);
+    key.discoverable(&setup.body);
+    let r = t.post("/api/me/security/passkeys", json!({ "credential": key.register(&setup.body, ORIGIN) }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // The dialog names no account, needs the person verified and leaves the mediation to the page.
+    let options = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
+    assert_eq!(options.status, StatusCode::OK, "{}", options.body);
+    assert!(options.body.get("mediation").is_none(), "{}", options.body);
+    assert_eq!(options.body["publicKey"]["userVerification"], "required");
+    assert_eq!(options.body["publicKey"]["rpId"], HOST);
+    let allowed = &options.body["publicKey"]["allowCredentials"];
+    assert!(allowed.is_null() || allowed == &json!([]), "{}", options.body);
+    let cookie = set_cookie_header(&options, "kalzit_passkey");
+    assert!(cookie.contains("HttpOnly") && cookie.contains("Max-Age=300"), "{cookie}");
+    // An answer without the dialog's cookie answers nothing about the passkey.
+    let answer = key.assert(&options.body, ORIGIN);
+    let r = t.post("/api/auth/passkey", json!({ "credential": answer }), &Browser::default()).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "passkey_sign_in.expired"), "{}", r.body);
+
+    // The passkey alone opens the session: no second step, the session counts as confirmed.
+    let (dialog, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["email"], "joerg@example.de");
+    assert!(r.cookie("kalzit_pending").is_none() && r.body.get("secondFactor").is_none());
+    assert!(r.cookie("kalzit_device").is_none(), "the device cookie belongs to a password");
+    assert!(set_cookie_header(&r, "kalzit_session").contains("Max-Age="), "a normal session outlives the browser");
+    assert!(set_cookie_header(&r, "kalzit_passkey").contains("Max-Age=0"), "the dialog's cookie goes");
+    let signed_in = Browser { session: r.cookie("kalzit_session"), pending: None };
+    assert_eq!(t.get("/api/me", &signed_in).await.status, StatusCode::OK);
+    let r = t.post("/api/me/security/recovery-codes", json!({}), &signed_in).await;
+    assert_eq!(r.status, StatusCode::OK, "a fresh confirmation: {}", r.body);
+    let first = &t.get("/api/me/sign-ins", &signed_in).await.body["items"][0];
+    assert_eq!((&first["method"], &first["secondFactor"], &first["current"]), (&json!("passkey"), &json!("passkey"), &json!(true)));
+    let (method,): (String,) = sqlx::query_as("SELECT sign_in_method FROM sessions WHERE token_hash = $1")
+        .bind(kalzit::auth::session::hash_token(signed_in.session.as_deref().unwrap().split_once('=').unwrap().1))
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(method, "passkey");
+    // The dialog is used up: the same answer again is refused.
+    let replay = key.assert(&options.body, ORIGIN);
+    let r = t.post("/api/auth/passkey", json!({ "credential": replay }), &dialog).await;
+    assert_eq!(r.reason(), "passkey_sign_in.expired", "{}", r.body);
+
+    // Refused: not verified on the device, another origin, a cloned authenticator. One answer for
+    // all, and the reason only in the account's own entries.
+    key.verified = false;
+    let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!((r.status, r.code(), r.reason()), (StatusCode::UNAUTHORIZED, "invalid_credentials", "passkey_sign_in.refused"));
+    key.verified = true;
+    let (_, r) = passkey_sign_in(&t, &mut key, "http://evil.test", false).await;
+    assert_eq!(r.reason(), "passkey_sign_in.refused", "{}", r.body);
+    let owner_id = member_id(&t, "joerg@example.de").await;
+    let refusal = last_refusal(&t).await;
+    assert_eq!((&refusal["method"], &refusal["reason"], &refusal["userId"]), (&json!("passkey"), &json!("credentials"), &json!(owner_id)));
+    let counter = key.counter;
+    key.counter = 0;
+    let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!(r.reason(), "passkey_sign_in.refused", "a cloned authenticator: {}", r.body);
+    key.counter = counter + 1;
+    // A passkey the server does not know names no account.
+    let mut stranger = Authenticator::new();
+    stranger.user_handle = key.user_handle.clone();
+    let (_, r) = passkey_sign_in(&t, &mut stranger, ORIGIN, false).await;
+    assert_eq!(r.reason(), "passkey_sign_in.refused", "{}", r.body);
+
+    // A disabled account: refused alike, the reason recorded for the account.
+    sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(&owner_id).execute(&t.state.db).await.unwrap();
+    let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "passkey_sign_in.refused"), "{}", r.body);
+    assert_eq!(last_refusal(&t).await["reason"], "disabled");
+    sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(&owner_id).execute(&t.state.db).await.unwrap();
+
+    // A member while the server requires a second factor of everyone: the passkey is both, and
+    // her organization lets the session in.
+    let eda = t.member(&owner, &org, "eda@example.de", "viewer").await;
+    let mut eda_key = Authenticator::new();
+    enroll_passkey(&t, &eda, &mut eda_key, true).await;
+    // The owner's session from the passkey counts as freshly confirmed for such changes.
+    let r = t.put_setting(&signed_in, "/api/admin/settings/security.two_factor_required", json!("everyone")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (_, r) = passkey_sign_in(&t, &mut eda_key, ORIGIN, false).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let eda = Browser { session: r.cookie("kalzit_session"), pending: None };
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &eda).await.status, StatusCode::OK);
+    // Password sign-in off in her organization: the passkey takes the password's place and is
+    // refused too, the reason recorded for her.
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at)          VALUES ($1, 'signin.local_password', '\"off\"', 1, NULL, 0)",
+    )
+    .bind(&org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(&t.state).invalidate(Some(&org));
+    let (_, r) = passkey_sign_in(&t, &mut eda_key, ORIGIN, false).await;
+    assert_eq!(r.reason(), "passkey_sign_in.refused", "{}", r.body);
+    assert_eq!(last_refusal(&t).await["reason"], "password_off");
+    // A session signed in with a passkey counts as a password session at the organization's gate.
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &eda).await.code(), "org_provider_sign_in_required");
+
+    // Passkeys turned off on the server: no dialog, and the sign-in page offers none.
+    let r = t.put_setting(&signed_in, "/api/admin/settings/security.two_factor_methods", json!("totp")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "passkey_sign_in.off"), "{}", r.body);
+    assert_eq!(t.get("/api/auth/providers", &Browser::default()).await.body["passkeySignIn"], false);
+    // Opened by an IP address, where browsers refuse passkeys: off as well.
+    let all = json!({ "value": "all", "version": 1 });
+    let r = t.send(Method::PATCH, "/api/admin/settings/security.two_factor_methods", Some(all), &signed_in).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.send_on("10.0.0.5", "http://10.0.0.5", Method::POST, "/api/auth/passkey/options", Some(json!({})), &Browser::default()).await;
+    assert_eq!(r.reason(), "passkey_sign_in.off", "{}", r.body);
+
+    let actions = t.audit_actions().await;
+    assert!(actions.iter().filter(|a| *a == "auth.signed_in").count() >= 3);
+    t.finish().await;
+}
+
+/// "Geteilter oder fremder Computer": the session cookie ends with the browser and the session
+/// itself after at most 12 hours, with a password and with a passkey.
+async fn check_a_shared_computer_gets_a_short_session(t: TestApp) {
+    use authenticator::Authenticator;
+    let (owner, _) = t.setup().await;
+    let mut key = Authenticator::new();
+    enroll_passkey(&t, &owner, &mut key, true).await;
+
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD, "forgetBrowser": true });
+    let password = t.post("/api/auth/login", body, &Browser::default()).await;
+    assert_eq!(password.status, StatusCode::OK, "{}", password.body);
+    let (_, passkey) = passkey_sign_in(&t, &mut key, ORIGIN, true).await;
+    assert_eq!(passkey.status, StatusCode::OK, "{}", passkey.body);
+    // Without the box: a session of the configured lifetime.
+    let (_, normal) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+    assert_eq!(normal.status, StatusCode::OK, "{}", normal.body);
+    let lifetime = t.state.config.sessions.lifetime_hours as i64;
+    assert!(lifetime > 12, "the default lifetime is longer than a shared computer's");
+
+    let mut shared = Vec::new();
+    for (r, short) in [(&password, true), (&passkey, true), (&normal, false)] {
+        let cookie = set_cookie_header(r, "kalzit_session");
+        assert_eq!(!cookie.contains("Max-Age") && !cookie.contains("Expires"), short, "{cookie}");
+        assert!(cookie.contains("HttpOnly"), "{cookie}");
+        let token = r.cookie("kalzit_session").unwrap();
+        let (created, expires): (i64, i64) =
+            sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
+                .bind(kalzit::auth::session::hash_token(token.split_once('=').unwrap().1))
+                .fetch_one(&t.state.db)
+                .await
+                .unwrap();
+        let hours = if short { 12 } else { lifetime };
+        assert_eq!(expires - created, hours * 3_600_000);
+        if short {
+            assert!(r.cookie("kalzit_device").is_none(), "no known device on a shared computer");
+            shared.push(Browser { session: Some(token), pending: None });
+        }
+    }
+    // Twelve hours later the shared sessions are gone, even when used all along.
+    for _ in 0..12 {
+        t.clock.advance_ms(3_600_000);
+        let browser = Browser { session: normal.cookie("kalzit_session"), pending: None };
+        t.get("/api/me", &browser).await;
+    }
+    for browser in &shared {
+        assert_eq!(t.get("/api/me", browser).await.status, StatusCode::UNAUTHORIZED);
+    }
+    let browser = Browser { session: normal.cookie("kalzit_session"), pending: None };
+    assert_eq!(t.get("/api/me", &browser).await.status, StatusCode::OK);
+    t.finish().await;
+}
+
+/// Starting dialogs and failing answers each have a budget per address.
+async fn check_passkey_sign_ins_are_rate_limited(t: TestApp) {
+    use authenticator::Authenticator;
+    t.setup().await;
+    let mut key = Authenticator::new();
+    key.user_handle = Some(vec![0; 16]);
+    // Failing answers use up the address's budget of failed sign-ins, shared with passwords.
+    let mut refused = 0;
+    let limited = loop {
+        let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            break r;
+        }
+        assert_eq!(r.reason(), "passkey_sign_in.refused", "{}", r.body);
+        refused += 1;
+        assert!(refused < 100, "the failures are never limited");
+    };
+    assert_eq!(limited.code(), "rate_limited");
+    assert!(limited.headers.contains_key(header::RETRY_AFTER));
+    let wrong = json!({ "email": "joerg@example.de", "password": "not the password" });
+    let r = t.post("/api/auth/login", wrong, &Browser::default()).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the password shares the budget: {}", r.body);
+    // Starts: each keeps a row, so they have a budget of their own.
+    let mut started = refused + 1;
+    loop {
+        let r = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            break;
+        }
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        started += 1;
+        assert!(started < 1000, "the starts are never limited");
+    }
+    assert_eq!(started, kalzit::routes::passkey_sign_in::STARTS_PER_ADDRESS);
+    // Unanswered dialogs end and are cleaned up with the sessions.
+    t.clock.advance_ms(kalzit::routes::passkey_sign_in::CEREMONY_TTL_MS);
+    kalzit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms()).await.unwrap();
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkey_sign_ins").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(left, 0);
     t.finish().await;
 }
 
@@ -1196,6 +1490,21 @@ async fn passkeys_need_a_host_name_and_the_app_is_offered_instead() {
 #[tokio::test]
 async fn the_rule_changes_only_with_a_fresh_confirmation() {
     check_the_rule_changes_only_with_a_fresh_confirmation(test_app().await).await;
+}
+
+#[tokio::test]
+async fn a_passkey_alone_signs_in_as_both_factors() {
+    check_a_passkey_alone_signs_in_as_both_factors(test_app().await).await;
+}
+
+#[tokio::test]
+async fn a_shared_computer_gets_a_short_session() {
+    check_a_shared_computer_gets_a_short_session(test_app().await).await;
+}
+
+#[tokio::test]
+async fn passkey_sign_ins_are_rate_limited() {
+    check_passkey_sign_ins_are_rate_limited(test_app().await).await;
 }
 
 #[tokio::test]

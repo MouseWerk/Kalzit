@@ -9,11 +9,15 @@
 //!
 //! webauthn-rs calls these credentials "security keys": a factor next to the password, with user
 //! verification preferred rather than required. The hint it adds for hardware keys is removed
-//! from the options, so browsers offer passkeys on the device and the phone as well.
+//! from the options, so browsers offer passkeys on the device and the phone as well, and a
+//! discoverable credential is preferred, so the same passkey can later sign in without a password
+//! (`discoverable_*`, `routes::passkey_sign_in`). Signing in with a passkey alone requires user
+//! verification: such a passkey counts as both factors.
 
 use url::Url;
+use serde_json::Value;
 use webauthn_rs::prelude::{
-    CreationChallengeResponse, CredentialID, PublicKeyCredential, RegisterPublicKeyCredential,
+    CredentialID, DiscoverableAuthentication, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse, SecurityKey, SecurityKeyAuthentication, SecurityKeyRegistration, Uuid, Webauthn,
     WebauthnBuilder,
 };
@@ -49,14 +53,14 @@ pub fn relying_party(public_url: Option<&str>, info: &RequestInfo, name: &str) -
         .map_err(|_| host_unusable())
 }
 
-/// Options for `navigator.credentials.create` and the state to keep until the answer.
+/// Options for `navigator.credentials.create` (as JSON) and the state to keep until the answer.
 pub fn start_registration(
     rp: &Webauthn,
     user_id: &str,
     email: &str,
     name: &str,
     existing: &[SecurityKey],
-) -> ApiResult<(CreationChallengeResponse, SecurityKeyRegistration)> {
+) -> ApiResult<(Value, SecurityKeyRegistration)> {
     let user = Uuid::parse_str(user_id).map_err(|e| ApiError::internal("passkey registration", e))?;
     // The same authenticator twice is refused by the browser.
     let exclude: Vec<CredentialID> = existing.iter().map(|k| k.cred_id().clone()).collect();
@@ -64,6 +68,12 @@ pub fn start_registration(
         .start_securitykey_registration(user, email, name, Some(exclude), None, None)
         .map_err(|e| ApiError::internal("passkey registration", e))?;
     options.public_key.hints = None;
+    let mut options = serde_json::to_value(options).map_err(|e| ApiError::internal("passkey registration", e))?;
+    // A passkey the browser can offer by itself, where the authenticator can keep one; the
+    // registration does not depend on it, it only lets the passkey sign in without a password.
+    if let Some(selection) = options.pointer_mut("/publicKey/authenticatorSelection").and_then(Value::as_object_mut) {
+        selection.insert("residentKey".into(), Value::from("preferred"));
+    }
     Ok((options, state))
 }
 
@@ -99,6 +109,49 @@ pub fn finish_authentication(
 ) -> Option<webauthn_rs::prelude::AuthenticationResult> {
     match rp.finish_securitykey_authentication(answer, state) {
         Ok(result) => Some(result),
+        Err(e) => {
+            tracing::info!("passkey sign-in refused: {e}");
+            None
+        }
+    }
+}
+
+/// Options for `navigator.credentials.get` without an account: the browser offers the passkeys it
+/// knows for this host, and the answer names the account (its user handle). User verification is
+/// required. The mediation (a button's dialog, or the suggestion in the address field) is the
+/// page's choice, so it is left out.
+pub fn start_discoverable(rp: &Webauthn) -> ApiResult<(RequestChallengeResponse, DiscoverableAuthentication)> {
+    let (mut options, state) =
+        rp.start_discoverable_authentication().map_err(|e| ApiError::internal("passkey sign-in", e))?;
+    options.mediation = None;
+    options.public_key.hints = None;
+    Ok((options, state))
+}
+
+/// The account and credential an answer to `start_discoverable` names: the user handle as the
+/// account's id (`start_registration` uses the id), and the credential's id as stored
+/// (`credential_key`). `None` when the answer names no account.
+pub fn identify_discoverable(rp: &Webauthn, answer: &PublicKeyCredential) -> Option<(String, String)> {
+    let (user, credential) = rp.identify_discoverable_authentication(answer).ok()?;
+    Some((user.to_string(), data_encoding::BASE64URL_NOPAD.encode(credential)))
+}
+
+/// Checks an answer to `start_discoverable` against the stored passkey `key` the answer named.
+/// `None` when it does not hold, or when the person was not verified on the device.
+pub fn finish_discoverable(
+    rp: &Webauthn,
+    answer: &PublicKeyCredential,
+    state: DiscoverableAuthentication,
+    key: &SecurityKey,
+) -> Option<webauthn_rs::prelude::AuthenticationResult> {
+    match rp.finish_discoverable_authentication_v2(answer, state, key) {
+        // webauthn-rs requires the verification already; checked here again, since only a
+        // verified passkey counts as both factors.
+        Ok(result) if result.user_verified() => Some(result),
+        Ok(_) => {
+            tracing::info!("passkey sign-in refused: the person was not verified on the device");
+            None
+        }
         Err(e) => {
             tracing::info!("passkey sign-in refused: {e}");
             None

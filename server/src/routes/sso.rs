@@ -141,7 +141,7 @@ struct PublicProvider {
     kind: String,
 }
 
-async fn providers_public(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+async fn providers_public(State(state): State<AppState>, Extension(info): Extension<RequestInfo>) -> ApiResult<Json<Value>> {
     let providers: Vec<PublicProvider> = store::all(&state.read_db)
         .await?
         .into_iter()
@@ -153,6 +153,8 @@ async fn providers_public(State(state): State<AppState>) -> ApiResult<Json<Value
         "providers": providers,
         "passwordForm": policy.password_form,
         "localSignIn": policy.local_on,
+        // "Mit Passkey anmelden" and the suggestion in the address field (`passkey_sign_in`).
+        "passkeySignIn": super::passkey_sign_in::available(&state, &info).await?,
     })))
 }
 

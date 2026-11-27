@@ -38,6 +38,7 @@ pub mod orgs;
 pub mod outbound_proxy;
 pub mod panel_plugins;
 pub mod panel_state;
+pub mod passkey_sign_in;
 pub mod password_reset;
 pub mod playlists;
 pub mod plugins;
@@ -78,6 +79,7 @@ pub fn all() -> Vec<table::RouteDef> {
         ldap::routes(),
         saml::routes(),
         second_factor::routes(),
+        passkey_sign_in::routes(),
         security::routes(),
         orgs::routes(),
         admin_settings::routes(),
@@ -435,6 +437,10 @@ mod access_guard {
         "POST /auth/second-factor/setup",
         // The account's password after a provider linked its identity by email (`second_factor`).
         "POST /auth/second-factor/password",
+        // Signing in with a passkey alone (`passkey_sign_in`): starts are limited per address and
+        // keep a row for five minutes; answers count against the address's sign-in budget.
+        "POST /auth/passkey/options",
+        "POST /auth/passkey",
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
         "GET /branding",
         "GET /branding/logo",

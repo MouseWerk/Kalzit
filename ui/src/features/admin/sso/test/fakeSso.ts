@@ -70,6 +70,13 @@ export interface FakeSsoState {
   directoryAnswer: "ok" | "unreachable" | { outcome: string; ref: string };
   /** The sync of each LDAP provider, by id. */
   syncs: Record<string, FakeSync>;
+  /** Whether a passkey alone signs in (`passkeySignIn` of `GET /auth/providers`). */
+  passkeySignIn: boolean;
+  /** How `POST /auth/passkey` answers: `ok` signs the test user in, `refused` refuses. */
+  passkeyAnswer: "ok" | "refused";
+  /** The bodies of `POST /auth/passkey`, and how many dialogs were started. */
+  passkeyAnswers: Record<string, unknown>[];
+  passkeyStarts: number;
 }
 
 const T0 = Date.UTC(2026, 9, 29, 9);
@@ -236,6 +243,10 @@ function initialState(): FakeSsoState {
     localPassword: "on",
     breakGlass: null,
     readOnly: false,
+    passkeySignIn: false,
+    passkeyAnswer: "ok",
+    passkeyAnswers: [],
+    passkeyStarts: 0,
     checks: {
       providerReady: { ok: false },
       breakGlassReady: { ok: false },
@@ -738,7 +749,28 @@ export function handleSsoRoute(
         .map(({ slug, name, kind }) => ({ slug, name, kind })),
       passwordForm: state.passwordForm,
       localSignIn: state.localPassword === "on",
+      passkeySignIn: state.passkeySignIn,
     });
+  }
+  if (path === "/api/auth/passkey/options" && method === "POST") {
+    state.passkeyStarts += 1;
+    return json(200, {
+      publicKey: {
+        challenge: "Y2hhbGxlbmdl",
+        rpId: "localhost",
+        allowCredentials: [],
+        userVerification: "required",
+        timeout: 120000,
+      },
+    });
+  }
+  if (path === "/api/auth/passkey" && method === "POST") {
+    state.passkeyAnswers.push(input);
+    if (state.passkeyAnswer === "refused") {
+      return refusal(401, "invalid_credentials", "passkey_sign_in.refused");
+    }
+    server.state.signedIn = true;
+    return json(200, server.state.user);
   }
   if ((path === "/api/auth/login" || path === "/api/auth/login/local") && method === "POST") {
     const user = server.state.user;

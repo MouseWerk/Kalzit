@@ -14,7 +14,8 @@ use crate::net::RequestInfo;
 const MAX_USER_AGENT_CHARS: usize = 256;
 
 /// How the first step of a sign-in went: `first_step` is `password`, `directory` or `provider`
-/// (`auth::second_factor::FirstStep::label`).
+/// (`auth::second_factor::FirstStep::label`), or `passkey` for a passkey alone
+/// (`routes::passkey_sign_in`).
 #[derive(Clone, Debug)]
 pub struct Via {
     pub first_step: String,
@@ -26,12 +27,13 @@ pub struct Via {
 
 impl Via {
     /// How a session opened by this sign-in names its method (`sessions.sign_in_method`):
-    /// `password`, `break_glass`, `directory` or `provider`.
+    /// `password`, `break_glass`, `directory`, `provider` or `passkey`.
     pub fn session_method(&self) -> &'static str {
         match (self.break_glass, self.first_step.as_str()) {
             (true, _) => "break_glass",
             (false, "directory") => "directory",
             (false, "provider") => "provider",
+            (false, "passkey") => "passkey",
             _ => "password",
         }
     }
@@ -73,6 +75,7 @@ pub async fn record(
         (Some((_, _, kind)), _, _) => kind.clone(),
         (None, _, "directory") => "ldap".to_string(),
         (None, _, "provider") => "provider".to_string(),
+        (None, _, "passkey") => "passkey".to_string(),
         _ => "password".to_string(),
     };
     let mut summary = Map::new();
@@ -126,7 +129,8 @@ pub struct SignIn {
     /// Why an attempt was refused: `credentials`, `disabled`, `password_off`, `second_factor`, or
     /// the reason a provider's sign-in was refused (`sso.unmapped`, ...).
     pub reason: Option<String>,
-    /// `password`, `break_glass`, `oidc`, `saml`, `ldap` or `provider` (a provider since removed).
+    /// `password`, `break_glass`, `passkey`, `oidc`, `saml`, `ldap` or `provider` (a provider since
+    /// removed).
     pub method: Option<String>,
     /// The provider's slug and name, as they were at the sign-in.
     pub provider: Option<String>,

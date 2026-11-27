@@ -203,6 +203,7 @@
   "security.signIns.thisSession": "This session",
   "security.signIns.refused": "Refused",
   "security.signIns.method.password": "Password",
+  "security.signIns.method.passkey": "Passkey",
   "security.signIns.method.oidc": "OpenID Connect",
   "security.signIns.method.saml": "SAML",
   "security.signIns.method.ldap": "LDAP",

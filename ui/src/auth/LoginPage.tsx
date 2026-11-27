@@ -41,6 +41,7 @@ import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
+import { type PasskeyFailure, usePasskeySignIn } from "./passkeySignIn";
 import { getRegistration, registrationKey } from "./registrationApi";
 import { SSO_OUTCOMES, type SsoOutcome } from "./ssoOutcome";
 import "./auth.css";
@@ -79,10 +80,12 @@ function errorCode(error: unknown): ErrorCode {
 }
 
 /**
- * Sign in (board Auth.dc.html, frames 3 and 4): the organization above the heading, the admin's
+ * Sign in (board Auth.dc.html, frames 3 to 5): the organization above the heading, the admin's
  * welcome text as its sentence and the admin's notice in the panel next to it (above the page on
  * narrow screens). With providers set up, their buttons come first, the first one as the main
- * action, and the password form follows open, folded or not at all, as the server says.
+ * action, and the password form follows open, folded or not at all, as the server says. Where a
+ * passkey alone may sign in, "Mit Passkey anmelden" stands above the form (the main action
+ * without providers, next to them otherwise) and the address field suggests saved passkeys.
  */
 export function LoginPage() {
   const search = loginRoute.useSearch();
@@ -225,6 +228,19 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     },
   });
 
+  // Signing in with a passkey alone, where the server allows it (not on the break-glass form).
+  const passkey = usePasskeySignIn({
+    allowed: variant === "main" && providersQuery.data?.passkeySignIn === true,
+    shared,
+    onSignedIn: (me) => signedIn(me),
+  });
+
+  function startPasskey() {
+    signIn.reset();
+    setSsoArrival(null);
+    passkey.start();
+  }
+
   useEffect(() => {
     if (focusEmail) {
       refs.email.current?.focus();
@@ -271,6 +287,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     }
     setUntil(null);
     setSsoArrival(null);
+    passkey.clear();
     signIn.mutate({
       email: trimWhitespace(email),
       password,
@@ -413,6 +430,8 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     fieldFromServer(FIELD_ORDER, signIn.error) === undefined
   ) {
     alert = <AccessNotice tone="danger" icon="alert" title={t(`errors.${code}`)} />;
+  } else if (signIn.isIdle && passkey.failure !== null) {
+    alert = <PasskeyNotice t={t} failure={passkey.failure} />;
   } else if (signIn.isIdle && ssoArrival !== null && ssoArrival !== "disabled") {
     alert = (
       <SsoOutcomeNotice
@@ -433,7 +452,19 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     );
   }, [search.signedOut, search.expired]);
   let status = null;
-  if (alert !== null) {
+  if (passkey.phase !== "idle") {
+    // The browser's dialog belongs to the browser; the page only says what is happening.
+    status = (
+      <AccessNotice
+        tone="info"
+        icon="shieldCheck"
+        title={t(
+          passkey.phase === "waiting" ? "access.passkey.waiting" : "access.login.submitting",
+        )}
+        detail={passkey.phase === "waiting" ? t("access.passkey.waitingDetail") : undefined}
+      />
+    );
+  } else if (alert !== null) {
     // At most one message: an error says what the status would have said, and more.
   } else if (waited && !signIn.isPending) {
     status = <AccessNotice tone="info" icon="check" title={t("access.login.ready")} />;
@@ -503,7 +534,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     status = <AccessNotice tone="info" icon="clock" title={t("security.signIn.expired")} />;
   }
 
-  const busy = signIn.isPending;
+  const busy = signIn.isPending || passkey.phase !== "idle";
   const orgLine = <OrgLine organization={organization} serverName={serverName} />;
   if (signIn.isIdle && ssoArrival === "disabled") {
     return (
@@ -536,8 +567,29 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   } else if (waiting && !addressLocked) {
     submit = t("access.retryIn", { time: formatWait(left) });
   }
-  // Copper is on one button only: the first provider's, unless the form stands open below.
-  const submitIsMain = mode === "plain" || mode === "expanded";
+  // Copper is on one button only: the first provider's, unless the form stands open below; without
+  // providers the passkey's, where a passkey alone may sign in (board frame 5).
+  const passkeyIsMain = mode === "plain" && passkey.offered;
+  const submitIsMain = (mode === "plain" && !passkey.offered) || mode === "expanded";
+  const passkeyButton = passkey.offered ? (
+    <button
+      type="button"
+      className={
+        passkeyIsMain
+          ? "button button--primary button--block"
+          : "button button--secondary button--block"
+      }
+      aria-disabled={busy || undefined}
+      onClick={() => {
+        if (!busy) {
+          startPasskey();
+        }
+      }}
+    >
+      <Icon name="passkey" />
+      {t("access.passkey.button")}
+    </button>
+  ) : null;
   const returnTo = search.redirect ?? "/";
 
   return (
@@ -574,8 +626,24 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         <div className="access__status" role="status">
           {status}
         </div>
-        <AccessAlert>{alert}</AccessAlert>
-        {mode === "plain" ? null : (
+        <AccessAlert>{passkey.phase === "idle" ? alert : null}</AccessAlert>
+        {passkey.phase === "waiting" ? (
+          <button
+            type="button"
+            className="button button--secondary button--block"
+            onClick={passkey.cancel}
+          >
+            {t("access.passkey.cancel")}
+          </button>
+        ) : null}
+        {passkey.phase !== "idle" ? null : mode === "plain" ? (
+          ready && passkeyButton !== null ? (
+            <>
+              {passkeyButton}
+              <p className="access__or">{t("access.sso.or")}</p>
+            </>
+          ) : null
+        ) : (
           <div className="access__sso">
             {providers.map((provider, index) => {
               const going = leaving?.slug === provider.slug;
@@ -599,9 +667,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
                 </a>
               );
             })}
+            {passkeyButton}
           </div>
         )}
-        {mode === "expanded" || (mode === "collapsed" && formShown) ? (
+        {passkey.phase !== "idle" ? null : mode === "expanded" ||
+          (mode === "collapsed" && formShown) ? (
           <p className="access__or">{t("access.sso.orPassword")}</p>
         ) : mode === "collapsed" ? (
           <>
@@ -616,22 +686,25 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
             </button>
           </>
         ) : null}
-        {ready && formShown ? (
+        {ready && formShown && passkey.phase === "idle" ? (
           <>
             <TextField
               ref={refs.email}
               label={t(directory === undefined ? "access.login.email" : "access.ldap.login")}
               type={directory === undefined ? "email" : "text"}
               name="email"
-              autoComplete="username"
+              // Saved passkeys are offered here too, where the browser can (conditional mediation).
+              autoComplete={passkey.suggests ? "username webauthn" : "username"}
               inputMode={directory === undefined ? "email" : "text"}
               autoCapitalize="none"
               spellCheck={false}
               placeholder={directory === undefined ? t("access.login.emailPlaceholder") : undefined}
               hint={
-                directory === undefined
-                  ? undefined
-                  : t("access.ldap.loginHint", { provider: directory.name })
+                directory !== undefined
+                  ? t("access.ldap.loginHint", { provider: directory.name })
+                  : passkey.suggests
+                    ? t("access.passkey.hint")
+                    : undefined
               }
               required
               readOnly={busy}
@@ -751,6 +824,61 @@ function OrgLine({ organization, serverName }: { organization: string; serverNam
       )}
     </p>
   );
+}
+
+/**
+ * Why a passkey did not sign in (board frame 5): cancelled or unavailable is no error and says so
+ * quietly; a passkey the server refused names no reason, as with a wrong password.
+ */
+function PasskeyNotice({ t, failure }: { t: Translate; failure: PasskeyFailure }) {
+  if (failure === "cancelled") {
+    return (
+      <AccessNotice
+        tone="info"
+        icon="info"
+        title={t("access.passkey.failed")}
+        detail={t("access.passkey.failedDetail")}
+      />
+    );
+  }
+  if (failure === "refused") {
+    return (
+      <AccessNotice
+        tone="danger"
+        icon="alert"
+        title={t("access.passkey.refused")}
+        detail={t("access.passkey.refusedDetail")}
+      />
+    );
+  }
+  const code = errorCode(failure.error);
+  if (code === "rate_limited") {
+    const wait = waitUntil(failure.error);
+    const seconds = wait === null ? 0 : Math.ceil((wait - Date.now()) / 1000);
+    return (
+      <AccessNotice
+        tone="danger"
+        icon="clock"
+        title={t("access.login.rateLimited")}
+        detail={
+          seconds > 60
+            ? t("access.login.pauseMinutes", { count: Math.ceil(seconds / 60) })
+            : t("access.login.pauseUnderMinute")
+        }
+      />
+    );
+  }
+  if (code === "network") {
+    return (
+      <AccessNotice
+        tone="danger"
+        icon="alert"
+        title={t("access.login.offline")}
+        detail={t("access.login.offlineDetail")}
+      />
+    );
+  }
+  return <AccessNotice tone="danger" icon="alert" title={t(`errors.${code}`)} />;
 }
 
 /** The provider's name for the notices, its slug when the page does not know it (any more). */
