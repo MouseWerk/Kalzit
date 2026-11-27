@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import type { ResultUse } from "../../analysis/AlgoOutcome";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, type StepKind, stepFrames, withUnknown } from "../../analysis/steps";
@@ -46,6 +47,7 @@ import {
 } from "../../panels/fieldConfig/fieldConfig";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
+import { withResultRule } from "../../panels/graph/style/fromResult";
 import { parseGraphStyle, ruleCount } from "../../panels/graph/style/schema";
 import { PanelHostContext, usePanelHost } from "../../panels/host";
 import {
@@ -618,6 +620,18 @@ export function PanelEditor({
     setSteps((current) => [...current, { id: crypto.randomUUID(), ...step }]);
     setTab("steps");
   }, []);
+  // A graph step's result shown on the canvas (board Graph082, frames 5 and 6): a size rule, a
+  // color per community, or the basis colored by the value.
+  const useResult = useCallback((use: ResultUse, property: string) => {
+    setLook((p) => {
+      const options = p.options as Record<string, unknown>;
+      if (use === "color") {
+        return { ...p, options: { ...options, colorBy: "property", colorProperty: property } };
+      }
+      const next = withResultRule(parseGraphStyle(options.style), use, property);
+      return { ...p, options: { ...options, style: next.style } };
+    });
+  }, []);
   // Switching the type keeps the old type's options for a way back.
   const changeType = useCallback(
     (next: string) =>
@@ -851,6 +865,7 @@ export function PanelEditor({
             hidden={hiddenKey}
             inputs={inputs}
             run={stepsRun}
+            onUseResult={look.type === "graph" ? useResult : undefined}
             kindOf={(refId) => {
               const target = preview.targets.find((x) => x.refId === refId);
               return datasources.data?.find((d) => d.id === target?.datasourceId)?.kind;
@@ -1067,6 +1082,7 @@ function StepsTab({
   inputs,
   run,
   kindOf,
+  onUseResult,
 }: {
   steps: unknown[];
   /** The hidden queries' refIds, one per line. */
@@ -1076,6 +1092,7 @@ function StepsTab({
   inputs: ComponentProps<typeof StepsEditor>["inputs"];
   run: ComponentProps<typeof StepsEditor>["run"];
   kindOf: ComponentProps<typeof StepsEditor>["kindOf"];
+  onUseResult?: ComponentProps<typeof StepsEditor>["onUseResult"];
 }) {
   const { t } = useI18n();
   const list = useMemo(() => asSteps(steps), [steps]);
@@ -1095,6 +1112,7 @@ function StepsTab({
         inputs={inputs}
         run={run}
         kindOf={kindOf}
+        onUseResult={onUseResult}
       />
     </>
   );

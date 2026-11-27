@@ -6,16 +6,10 @@ import type { GraphModel } from "../model";
 import type { GraphPanelOptions } from "../options";
 import type { GraphView } from "../view";
 import { edgeItems, nodeItems, ruleNodes, valueNodes } from "./apply";
+import { type ResultRule, withResultRule } from "./fromResult";
 import { StyleLegend } from "./StyleLegend";
 import { StyleSheet } from "./StyleSheet";
-import {
-  type GraphStyle,
-  type NodeRule,
-  newRuleId,
-  readableStyle,
-  ruleCount,
-  STYLE_VERSION,
-} from "./schema";
+import { type GraphStyle, readableStyle, ruleCount } from "./schema";
 import { useGraphStyle, vocabularyOf } from "./useGraphStyle";
 
 /**
@@ -117,26 +111,11 @@ export function usePanelStyle({
       />
     );
 
-  /**
-   * A rule from a step's result (board Graph082, frames 5 and 6, decision 2): a size by the
-   * value of `property`, or one color per value; visible in the rule list like any other.
-   * Answers the rule's number in the list.
-   */
-  const addRule = (use: "size" | "groups", property: string): number => {
-    const base = latest.current.style;
-    const id = newRuleId(base);
-    const rule: NodeRule =
-      use === "size"
-        ? {
-            id,
-            on: true,
-            scope: "",
-            when: { kind: "always" },
-            set: { sizeBy: { property, min: 5, max: 17 } },
-          }
-        : { id, on: true, scope: "", when: { kind: "values", property, colors: [] }, set: {} };
-    change({ version: STYLE_VERSION, nodes: [...base.nodes, rule], edges: base.edges });
-    return base.nodes.length + base.edges.length + 1;
+  /** A rule from a step's result (fromResult.ts); answers its number in the list. */
+  const addRule = (use: ResultRule, property: string): number => {
+    const next = withResultRule(latest.current.style, use, property);
+    change(next.style);
+    return next.number;
   };
 
   return {

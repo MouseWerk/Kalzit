@@ -847,7 +847,10 @@ export function StepsEditor({
                       onUse={
                         onUseResult === undefined
                           ? undefined
-                          : (use, property) => onUseResult(use, property, step)
+                          : (use, property) => {
+                              onUseResult(use, property, step);
+                              announce(t(`analysis.algo.added.${use}`, { property }));
+                            }
                       }
                     />
                   ) : null}

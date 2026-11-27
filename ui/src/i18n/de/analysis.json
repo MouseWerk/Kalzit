@@ -605,5 +605,8 @@
   "analysis.algo.of": "Über",
   "analysis.algo.depth": "Tiefe",
   "analysis.algo.fields.alongNeighbours": "Bleibt ein Graph; jeder Knoten mit dem Label bekommt den Wert über die erreichten Nachbarn, jeden einmal. Es zählen nur Knoten im Ergebnis der Abfrage.",
-  "analysis.algo.fields.alongPaths": "Bleibt ein Graph; jeder Pfad bekommt den Wert über seine Knoten oder Kanten."
+  "analysis.algo.fields.alongPaths": "Bleibt ein Graph; jeder Pfad bekommt den Wert über seine Knoten oder Kanten.",
+  "analysis.algo.added.size": "Regel angelegt: Größe nach {property}. Sie steht unter Stil und lässt sich dort ändern.",
+  "analysis.algo.added.groups": "Regel angelegt: Farbe je Wert von {property}. Sie steht unter Stil und lässt sich dort ändern.",
+  "analysis.algo.added.color": "Farbe nach {property} in den Optionen des Panels eingestellt."
 }

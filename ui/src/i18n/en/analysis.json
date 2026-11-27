@@ -605,5 +605,8 @@
   "analysis.algo.of": "Over",
   "analysis.algo.depth": "Depth",
   "analysis.algo.fields.alongNeighbours": "Stays a graph; every node with the label gets the value over the neighbours reached, each once. Only nodes in the query’s result count.",
-  "analysis.algo.fields.alongPaths": "Stays a graph; every path gets the value over its nodes or edges."
+  "analysis.algo.fields.alongPaths": "Stays a graph; every path gets the value over its nodes or edges.",
+  "analysis.algo.added.size": "Rule added: size by {property}. It is listed under Style and can be changed there.",
+  "analysis.algo.added.groups": "Rule added: color per value of {property}. It is listed under Style and can be changed there.",
+  "analysis.algo.added.color": "Color by {property} set in the panel’s options."
 }
