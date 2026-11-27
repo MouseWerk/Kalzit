@@ -632,6 +632,7 @@ mod tests {
             schema: GraphSchema { labels: vec![], edge_types: vec![], property_keys: Default::default() },
             truncated: None,
             notices: None,
+            suggested: None,
         };
         let out = result_for_model(&policy(&["Person.email"], 2), &QueryResult::Graph { graph }).unwrap();
         assert_eq!(out.value["nodes"].as_array().unwrap().len(), 2);

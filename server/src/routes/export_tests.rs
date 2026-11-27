@@ -985,7 +985,7 @@ fn small_graph() -> crate::shapes::GraphSet {
             to: "2".into(),
             properties: props(vec![("seit", json!(2020)), ("leer", Value::Null), ("type", json!("privat"))]),
         }],
-        paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+        paths: Some(vec![GraphPath::new(vec!["1".into(), "2".into()], vec!["e1".into()])]),
         schema: GraphSchema {
             labels: vec!["Kunde".into(), "Person".into()],
             edge_types: vec!["KENNT".into()],
@@ -993,6 +993,7 @@ fn small_graph() -> crate::shapes::GraphSet {
         },
         truncated: None,
         notices: None,
+        suggested: None,
     }
 }
 

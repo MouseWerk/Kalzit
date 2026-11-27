@@ -1927,6 +1927,11 @@
       "pageSize": 50,
       "variable": "",
       "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      },
       "footer": {
         "show": false,
         "over": "all",
@@ -5992,7 +5997,21 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
+      "layout": "",
+      "layoutOrder": "label",
+      "layoutOrderDirection": "asc",
+      "layoutX": "",
+      "layoutY": "",
+      "layoutPoint": "",
+      "layoutAxes": true,
+      "layoutTime": {},
+      "layoutLanes": "label",
       "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      },
       "pinned": [],
       "infoCard": {}
     },
@@ -6879,7 +6898,21 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
+      "layout": "",
+      "layoutOrder": "label",
+      "layoutOrderDirection": "asc",
+      "layoutX": "",
+      "layoutY": "",
+      "layoutPoint": "",
+      "layoutAxes": true,
+      "layoutTime": {},
+      "layoutLanes": "label",
       "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      },
       "pinned": [],
       "infoCard": {}
     },
@@ -7957,6 +7990,86 @@
             "stack": "none",
             "gradientMode": "opacity",
             "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "map",
+    "options": {
+      "layers": [
+        {
+          "kind": "points",
+          "result": 0,
+          "place": "auto",
+          "latField": "",
+          "lonField": "",
+          "pointField": "",
+          "geohashField": "",
+          "keyField": "",
+          "valueField": "",
+          "color": "single",
+          "sizeFrom": 4,
+          "sizeTo": 16,
+          "caption": "",
+          "aliases": {}
+        }
+      ],
+      "outlines": "regions",
+      "fit": "data",
+      "edges": "straight",
+      "clusterDistance": 12,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "axisPlacement": "left",
+        "axisLabel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "axisWidth": 400,
+        "axisGrid": "on",
+        "axisColor": "text",
+        "axisLine": false,
+        "axisScale": "log",
+        "axisLogBase": 10,
+        "axisCenteredZero": false,
+        "axisSoftMin": -1.5,
+        "axisSoftMax": 100
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Bestellungen"
+          },
+          "properties": {
+            "axisPlacement": "right",
+            "axisLabel": "Bestellungen",
+            "axisWidth": 20,
+            "axisGrid": "off",
+            "axisColor": "series",
+            "axisLine": true,
+            "axisScale": "symlog",
+            "axisLogBase": 2,
+            "axisCenteredZero": true
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "axisPlacement": "hidden",
+            "axisScale": null,
+            "axisSoftMax": null
           }
         }
       ]

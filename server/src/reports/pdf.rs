@@ -1867,6 +1867,7 @@ mod tests {
                     schema: GraphSchema { labels: vec!["Lieferant".into(), "Lager".into()], ..Default::default() },
                     truncated: None,
                     notices: None,
+                    suggested: None,
                 },
             )],
             ..Default::default()

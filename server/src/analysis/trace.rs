@@ -424,6 +424,7 @@ pub fn span_tree(trace: &TraceSet) -> GraphSet {
         schema,
         truncated: trace.truncated.clone(),
         notices: Some(trace.notices.clone()).filter(|n| !n.is_empty()),
+        suggested: None,
     }
 }
 
@@ -603,6 +604,7 @@ pub fn service_map(trace: &TraceSet) -> GraphSet {
         schema,
         truncated: trace.truncated.clone(),
         notices: Some(trace.notices.clone()).filter(|n| !n.is_empty()),
+        suggested: None,
     }
 }
 

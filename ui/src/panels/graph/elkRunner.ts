@@ -6,8 +6,10 @@ import workerUrl from "elkjs/lib/elk-worker.min.js?url";
  * (elkLayout.ts imports it with `import()`), so neither is part of the start bundle nor of the
  * graph panels' own chunk.
  *
- * In a worker, elkjs's own worker build runs as a classic same-origin script: the server's CSP
- * allows workers from 'self' and it needs no eval. Its protocol is one answer per message
+ * elkjs's own worker build runs as a classic same-origin script: the server's CSP allows workers
+ * from 'self' and it needs no eval. It is the only copy of ELK in the bundle: there is no
+ * main-thread build (elk.bundled.js would ship the same 1.6 MB a second time), so without
+ * workers the panel keeps Kalzit's layout (elkLayout.ts). Its protocol is one answer per message
  * (`{ id, cmd, ... }` in, `{ id, data }` or `{ id, error }` out): register the layered
  * algorithm, then lay out.
  */
@@ -80,10 +82,4 @@ export function layoutInWorker(graph: ElkNode, signal: AbortSignal): Promise<Elk
     worker.postMessage({ id: REGISTER, cmd: "register", algorithms: ["layered"] });
     worker.postMessage({ id: LAYOUT, cmd: "layout", graph, layoutOptions: {}, options: {} });
   });
-}
-
-/** Lays out on the page itself, for browsers without workers; the caller keeps graphs small. */
-export async function layoutOnMainThread(graph: ElkNode): Promise<ElkNode> {
-  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
-  return new ELK().layout(graph);
 }

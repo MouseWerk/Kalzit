@@ -74,7 +74,6 @@ import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion }
 import { hierarchyElk, useViewDirection } from "./direction";
 import type { DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
-import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
 import { type ExportOpen, GraphExport } from "./export/GraphExport";
 import { GraphState } from "./GraphState";
 import { GraphTable } from "./GraphTable";
@@ -2891,9 +2890,7 @@ function LayoutNotes({
     lines.push(t("graph.layout.settling"));
   }
   if (layout.notice === "elkFailed") lines.push(t("graph.layout.elkFailed"));
-  if (layout.notice === "elkTooLarge") {
-    lines.push(t("graph.layout.elkTooLarge", { limit: number.format(MAIN_THREAD_ELK_LIMIT) }));
-  }
+  if (layout.notice === "elkNoWorker") lines.push(t("graph.layout.elkNoWorker"));
   if (layout.notice === "elkAboveLimit") {
     lines.push(t("graph.layout.elkAboveLimit", { limit: number.format(ELK_NODE_LIMIT) }));
   }

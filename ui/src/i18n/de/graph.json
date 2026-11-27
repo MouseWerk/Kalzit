@@ -271,7 +271,7 @@
   "graph.options.elkEdgeRouting.polyline": "Polylinie",
   "graph.layout.elkRunning": "ELK wird geladen und ordnet den Graphen an…",
   "graph.layout.elkFailed": "ELK konnte diesen Graphen nicht anordnen, du siehst das Kalzit-Layout.",
-  "graph.layout.elkTooLarge": "Ohne Web Worker ordnet ELK höchstens {limit} Knoten an, du siehst das Kalzit-Layout.",
+  "graph.layout.elkNoWorker": "Ohne Web Worker steht ELK nicht zur Verfügung, du siehst das Kalzit-Layout.",
   "graph.options.colorBy.property": "Property",
   "graph.options.colorProperty": "Property für die Farbe",
   "graph.options.colorScheme": "Farbschema",

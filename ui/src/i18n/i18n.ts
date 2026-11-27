@@ -208,6 +208,14 @@ export async function loadArea(area: DeferredArea): Promise<void> {
 }
 
 /**
+ * Loads several areas at once (`loadAreas("graphStyle", "graphCanvas").then(() => import(...))`),
+ * for code that shows the texts of more than one.
+ */
+export async function loadAreas(...wanted: DeferredArea[]): Promise<void> {
+  await Promise.all(wanted.map((area) => loadArea(area)));
+}
+
+/**
  * Forgets which areas were asked for and their fetched texts, so a test can load them again as a
  * fresh page does. The catalogs keep what they hold.
  */

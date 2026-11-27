@@ -12,6 +12,7 @@
 //! aggregation); a later version will turn a leading group, reduce or pivot step into the query
 //! for sources that can do it, and run here only what the source cannot.
 
+pub mod algo;
 pub mod calculations;
 pub mod export;
 pub mod expr;
@@ -55,6 +56,8 @@ const MAX_REF_CHARS: usize = 64;
 pub struct Step {
     pub id: String,
     pub disabled: bool,
+    /// Where a graph algorithm step may run (`"place"`; `auto` when absent).
+    pub place: Place,
     pub kind: StepKind,
 }
 
@@ -250,13 +253,19 @@ pub enum StepKind {
         name: Option<String>,
     },
     /// Graph to graph ("Grad berechnen"): every node gets its degree as the property `name`
-    /// (`degree` when absent).
+    /// (`degree` when absent), over the edges of `edgeTypes` (all when empty); with `weight`, the
+    /// sum of that edge property instead of the count (board 0.8.2: "Grad" with direction, edge
+    /// types and weight, in the catalog's group "Zentralität").
     Degree {
         frame: String,
         #[serde(default)]
         direction: Direction,
         #[serde(default)]
         name: Option<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        weight: Option<String>,
     },
     /// Graph to graph ("Teilgraph filtern"): the nodes with one of `labels` (all when absent) that
     /// pass `property`, and the edges of `edgeTypes` (all when absent) between them.
@@ -268,6 +277,207 @@ pub enum StepKind {
         edge_types: Vec<String>,
         #[serde(default)]
         property: Option<PropertyFilter>,
+    },
+    /// Graph to graph: a centrality score per node as the property `name` (the measure's name,
+    /// `pagerank`, `betweenness`, ...), the graph algorithms of docs/PLAN.md, section 15
+    /// (`algo::centrality`). The degree is the step `degree` above.
+    Centrality {
+        frame: String,
+        measure: CentralityMeasure,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        weight: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        damping: Option<f64>,
+        #[serde(default)]
+        max_iterations: Option<u32>,
+        #[serde(default)]
+        tolerance: Option<f64>,
+    },
+    /// Graph to graph: the community (`community`) or component (`component`) of every node as
+    /// the property `name`, numbered from 0 (`algo::community`).
+    Communities {
+        frame: String,
+        algorithm: CommunityAlgorithm,
+        #[serde(default)]
+        weight: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        max_iterations: Option<u32>,
+        #[serde(default)]
+        resolution: Option<f64>,
+        /// The start value of a randomised library run (42 when absent); the server's own run
+        /// is the same every time.
+        #[serde(default)]
+        seed: Option<u64>,
+    },
+    /// Graph to graph: every node's core number as the property `name` (`core`); with `k`, only
+    /// the k-core: the nodes whose core number is `k` or more and the edges between them.
+    KCore {
+        frame: String,
+        #[serde(default)]
+        k: Option<u32>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: every node's triangles (`name`, `triangles`) and local clustering
+    /// coefficient (`clustering`, `clustering`).
+    Triangles {
+        frame: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        clustering: Option<String>,
+    },
+    /// The `topK` most similar nodes of every node (`algo::similarity`): a table of pairs `a`,
+    /// `b`, `score` (`output: table`, the default but for `knn`), or edges of the type `name`
+    /// (`SIMILAR`) with the property `score` in the graph (`output: edges`).
+    Similarity {
+        frame: String,
+        measure: SimilarityMeasure,
+        #[serde(default)]
+        top_k: Option<u32>,
+        #[serde(default)]
+        properties: Vec<String>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        min_score: Option<f64>,
+        #[serde(default)]
+        output: Option<SimilarityOutput>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: the `topK` (50) pairs of unconnected nodes with the highest topological
+    /// score as suggested edges of the type `name` (`SUGGESTED`); no trained model. Suggestions
+    /// stay apart from the graph's edges (`GraphSet::suggested`).
+    LinkPrediction {
+        frame: String,
+        measure: LinkMeasure,
+        #[serde(default)]
+        top_k: Option<u32>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        min_score: Option<f64>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: the paths from node `from` to node `to` (`algo::paths`); the nodes on them
+    /// get their place along the path, in edges from `from`, as the property `name` (`path_order`).
+    Paths {
+        frame: String,
+        mode: PathMode,
+        from: String,
+        to: String,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        weight: Option<String>,
+        #[serde(default)]
+        k: Option<u32>,
+        #[serde(default)]
+        max_paths: Option<u32>,
+        #[serde(default)]
+        max_length: Option<u32>,
+        #[serde(default)]
+        keep_all: bool,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: the nodes reachable from the nodes `from` within `maxHops` (2) edges, with
+    /// their distance in edges as the property `name` (`distance`), and the edges between them.
+    Reachable {
+        frame: String,
+        from: Vec<String>,
+        #[serde(default)]
+        max_hops: Option<u32>,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: every edge says whether it is a bridge (property `name`, `bridge`).
+    Bridges {
+        frame: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: every node says whether it is an articulation point (`name`,
+    /// `articulation`).
+    ArticulationPoints {
+        frame: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph: at most `maxCount` (200) cycles of at most `maxLength` (6) edges as the
+    /// graph's paths; every node says whether it lies on one (`name`, `in_cycle`).
+    Cycles {
+        frame: String,
+        #[serde(default)]
+        max_length: Option<u32>,
+        #[serde(default)]
+        max_count: Option<u32>,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph ("Knoten zusammenfassen"): one group node per label, or per value of the
+    /// node property `property` (such as a community), with `aggregates` over its members; the
+    /// edges between two groups become one edge per type (or one for all types with
+    /// `mergeTypes`) with `edgeAggregates`; edges inside a group become a loop (`loops`, the
+    /// default) or are left out (`algo::transform`).
+    MergeNodes {
+        frame: String,
+        by: MergeBy,
+        #[serde(default)]
+        property: Option<String>,
+        #[serde(default)]
+        aggregates: Vec<GraphAggregate>,
+        #[serde(default)]
+        edge_aggregates: Vec<GraphAggregate>,
+        #[serde(default = "yes")]
+        loops: bool,
+        #[serde(default)]
+        merge_types: bool,
+    },
+    /// Graph to graph ("Entlang aggregieren"): for every node with `label` (every node when
+    /// absent), `op` over the property `property` of the nodes reached within `depth` (1) edges
+    /// of `edgeTypes` in `direction` (`out`), each reached node once, as the property `name`.
+    /// With `along: paths`, instead for every path of the graph (of a paths or cycles step, or of
+    /// the query) `op` over the property of its nodes or, with `of: edges`, of its edges, as the
+    /// path's value `name`.
+    AggregateAlong {
+        frame: String,
+        #[serde(default)]
+        along: AlongWhat,
+        #[serde(default)]
+        of: Option<PathPart>,
+        #[serde(default)]
+        label: Option<String>,
+        op: AlongOp,
+        #[serde(default)]
+        property: Option<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        direction: Option<Direction>,
+        #[serde(default)]
+        depth: Option<u32>,
+        name: String,
     },
     /// Trace to frame ("Span-Tabelle"): one row per span of the `trace` result, with the fixed
     /// span columns and one column per key of `attributes` (docs/guide/traces.md).
@@ -433,6 +643,158 @@ pub enum Direction {
     Out,
     In,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CentralityMeasure {
+    PageRank,
+    Betweenness,
+    Closeness,
+    Eigenvector,
+    Harmonic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommunityAlgorithm {
+    Louvain,
+    Leiden,
+    LabelPropagation,
+    WeaklyConnected,
+    StronglyConnected,
+}
+
+/// Jaccard and overlap compare the neighbours of two nodes; cosine and k nearest neighbours
+/// (`knn`) compare the numbers in `properties` by their cosine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SimilarityMeasure {
+    Jaccard,
+    Overlap,
+    Cosine,
+    Knn,
+}
+
+/// What a similarity step answers: a table of pairs (its shape changes), or edges in the graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SimilarityOutput {
+    Table,
+    Edges,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LinkMeasure {
+    CommonNeighbours,
+    AdamicAdar,
+    PreferentialAttachment,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PathMode {
+    /// One path with the fewest edges.
+    Shortest,
+    /// Every path with the fewest edges, at most `maxPaths`.
+    AllShortest,
+    /// One path with the least total `weight`.
+    Weighted,
+    /// The `k` shortest paths without repeated nodes (by `weight` when given).
+    KShortest,
+}
+
+/// What `mergeNodes` makes one group of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeBy {
+    /// The node's labels (joined with `:`).
+    Label,
+    /// The value of the node property `property`, such as a community.
+    Property,
+}
+
+/// An aggregate of a group: `count` of its members, or `sum`, `mean`, `min`, `max` of a number
+/// property, `distinct` values of any property; as the property `name`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphAggregate {
+    pub op: AggregateOp,
+    #[serde(default)]
+    pub property: Option<String>,
+    pub name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AggregateOp {
+    Count,
+    Sum,
+    Mean,
+    Min,
+    Max,
+    Distinct,
+}
+
+/// What `aggregateAlong` makes of the values it reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AlongOp {
+    Sum,
+    Mean,
+    Count,
+    Min,
+    Max,
+}
+
+/// What `aggregateAlong` goes along: the neighbours of every node, or the graph's paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AlongWhat {
+    #[default]
+    Neighbours,
+    Paths,
+}
+
+/// Which part of a path `aggregateAlong` reads the property of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PathPart {
+    Nodes,
+    Edges,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Where a graph algorithm step may run (`"place"` on the step): in the source's library where
+/// it can (`auto`, the default) or always on the Kalzit server (`server`), to compare runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Place {
+    #[default]
+    Auto,
+    Server,
+}
+
+/// Bounds of the graph algorithm steps' parameters; the server settings may bound some of them
+/// lower when the step runs (`algo::AlgoLimits`).
+pub const MAX_SIMILAR: u32 = 100;
+pub const MAX_SUGGESTIONS: u32 = 500;
+pub const MAX_ITERATIONS: u32 = 1000;
+/// Rounds of PageRank and eigenvector at most (board 0.8.2: "höchstens 100 Runden").
+pub const MAX_CENTRALITY_ITERATIONS: u32 = 100;
+pub const MAX_CORE: u32 = 10_000;
+pub const MAX_K_PATHS: u32 = 100;
+pub const MAX_ALL_PATHS: u32 = 1000;
+pub const MAX_PATH_LENGTH: u32 = 30;
+pub const MAX_HOPS: u32 = 8;
+pub const MAX_START_NODES: usize = 100;
+pub const MAX_CYCLE_LENGTH: u32 = 20;
+pub const MAX_CYCLES: u32 = 1000;
+pub const MAX_DEPTH: u32 = 4;
+pub const MAX_ID_CHARS: usize = 512;
 
 /// What a graph projection makes rows of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -657,6 +1019,19 @@ impl StepKind {
             | StepKind::SharedNeighbours { frame, .. }
             | StepKind::Degree { frame, .. }
             | StepKind::FilterGraph { frame, .. } => vec![frame],
+            StepKind::Centrality { frame, .. }
+            | StepKind::Communities { frame, .. }
+            | StepKind::KCore { frame, .. }
+            | StepKind::Triangles { frame, .. }
+            | StepKind::Similarity { frame, .. }
+            | StepKind::LinkPrediction { frame, .. }
+            | StepKind::Paths { frame, .. }
+            | StepKind::Reachable { frame, .. }
+            | StepKind::Bridges { frame, .. }
+            | StepKind::ArticulationPoints { frame, .. }
+            | StepKind::Cycles { frame, .. }
+            | StepKind::MergeNodes { frame, .. }
+            | StepKind::AggregateAlong { frame, .. } => vec![frame],
             StepKind::SpanTable { frame, .. }
             | StepKind::TraceTable { frame }
             | StepKind::ServiceMap { frame, .. }
@@ -699,6 +1074,28 @@ impl StepKind {
                 | StepKind::Degree { .. }
                 | StepKind::FilterGraph { .. }
                 | StepKind::ToFrame { rows: Some(_), .. }
+        ) || self.is_algorithm()
+    }
+
+    /// Whether the step is a graph algorithm (`algo`): it keeps the graph and adds properties,
+    /// suggested edges or paths, runs in the source's library where it has one and else on the
+    /// server, within the algorithm limits of the server settings.
+    pub fn is_algorithm(&self) -> bool {
+        matches!(
+            self,
+            StepKind::Centrality { .. }
+                | StepKind::Communities { .. }
+                | StepKind::KCore { .. }
+                | StepKind::Triangles { .. }
+                | StepKind::Similarity { .. }
+                | StepKind::LinkPrediction { .. }
+                | StepKind::Paths { .. }
+                | StepKind::Reachable { .. }
+                | StepKind::Bridges { .. }
+                | StepKind::ArticulationPoints { .. }
+                | StepKind::Cycles { .. }
+                | StepKind::MergeNodes { .. }
+                | StepKind::AggregateAlong { .. }
         )
     }
 }
@@ -794,8 +1191,15 @@ pub fn parse_step(value: &Value) -> Result<Step, String> {
         Some(Value::Bool(b)) => b,
         Some(_) => return Err("disabled must be true or false".into()),
     };
+    let place = match rest.remove("place") {
+        None => Place::Auto,
+        Some(v) => serde_json::from_value(v).map_err(|_| "place must be auto or server".to_string())?,
+    };
     let kind: StepKind = serde_json::from_value(Value::Object(rest)).map_err(|e| e.to_string())?;
-    Ok(Step { id, disabled, kind })
+    if place != Place::Auto && !kind.is_algorithm() {
+        return Err("place belongs to graph algorithm steps".into());
+    }
+    Ok(Step { id, disabled, place, kind })
 }
 
 /// Parses and bounds a list of steps whose frames must be among `frames` (the reference ids of
@@ -1026,9 +1430,18 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 return Err(format!("{at}.limit must be 1 to {MAX_PAIRS}"));
             }
         }
-        StepKind::Degree { name: n, .. } => {
+        StepKind::Degree { name: n, edge_types, weight, .. } => {
             if let Some(n) = n {
                 graph_name("name", n)?;
+            }
+            if let Some(w) = weight {
+                graph_name("weight", w)?;
+            }
+            if edge_types.len() > MAX_STEP_FIELDS {
+                return Err(format!("{at}.edgeTypes takes at most {MAX_STEP_FIELDS} entries"));
+            }
+            for (i, t) in edge_types.iter().enumerate() {
+                graph_name(&format!("edgeTypes[{i}]"), t)?;
             }
         }
         StepKind::FilterGraph { labels, edge_types, property, .. } => {
@@ -1046,6 +1459,19 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 check_property_filter(f, &format!("{at}.property"))?;
             }
         }
+        StepKind::Centrality { .. }
+        | StepKind::Communities { .. }
+        | StepKind::KCore { .. }
+        | StepKind::Triangles { .. }
+        | StepKind::Similarity { .. }
+        | StepKind::LinkPrediction { .. }
+        | StepKind::Paths { .. }
+        | StepKind::Reachable { .. }
+        | StepKind::Bridges { .. }
+        | StepKind::ArticulationPoints { .. }
+        | StepKind::Cycles { .. }
+        | StepKind::MergeNodes { .. }
+        | StepKind::AggregateAlong { .. } => check_algorithm(kind, at, &graph_name)?,
         StepKind::SpanTable { attributes, .. } => {
             check_list(&format!("{at}.attributes"), attributes, 0, MAX_STEP_FIELDS)?;
             if attributes.iter().collect::<BTreeSet<_>>().len() != attributes.len() {
@@ -1111,6 +1537,214 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// The parameters of a graph algorithm step (`StepKind::is_algorithm`). `graph_name` checks a
+/// label, type or property key that may reach the database as a parameter or a quoted name.
+fn check_algorithm(
+    kind: &StepKind,
+    at: &str,
+    graph_name: &dyn Fn(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let in_range = |what: &str, v: Option<u32>, min: u32, max: u32| match v {
+        Some(v) if !(min..=max).contains(&v) => Err(format!("{at}.{what} must be {min} to {max}")),
+        _ => Ok(()),
+    };
+    let fraction = |what: &str, v: Option<f64>, min: f64, max: f64| match v {
+        Some(v) if !(v.is_finite() && v > min && v < max) => {
+            Err(format!("{at}.{what} must be a number above {min} and below {max}"))
+        }
+        _ => Ok(()),
+    };
+    let named = |what: &str, n: &Option<String>| n.as_deref().map_or(Ok(()), |n| graph_name(what, n));
+    let node_id = |what: &str, id: &str| check_text(&format!("{at}.{what}"), id, MAX_ID_CHARS);
+    let min_score = |v: Option<f64>| match v {
+        Some(v) if !(v.is_finite() && v >= 0.0) => Err(format!("{at}.minScore must be a number of 0 or more")),
+        _ => Ok(()),
+    };
+    let types = |list: &[String]| {
+        if list.len() > MAX_STEP_FIELDS {
+            return Err(format!("{at}.edgeTypes takes at most {MAX_STEP_FIELDS} entries"));
+        }
+        list.iter().enumerate().try_for_each(|(i, t)| graph_name(&format!("edgeTypes[{i}]"), t))
+    };
+    match kind {
+        StepKind::Centrality { measure, name, weight, damping, max_iterations, tolerance, .. } => {
+            named("name", name)?;
+            named("weight", weight)?;
+            let iterative = matches!(measure, CentralityMeasure::PageRank | CentralityMeasure::Eigenvector);
+            if !iterative && (max_iterations.is_some() || tolerance.is_some() || weight.is_some()) {
+                return Err(format!("{at}: weight, maxIterations and tolerance belong to pageRank and eigenvector"));
+            }
+            if *measure != CentralityMeasure::PageRank && damping.is_some() {
+                return Err(format!("{at}.damping belongs to pageRank"));
+            }
+            fraction("damping", *damping, 0.0, 1.0)?;
+            fraction("tolerance", *tolerance, 0.0, 1.0)?;
+            in_range("maxIterations", *max_iterations, 1, MAX_CENTRALITY_ITERATIONS)?;
+        }
+        StepKind::Communities { algorithm, name, weight, max_iterations, resolution, seed, .. } => {
+            named("name", name)?;
+            named("weight", weight)?;
+            let components =
+                matches!(algorithm, CommunityAlgorithm::WeaklyConnected | CommunityAlgorithm::StronglyConnected);
+            if components && (max_iterations.is_some() || weight.is_some() || seed.is_some()) {
+                return Err(format!("{at}: weight, maxIterations and seed do not belong to connected components"));
+            }
+            if !matches!(algorithm, CommunityAlgorithm::Louvain | CommunityAlgorithm::Leiden) && resolution.is_some() {
+                return Err(format!("{at}.resolution belongs to louvain and leiden"));
+            }
+            in_range("maxIterations", *max_iterations, 1, MAX_ITERATIONS)?;
+            fraction("resolution", *resolution, 0.0, 100.0)?;
+        }
+        StepKind::KCore { name, k, .. } => {
+            named("name", name)?;
+            in_range("k", *k, 1, MAX_CORE)?;
+        }
+        StepKind::Bridges { name, .. } | StepKind::ArticulationPoints { name, .. } => {
+            named("name", name)?;
+        }
+        StepKind::Triangles { name, clustering, .. } => {
+            named("name", name)?;
+            named("clustering", clustering)?;
+            if name.as_deref().unwrap_or("triangles") == clustering.as_deref().unwrap_or("clustering") {
+                return Err(format!("{at}: name and clustering must differ"));
+            }
+        }
+        StepKind::Similarity { measure, top_k, properties, label, edge_types, min_score: m, name, .. } => {
+            named("name", name)?;
+            named("label", label)?;
+            types(edge_types)?;
+            min_score(*m)?;
+            in_range("topK", *top_k, 1, MAX_SIMILAR)?;
+            let by_properties = matches!(measure, SimilarityMeasure::Cosine | SimilarityMeasure::Knn);
+            if by_properties && properties.is_empty() {
+                return Err(format!(
+                    "{at}.properties: cosine and knn compare 1 to {MAX_STEP_FIELDS} number properties"
+                ));
+            }
+            if !by_properties && !properties.is_empty() {
+                return Err(format!(
+                    "{at}.properties belong to cosine and knn; jaccard and overlap compare neighbours"
+                ));
+            }
+            if by_properties && !edge_types.is_empty() {
+                return Err(format!("{at}.edgeTypes belong to jaccard and overlap"));
+            }
+            if properties.len() > MAX_STEP_FIELDS
+                || properties.iter().collect::<BTreeSet<_>>().len() != properties.len()
+            {
+                return Err(format!("{at}.properties takes 1 to {MAX_STEP_FIELDS} keys, each once"));
+            }
+            for (i, p) in properties.iter().enumerate() {
+                graph_name(&format!("properties[{i}]"), p)?;
+            }
+        }
+        StepKind::LinkPrediction { top_k, label, min_score: m, name, .. } => {
+            named("name", name)?;
+            named("label", label)?;
+            min_score(*m)?;
+            in_range("topK", *top_k, 1, MAX_SUGGESTIONS)?;
+        }
+        StepKind::Paths { mode, from, to, edge_types, weight, k, max_paths, max_length, name, .. } => {
+            named("name", name)?;
+            named("weight", weight)?;
+            types(edge_types)?;
+            node_id("from", from)?;
+            node_id("to", to)?;
+            if from == to {
+                return Err(format!("{at}: from and to must be two nodes"));
+            }
+            match mode {
+                PathMode::Weighted if weight.is_none() => {
+                    return Err(format!("{at}.weight is required for a weighted path"));
+                }
+                PathMode::Shortest | PathMode::AllShortest if weight.is_some() => {
+                    return Err(format!("{at}.weight belongs to weighted and kShortest paths"));
+                }
+                _ => {}
+            }
+            if *mode != PathMode::KShortest && k.is_some() {
+                return Err(format!("{at}.k belongs to kShortest paths"));
+            }
+            in_range("k", *k, 1, MAX_K_PATHS)?;
+            if *mode != PathMode::AllShortest && max_paths.is_some() {
+                return Err(format!("{at}.maxPaths belongs to allShortest paths"));
+            }
+            in_range("maxPaths", *max_paths, 1, MAX_ALL_PATHS)?;
+            in_range("maxLength", *max_length, 1, MAX_PATH_LENGTH)?;
+        }
+        StepKind::Reachable { from, max_hops, edge_types, name, .. } => {
+            named("name", name)?;
+            types(edge_types)?;
+            if from.is_empty() || from.len() > MAX_START_NODES {
+                return Err(format!("{at}.from takes 1 to {MAX_START_NODES} nodes"));
+            }
+            for (i, id) in from.iter().enumerate() {
+                node_id(&format!("from[{i}]"), id)?;
+            }
+            in_range("maxHops", *max_hops, 1, MAX_HOPS)?;
+        }
+        StepKind::Cycles { max_length, max_count, name, .. } => {
+            named("name", name)?;
+            in_range("maxLength", *max_length, 2, MAX_CYCLE_LENGTH)?;
+            in_range("maxCount", *max_count, 1, MAX_CYCLES)?;
+        }
+        StepKind::MergeNodes { by, property, aggregates, edge_aggregates, .. } => {
+            match (by, property) {
+                (MergeBy::Property, None) => return Err(format!("{at}.property is required to merge by a property")),
+                (MergeBy::Label, Some(_)) => return Err(format!("{at}.property belongs to merging by a property")),
+                _ => {}
+            }
+            named("property", property)?;
+            for (what, list) in [("aggregates", aggregates), ("edgeAggregates", edge_aggregates)] {
+                if list.len() > MAX_STEP_FIELDS {
+                    return Err(format!("{at}.{what} takes at most {MAX_STEP_FIELDS} entries"));
+                }
+                let mut names = BTreeSet::new();
+                for (i, a) in list.iter().enumerate() {
+                    graph_name(&format!("{what}[{i}].name"), &a.name)?;
+                    if !names.insert(a.name.as_str()) {
+                        return Err(format!("{at}.{what}[{i}]: a value is already named {}", a.name));
+                    }
+                    match (a.op, &a.property) {
+                        (AggregateOp::Count, Some(_)) => {
+                            return Err(format!("{at}.{what}[{i}]: count takes no property"));
+                        }
+                        (AggregateOp::Count, None) => {}
+                        (_, None) => return Err(format!("{at}.{what}[{i}].property is required")),
+                        (_, Some(p)) => graph_name(&format!("{what}[{i}].property"), p)?,
+                    }
+                }
+            }
+        }
+        StepKind::AggregateAlong { along, of, label, op, property, edge_types, direction, depth, name, .. } => {
+            graph_name("name", name)?;
+            named("label", label)?;
+            types(edge_types)?;
+            let neighbours_only = label.is_some() || !edge_types.is_empty() || direction.is_some() || depth.is_some();
+            match along {
+                AlongWhat::Paths if neighbours_only => {
+                    return Err(format!(
+                        "{at}: label, edgeTypes, direction and depth belong to going along the neighbours"
+                    ));
+                }
+                AlongWhat::Neighbours if of.is_some() => {
+                    return Err(format!("{at}.of belongs to going along the paths"));
+                }
+                _ => {}
+            }
+            match (op, property) {
+                (AlongOp::Count, Some(_)) => return Err(format!("{at}: count takes no property")),
+                (AlongOp::Count, None) => {}
+                (_, None) => return Err(format!("{at}.property is required")),
+                (_, Some(p)) => graph_name("property", p)?,
+            }
+            in_range("depth", *depth, 1, MAX_DEPTH)?;
+        }
+        _ => {}
     }
     Ok(())
 }

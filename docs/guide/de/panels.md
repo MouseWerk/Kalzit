@@ -481,7 +481,7 @@ die Führung bestimmt, wie viel Platz ELK für sie lässt). ELK wird erst gelade
 nutzt, deshalb dauert die erste Zeichnung etwas länger und sagt „ELK wird geladen und ordnet den
 Graphen an“; dasselbe Ergebnis bekommt immer dasselbe Layout. Kann ELK nicht laufen, zeigt das
 Panel das Layout von Kalzit und sagt das. ELK läuft in einem Web Worker; ein Browser ohne Worker
-ordnet höchstens 300 Knoten mit ELK an und zeigt für größere Graphen das Layout von Kalzit.
+zeigt das Layout von Kalzit.
 **Pfade** zeigt den ersten Pfad aufgeklappt und die anderen eingeklappt mit ihrer Kette aus
 Knoten; jede Kante zeigt ihren Typ, ihre Richtung und ihre Properties, jeder Knoten seine Labels
 und seine ersten zwei Properties; höchstens 50 Pfade, mit einem Hinweis, wenn es mehr gibt, und

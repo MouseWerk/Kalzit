@@ -60,6 +60,23 @@ fn count(n: usize) -> Value {
 
 /// Runs one graph step on `graph`. Steps that are no graph steps are not passed here.
 pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<GraphOut, Detail> {
+    apply_summarized(kind, graph, control).map(|(out, _)| out)
+}
+
+/// `apply`, with the plain-language summary of an algorithm step (`algo`).
+pub fn apply_summarized(
+    kind: &StepKind,
+    graph: &GraphSet,
+    control: &Control,
+) -> Result<(GraphOut, Option<crate::shapes::StepSummary>), Detail> {
+    if kind.is_algorithm() {
+        let (out, summary) = super::algo::apply(kind, graph, control)?;
+        return Ok((out, Some(summary)));
+    }
+    Ok((apply_plain(kind, graph, control)?, None))
+}
+
+fn apply_plain(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<GraphOut, Detail> {
     Ok(match kind {
         StepKind::CountLabels { .. } => GraphOut::Frame(count_labels(graph)),
         StepKind::CountEdgeTypes { .. } => GraphOut::Frame(count_edge_types(graph)),
@@ -84,9 +101,13 @@ pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<Gra
         StepKind::ToFrame { columns, rows: Some(rows), label, edge_type, .. } => GraphOut::Frame(
             super::projection::project_graph(graph, *rows, label.as_deref(), edge_type.as_deref(), columns),
         ),
-        StepKind::Degree { direction, name, .. } => {
-            GraphOut::Graph(with_degree(graph, *direction, name.as_deref().unwrap_or("degree")))
-        }
+        StepKind::Degree { direction, name, edge_types, weight, .. } => GraphOut::Graph(with_degree(
+            graph,
+            *direction,
+            name.as_deref().unwrap_or("degree"),
+            edge_types,
+            weight.as_deref(),
+        )?),
         StepKind::FilterGraph { labels, edge_types, property, .. } => {
             GraphOut::Graph(filter_graph(graph, labels, edge_types, property.as_ref()))
         }
@@ -207,6 +228,13 @@ pub fn schema_of(nodes: &[Node], edges: &[Edge]) -> GraphSchema {
     }
 }
 
+/// The suggested edges (`GraphSet::suggested`) whose two ends a step kept.
+fn kept_suggestions(graph: &GraphSet, kept: &HashSet<&str>) -> Option<Vec<Edge>> {
+    graph.suggested.as_ref().map(|list| {
+        list.iter().filter(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str())).cloned().collect()
+    })
+}
+
 fn top_degree(graph: &GraphSet, n: usize, label: Option<&str>, direction: Direction) -> GraphSet {
     let deg = degrees(graph, direction);
     let mut ranked: Vec<usize> = (0..graph.nodes.len())
@@ -222,6 +250,7 @@ fn top_degree(graph: &GraphSet, n: usize, label: Option<&str>, direction: Direct
         .filter(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str()))
         .cloned()
         .collect();
+    let suggested = kept_suggestions(graph, &kept);
     GraphSet {
         schema: schema_of(&nodes, &edges),
         nodes,
@@ -229,6 +258,7 @@ fn top_degree(graph: &GraphSet, n: usize, label: Option<&str>, direction: Direct
         paths: None,
         truncated: graph.truncated.clone(),
         notices: graph.notices.clone(),
+        suggested,
     }
 }
 
@@ -303,32 +333,43 @@ fn shared_neighbours(graph: &GraphSet, spec: &SharedSpec, control: &Control) -> 
     ))
 }
 
-/// The graph with every node's degree as the property `name` (replacing one of that name).
-fn with_degree(graph: &GraphSet, direction: Direction, name: &str) -> GraphSet {
-    let deg = degrees(graph, direction);
+/// The graph with every node's degree as the property `name` (replacing one of that name): the
+/// edges of `edgeTypes` (all when empty) at the node in `direction`, or with `weight` the sum of
+/// their weights (an edge without it counts 1; a weight must be a number of 0 or more).
+fn with_degree(
+    graph: &GraphSet,
+    direction: Direction,
+    name: &str,
+    edge_types: &[String],
+    weight: Option<&str>,
+) -> Result<GraphSet, Detail> {
+    let deg: Vec<Value> = if edge_types.is_empty() && weight.is_none() {
+        degrees(graph, direction).into_iter().map(count).collect()
+    } else {
+        let topo = super::algo::Topo::build(graph, weight, edge_types)?;
+        (0..topo.n)
+            .map(|v| {
+                let sum: f64 = topo.around(v, direction).map(|(_, k)| topo.weight[k]).sum();
+                if weight.is_some() { super::algo::number(sum) } else { count(sum as usize) }
+            })
+            .collect()
+    };
     let nodes: Vec<Node> = graph
         .nodes
         .iter()
         .zip(deg)
         .map(|(n, d)| {
             let mut n = n.clone();
-            n.properties.insert(name.to_string(), count(d));
+            n.properties.insert(name.to_string(), d);
             n
         })
         .collect();
-    GraphSet {
-        schema: schema_of(&nodes, &graph.edges),
-        nodes,
-        edges: graph.edges.clone(),
-        paths: graph.paths.clone(),
-        truncated: graph.truncated.clone(),
-        notices: graph.notices.clone(),
-    }
+    Ok(GraphSet { schema: schema_of(&nodes, &graph.edges), nodes, ..graph.clone() })
 }
 
 /// A property value as a number: a JSON number, or the text of a typed 64-bit integer, float or
 /// decimal (`{"$type": "int64", "value": "..."}`).
-fn number_of(v: &Value) -> Option<f64> {
+pub(crate) fn number_of(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::Object(m) if m.len() == 2 => {
@@ -413,6 +454,7 @@ fn filter_graph(
         .filter(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str()))
         .cloned()
         .collect();
+    let suggested = kept_suggestions(graph, &kept);
     GraphSet {
         schema: schema_of(&nodes, &edges),
         nodes,
@@ -420,5 +462,6 @@ fn filter_graph(
         paths: None,
         truncated: graph.truncated.clone(),
         notices: graph.notices.clone(),
+        suggested,
     }
 }
