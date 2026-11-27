@@ -540,7 +540,8 @@
     white-space: nowrap;
   }
 
-  @container (width < 44rem) {
+  /* Two columns at 1280 px next to the sidebar and the scrollbar gutter (settings.css). */
+  @container (width < 43rem) {
     .security-layout {
       grid-template-columns: minmax(0, 1fr);
     }
