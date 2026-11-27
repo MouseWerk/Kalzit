@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, type StepKind, stepFrames, withUnknown } from "../../analysis/steps";
+import { isRecord } from "../../api/client";
 import type { FieldType, Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
@@ -45,6 +46,7 @@ import {
 } from "../../panels/fieldConfig/fieldConfig";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
+import { parseGraphStyle, ruleCount } from "../../panels/graph/style/schema";
 import { PanelHostContext, usePanelHost } from "../../panels/host";
 import {
   DefaultsCollector,
@@ -58,6 +60,7 @@ import {
 } from "../../panels/optionFilter";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
+import { type StyleSources, StyleSourcesContext } from "../../panels/styleSources";
 import { useStyleVars } from "../../panels/styleVars";
 import type { PanelField, TableColumn } from "../../panels/types";
 import { useElementSize } from "../../panels/useElementSize";
@@ -358,6 +361,20 @@ export function PanelEditor({
     }
     return [...counts].map(([label, count]) => ({ label, count }));
   }, [outcomes]);
+  // The preview's graphs and the other panels' style rules, for the editor of style rules.
+  const styleSources = useMemo<StyleSources>(
+    () => ({
+      graphs: outcomes.flatMap((o) =>
+        "result" in o && o.result.shape === "graph" ? [o.result.graph] : [],
+      ),
+      panels: otherPanels.flatMap((panel) => {
+        const options = isRecord(panel.options) ? panel.options : {};
+        const style = parseGraphStyle(options.style);
+        return ruleCount(style) === 0 ? [] : [{ id: panel.id, title: panel.title, style }];
+      }),
+    }),
+    [outcomes, otherPanels],
+  );
   // The fields the panel reads now, each name once, for the field choices of panel options.
   const fieldChoices = useMemo(() => {
     const seen = new Map<string, FieldType>();
@@ -874,40 +891,42 @@ export function PanelEditor({
   );
 
   const optionsPane = (
-    <OptionsPane
-      titleId={titleId}
-      isNew={isNew}
-      look={look}
-      shapes={shapes}
-      onTraceStep={
-        // A trace is drawn by the trace panel alone; the other panels need a step that makes a
-        // table or a graph of it. The picker offers that step, it never adds it by itself.
-        shapes.includes("trace")
-          ? (type) =>
-              setSteps((current) => [
-                ...current,
-                {
-                  id: crypto.randomUUID(),
-                  type,
-                  frame:
-                    outcomes.find((o) => "result" in o && o.result.shape === "trace")?.refId ??
-                    refIds[0] ??
-                    "A",
-                },
-              ])
-          : undefined
-      }
-      rows={rows}
-      variables={dashboardVariables}
-      libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
-      seriesNames={seriesNames}
-      graphLabels={graphLabels}
-      fields={fieldChoices}
-      tableColumns={tableColumns}
-      onLook={setLook}
-      onType={changeType}
-      onMakeLibrary={makeLibrary}
-    />
+    <StyleSourcesContext value={styleSources}>
+      <OptionsPane
+        titleId={titleId}
+        isNew={isNew}
+        look={look}
+        shapes={shapes}
+        onTraceStep={
+          // A trace is drawn by the trace panel alone; the other panels need a step that makes a
+          // table or a graph of it. The picker offers that step, it never adds it by itself.
+          shapes.includes("trace")
+            ? (type) =>
+                setSteps((current) => [
+                  ...current,
+                  {
+                    id: crypto.randomUUID(),
+                    type,
+                    frame:
+                      outcomes.find((o) => "result" in o && o.result.shape === "trace")?.refId ??
+                      refIds[0] ??
+                      "A",
+                  },
+                ])
+            : undefined
+        }
+        rows={rows}
+        variables={dashboardVariables}
+        libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
+        seriesNames={seriesNames}
+        graphLabels={graphLabels}
+        fields={fieldChoices}
+        tableColumns={tableColumns}
+        onLook={setLook}
+        onType={changeType}
+        onMakeLibrary={makeLibrary}
+      />
+    </StyleSourcesContext>
   );
 
   const editorTitle = isNew ? t("dashboards.editor.newTitle") : t("dashboards.editor.title");

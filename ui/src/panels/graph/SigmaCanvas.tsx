@@ -3,12 +3,13 @@ import { type Ref, useEffect, useImperativeHandle, useLayoutEffect, useRef, useS
 import Sigma from "sigma";
 import {
   extremityArrow,
-  layerPlain,
+  layerFill,
   pathLine,
   pathLoop,
   sdfCircle,
   sdfDiamond,
   sdfSquare,
+  sdfTriangle,
 } from "sigma/rendering";
 import type { CameraState } from "sigma/types";
 import { IMAGE_REDRAW } from "../image";
@@ -25,12 +26,18 @@ import {
   nodeDisplay,
   nodeToward,
 } from "./drawing";
+import { readScene } from "./export/readScene";
+import type { Scene } from "./export/scene";
 import { handOver } from "./handover";
 import { installLabelPickingFix } from "./labelPicking";
 import { drawnFrame, installLabelRoom, type LabelFrame } from "./labelRoom";
 import { refreshVisibility } from "./refresh";
-import { SHAPE_SCALE } from "./shapes";
+import { boundingShape, SHAPE_SCALE } from "./shapes";
 import { type KeepOut, type Spread, STAGE_PADDING, spreadNodes } from "./spread";
+import type { StyledView } from "./style/apply";
+import { installBadges } from "./style/badges";
+import { iconsNow, loadIcons } from "./style/icons/load";
+import { layerRuleBorder, layerRuleIcon, ruleEdgeLayers, sdfHexagon } from "./style/sigmaLayers";
 import {
   type GraphView,
   LABEL_BUDGET,
@@ -101,6 +108,8 @@ export interface CanvasHandle {
   nodeToward(from: number | null, direction: Direction): number | null;
   /** Moves the camera so the node is in view, unless it already is. */
   reveal(node: number): void;
+  /** What is drawn right now, for a picture of it (export/scene.ts); null before the first draw. */
+  scene(): Scene | null;
   /** Moves the camera to the node: the jump to a search hit. */
   focus(node: number): void;
   /** Where the node stands, in the drawing's own units; null while it is not drawn. */
@@ -165,6 +174,8 @@ export interface SigmaCanvasProps {
   /** Whether nodes can be dragged with the pointer tool. */
   draggable?: boolean | undefined;
   drawStyle: DrawStyle;
+  /** What the style rules of the panel set, by view index; absent without rules. */
+  styled?: StyledView | null | undefined;
   reducedMotion: boolean;
   /**
    * Whether nodes are pushed apart until nodes and labels have room in the panel (spread.ts): the
@@ -186,6 +197,11 @@ export interface SigmaCanvasProps {
    * which adds the node to the selection or takes it out.
    */
   onPick: (node: number | null, additive: boolean) => void;
+  /**
+   * Called after each frame with the way from the layout's coordinates to the stage in px: what
+   * the layout's guides behind the canvas follow (layouts/GuideLayer.tsx).
+   */
+  onFrame?: (project: (x: number, y: number) => { x: number; y: number }) => void;
   /** An edge was clicked; `additive` as for nodes. Without it edges take no clicks. */
   onPickEdge?: ((edge: number, additive: boolean) => void) | undefined;
   /** Nodes were dragged and dropped: where each one stands now. */
@@ -271,9 +287,14 @@ export function placement(
   budget: number,
 ): Spread {
   const nodes = p.view.nodes;
-  const radii = Float32Array.from(nodes, (node) => node.size * SHAPE_SCALE[node.shape]);
+  // Sizes, shapes and names a style rule set count for the room a node needs.
+  const looks = p.styled?.nodes;
+  const radii = Float32Array.from(
+    nodes,
+    (node, i) => (looks?.[i]?.size ?? node.size) * SHAPE_SCALE[looks?.[i]?.shape ?? node.shape],
+  );
   const labels = Float32Array.from(nodes, (node, i) =>
-    labelAtFit(i, p, budget) ? textWidth(node.caption, p.palette.font) : 0,
+    labelAtFit(i, p, budget) ? textWidth(looks?.[i]?.caption ?? node.caption, p.palette.font) : 0,
   );
   return spreadNodes({
     positions: p.positions,
@@ -373,12 +394,17 @@ export function createRenderer(
   live.current.budget = labelBudgetFor(host.offsetWidth, host.offsetHeight);
   const renderer: Sigma = new Sigma(graph, host, {
     primitives: {
-      // A shape per label, as a second cue next to color (shapes.ts).
-      nodes: { shapes: [sdfCircle(), sdfSquare(), sdfDiamond()] },
+      // A shape per label, as a second cue next to color (shapes.ts); style rules may set a
+      // triangle or a hexagon too, a frame and an icon (style/sigmaLayers.ts).
+      nodes: {
+        shapes: [sdfCircle(), sdfSquare(), sdfDiamond(), sdfTriangle(), sdfHexagon()],
+        layers: [layerFill(), layerRuleBorder(), layerRuleIcon()],
+      },
       edges: {
         paths: [pathLine(), pathLoop()],
         extremities: [extremityArrow()],
-        layers: [layerPlain()],
+        // The plain color, and dashes for the edges a style rule draws dashed or dotted.
+        layers: ruleEdgeLayers(),
         // Arrows per edge (edgeDisplay), so the panel can draw them always, at the selection or
         // never.
       },
@@ -406,7 +432,7 @@ export function createRenderer(
       // own label grid, which keeps one label in every other cell of 100 px, lets them all pass.
       labelRenderedSizeThreshold: 0,
       labelDensity: 100,
-      renderEdgeLabels: live.current.props.drawStyle.edgeLabels !== "never",
+      renderEdgeLabels: edgeLabelsOn(live.current.props),
       // Dragging a node pins it where it is dropped (Graph 0.8.1 board, frame 1); several
       // selected nodes move together. Only with the pointer tool.
       enableNodeDrag:
@@ -447,7 +473,20 @@ export function createRenderer(
   // No label covers a node or another label, checked on every frame (labelRoom.ts).
   installLabelRoom(renderer, {
     rank: (i) => live.current.props.ranks[i] ?? 0,
-    shape: (i) => live.current.props.view.nodes[i]?.shape ?? "circle",
+    shape: (i) => {
+      const p = live.current.props;
+      return boundingShape(p.styled?.nodes[i]?.shape ?? p.view.nodes[i]?.shape ?? "circle");
+    },
+  });
+  // Badges of style rules, on a canvas of their own above the drawing (style/badges.ts).
+  const removeBadges = installBadges(renderer, host, () => {
+    const p = live.current.props;
+    return {
+      styled: p.styled,
+      visible: (node) => p.visibility.nodes[node] === 1,
+      dimmed: (node) => p.selected.size > 0 && !p.selected.has(node) && !p.neighbours.has(node),
+      palette: p.palette,
+    };
   });
   // The renderer's own gesture hint brings a style element, which the content security policy
   // refuses; the panel shows a translated hint of its own instead.
@@ -578,9 +617,12 @@ export function createRenderer(
     }, SETTLE_MS);
   };
   renderer.on("resize", check);
+  const project = (x: number, y: number) => renderer.graphToViewport({ x, y });
+  renderer.on("afterRender", () => live.current.props.onFrame?.(project));
   renderer.on("kill", () => {
     killed = true;
     clearTimeout(settle);
+    removeBadges();
   });
   // Labels measured in a fallback font while the web font loaded are measured again.
   if (typeof document !== "undefined" && document.fonts?.status === "loading") {
@@ -615,6 +657,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     selectedEdges,
     fixed,
     drawStyle,
+    styled,
     reducedMotion,
   } = props;
   const tool = props.tool ?? "pointer";
@@ -728,15 +771,33 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
   }, [selectedEdges]);
 
   // The style changes what every node and edge draws; edge labels need the renderer's setting.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the reducers read the props through `live`; these trigger the redraw
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (renderer === null) return;
-    renderer.setSetting("renderEdgeLabels", drawStyle.edgeLabels !== "never");
+    renderer.setSetting("renderEdgeLabels", edgeLabelsOn(live.current.props));
     renderer.refresh({ skipIndexation: true });
     // Which labels show at the fitted zoom decides how much room the nodes need.
     const graph = graphRef.current;
     if (graph !== null) place(renderer, graph, live);
-  }, [drawStyle]);
+  }, [drawStyle, styled]);
+
+  // The icons of style rules load with the first rule that names one; the nodes are drawn again
+  // once they are there.
+  useEffect(() => {
+    if (styled === null || styled === undefined || styled.icons.length === 0) return;
+    if (iconsNow() !== null) return;
+    let current = true;
+    loadIcons().then(
+      () => {
+        if (current) sigmaRef.current?.refresh({ skipIndexation: true });
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [styled]);
 
   // The test hooks: where a node with this caption is drawn on the page, and what the last frame
   // drew. Only in development and where the end-to-end tests ask for them, never in a viewer's
@@ -1021,6 +1082,10 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
         );
       }
     },
+    scene() {
+      const renderer = sigmaRef.current;
+      return renderer === null ? null : readScene(renderer, live.current.props);
+    },
   }));
 
   const corner = keyArea?.cursor ?? null;
@@ -1102,6 +1167,11 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       )}
     </>
   );
+}
+
+/** Whether edges carry texts: the type labels of the panel, or a text a style rule set. */
+function edgeLabelsOn(p: SigmaCanvasProps): boolean {
+  return p.drawStyle.edgeLabels !== "never" || p.styled?.edgeLabels === true;
 }
 
 /** Camera animations, which reduced motion turns into jumps. */

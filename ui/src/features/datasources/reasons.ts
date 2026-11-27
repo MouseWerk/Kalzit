@@ -118,7 +118,15 @@ export function noticeText(t: Translate, notice: Notice): string {
 }
 
 const EXPORT_SHAPES = new Set(["frame", "documents", "graph"]);
-const EXPORT_FORMATS = new Set(["csv", "xlsx", "json", "ndjson", "graphml"]);
+const EXPORT_FORMATS = new Set([
+  "csv",
+  "xlsx",
+  "json",
+  "ndjson",
+  "graphml",
+  "csvNodes",
+  "csvEdges",
+]);
 
 /**
  * An export format that does not fit the result's shape, in the dialog's words. Only a table

@@ -265,8 +265,12 @@ describe("hierarchy panel", () => {
       properties: {},
     }));
     // Shown where the browser can draw; jsdom cannot, so the tables stay the fallback.
-    await renderGraph("hierarchy", { ...FAKE_GRAPH, nodes, edges: [] });
-    expect(screen.getByRole("table", { name: "Nodes of Shop: 2,001" })).toBeTruthy();
+    await renderGraph("hierarchy", { ...FAKE_GRAPH, nodes, edges: [] }, { nodeLimit: 20_000 });
+    expect(
+      screen.getByRole("table", {
+        name: `Nodes of Shop: ${(HIERARCHY_LIMIT + 1).toLocaleString("en")}`,
+      }),
+    ).toBeTruthy();
   });
 
   it("never groups nodes", async () => {

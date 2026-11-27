@@ -1,3 +1,4 @@
+import { loadAreas } from "../../i18n/i18n";
 import { type GraphPanelOptions, parseGraphOptions } from "../graph/options";
 import { lazyPanel } from "../lazy";
 import { HierarchyPreview } from "../picker/previews";
@@ -18,7 +19,15 @@ export const hierarchyPanel: PanelPlugin<GraphPanelOptions> = {
   description: "panels.describe.hierarchy",
   shapes: ["graph"],
   options: parseOptions,
-  Panel: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.HierarchyPanel)),
-  Editor: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.HierarchyEditor)),
+  Panel: lazyPanel(() =>
+    loadAreas("graphStyle", "graphCanvas")
+      .then(() => import("../graph/GraphPanels"))
+      .then((m) => m.HierarchyPanel),
+  ),
+  Editor: lazyPanel(() =>
+    loadAreas("graphStyle", "graphCanvas")
+      .then(() => import("../graph/GraphPanels"))
+      .then((m) => m.HierarchyEditor),
+  ),
   Preview: HierarchyPreview,
 };

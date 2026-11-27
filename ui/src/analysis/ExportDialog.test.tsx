@@ -68,7 +68,7 @@ describe("export dialog", () => {
     expect(screen.getByRole("radio", { name: /NDJSON/ })).toHaveProperty("checked", true);
     expect(screen.getByText(/add a step that makes a table/)).toBeTruthy();
     await pickOption(user, screen.getByLabelText("Result"), "C");
-    expect(formats()).toEqual(["graphml", "json"]);
+    expect(formats()).toEqual(["graphml", "json", "csvNodes", "csvEdges"]);
     await user.click(screen.getByRole("radio", { name: "JSON" }));
     await user.click(screen.getByRole("button", { name: "Export" }));
     expect(seen.choice).toEqual({ format: "json", language: "en", frame: "C" });

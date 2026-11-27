@@ -64,8 +64,21 @@
     flex: 1;
   }
 
+  /* A second line under an entry's label, saying what it does. */
+  .toolbar-menu__description {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+  }
+
   .toolbar-menu__key {
     margin-inline-start: auto;
+  }
+
+  .toolbar-menu__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .toolbar-menu__item--danger {

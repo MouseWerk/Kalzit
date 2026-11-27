@@ -51,6 +51,16 @@ Export wird im [Audit-Log](administration.md#audit-log) festgehalten, mit Format
 |---|---|
 | GraphML, für Gephi, yEd und Cytoscape | Knoten mit ihren Labels (`:Person:Customer`) und Eigenschaften, Kanten mit ihrem Typ und ihren Eigenschaften. Jede Eigenschaft bekommt einen Typ, der zu all ihren Werten passt (Wahr/Falsch, ganze Zahl, Dezimalzahl oder Text); Listen und Objekte werden als JSON-Text geschrieben. Pfade sind nicht Teil von GraphML, ihre Knoten und Kanten schon. |
 | JSON | Knoten, Kanten und Pfade so, wie die Abfrage sie geliefert hat, mit den Labels und Kantentypen des Graphen. |
+| CSV: Knoten, CSV: Kanten | Die beiden Listen des Graphen als CSV-Dateien, geschrieben wie eine Tabelle. Knoten: `id`, `labels` (`:Person:Customer`), dann eine Spalte je Eigenschaft. Kanten: `id`, `type`, `source`, `target`, dann eine Spalte je Eigenschaft. Die Eigenschaftsspalten stehen in Namensreihenfolge und sind in jeder Zeile gleich; fehlt einem Knoten die Eigenschaft, bleibt die Zelle leer. Listen und Objekte werden als JSON-Text geschrieben. |
+
+In einem Graph-Panel stehen die Formate im eigenen **Export**-Menü, in drei Gruppen: **Bild**,
+**Graph** (GraphML, JSON) und **Tabellen** (die beiden CSV-Dateien). Die Datenformate exportieren
+**Alles Geladene** oder nur die **Sichtbaren Knoten** (die du nicht ausgeblendet oder in einer
+Gruppe geschlossen hast), mit den Kanten dazwischen. GraphML hält außerdem fest, wo die Knoten
+so wie gezeichnet liegen, sodass Gephi und yEd den Graphen so öffnen, wie du ihn siehst; Knoten in
+einem Cluster haben keine Position. Knoten, die du mit
+dem Explorer nachgeladen hast, gehören nicht zur Datei: Der Server erstellt sie aus der Abfrage des
+Panels.
 
 ### Tabellen aus Dokumenten und Graphen
 
@@ -71,6 +81,31 @@ und Tooltips gehören nicht zum Bild; eine Tabelle zeigt die Zeilen, die sichtba
 Panel-Plugins zeichnen in einem eigenen Rahmen, den der Browser Kalzit nicht lesen lässt: Ihr
 Bereich bleibt im Bild leer. Bilder in einem Panel (etwa in einem Text-Panel) sind Teil davon, wenn
 sie von deinem Kalzit-Server kommen; Bilder von anderen Seiten werden weggelassen.
+
+### Graph als Bild
+
+Das **Export**-Menü eines Graph-Panels speichert, was das Panel zeigt, als **PNG**, **SVG** oder
+**PDF**. Der Dialog fragt nach dem **Umfang** (sichtbarer Teil, ganzer Graph oder nur die
+Auswahl), dem **Hintergrund** (wie angezeigt, hell oder transparent), ob die **Legende** sowie
+Titel, Datenquelle und Zeitraum dabei sein sollen, und bei PDF nach der **Seite** (Größe der
+Zeichnung oder A4 quer). Das Bild entsteht in deinem Browser aus der Zeichnung, ohne Anfrage an den
+Server und ohne Eintrag im Audit-Log; deshalb darf jede Person es speichern, die das Panel sehen
+darf.
+
+- **PNG** ist ein Bild, mindestens doppelt so scharf wie der Bildschirm, wie bisher.
+- **SVG** ist Vektorgrafik: Formen bleiben Formen, jede Beschriftung bleibt Text, den du markieren
+  und durchsuchen kannst. Die Datei enthält keine Skripte und keine Verweise auf andere Dateien; die
+  Schrift der Beschriftungen ist eingebettet (manche Editoren ignorieren eingebettete Schriften und
+  zeigen ihre eigene).
+- **PDF** ist eine Seite aus Vektorpfaden, der Text steht in Helvetica, einer Schrift, die jedes
+  PDF-Programm mitbringt. So bleibt die Datei klein (einige Kilobyte bei einigen hundert Knoten)
+  und nichts wird eingebettet. Helvetica deckt westeuropäische Texte ab; eine Beschriftung in einer
+  anderen Schrift (Kyrillisch, Griechisch, Chinesisch) wird als kleines Bild ihrer selbst
+  eingesetzt. Dafür wird keine Bibliothek verwendet: Eine PDF-Bibliothek hätte der App 300 bis
+  500 kB Skript hinzugefügt.
+
+Ohne das Recht `data:export` bietet das Menü nur die drei Bilder an und sagt, dass GraphML, JSON und
+CSV dieses Recht brauchen.
 
 ## Grenzen
 

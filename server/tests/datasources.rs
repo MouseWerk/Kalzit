@@ -1257,6 +1257,169 @@ async fn memgraph_runs_graph_steps_in_the_database() {
     t.finish().await;
 }
 
+/// A value of a conformance graph as Cypher text.
+fn cypher_literal(v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")),
+        other => other.to_string(),
+    }
+}
+
+/// The graphs of the algorithm cases (`conformance.json`, "algorithmGraphs") in the database,
+/// each node and edge named by its property `kz` and kept in the order of the file (`kzo`).
+fn algorithm_setup(cases: &Value) -> Vec<String> {
+    let mut statements = vec!["MATCH (n:KalzitAlgo) DETACH DELETE n".to_string()];
+    for (name, graph) in cases["algorithmGraphs"].as_object().unwrap() {
+        let mut parts = Vec::new();
+        for (i, n) in graph["nodes"].as_array().unwrap().iter().enumerate() {
+            let id = n["id"].as_str().unwrap();
+            let labels: String =
+                n["labels"].as_array().unwrap().iter().map(|l| format!(":{}", l.as_str().unwrap())).collect();
+            let mut props = vec![format!("kzg: '{name}'"), format!("kz: '{id}'"), format!("kzo: {i}")];
+            for (k, v) in n["properties"].as_object().unwrap() {
+                props.push(format!("{k}: {}", cypher_literal(v)));
+            }
+            parts.push(format!("(n_{id}:KalzitAlgo{labels} {{{}}})", props.join(", ")));
+        }
+        for e in graph["edges"].as_array().unwrap() {
+            let mut props = vec![format!("kz: '{}'", e["id"].as_str().unwrap())];
+            for (k, v) in e["properties"].as_object().unwrap() {
+                props.push(format!("{k}: {}", cypher_literal(v)));
+            }
+            parts.push(format!(
+                "(n_{})-[:{} {{{}}}]->(n_{})",
+                e["from"].as_str().unwrap(),
+                e["type"].as_str().unwrap(),
+                props.join(", "),
+                e["to"].as_str().unwrap()
+            ));
+        }
+        statements.push(format!("CREATE {}", parts.join(", ")));
+    }
+    statements
+}
+
+/// Whether the graph databases of the tests have their algorithm libraries (Neo4j with Graph
+/// Data Science, Memgraph with MAGE), as in CI (`KALZIT_TEST_GRAPH_LIBRARIES=1`). Then every
+/// step the library takes must run there; without the flag a missing library is no failure.
+fn graph_libraries() -> bool {
+    std::env::var("KALZIT_TEST_GRAPH_LIBRARIES").is_ok_and(|v| v == "1")
+}
+
+/// The algorithm cases of `conformance.json` in the database: where the source has its library
+/// (Neo4j GDS, Memgraph MAGE) the step runs there and passes the case's checks for a library;
+/// without it, or where the library has no read-only variant limited to the result, it runs on
+/// the server and passes them exactly, with the reason in its place. Merging nodes by label is
+/// left out: the test nodes carry the label `KalzitAlgo` too. With `graph_libraries()`, every
+/// step that `library::route` sends to the library ran there (none fell back to the server),
+/// and at least `min_in_database` of them did.
+async fn graph_algorithms(t: &T, id: &str, lib: kalzit::analysis::algo::library::Library, min_in_database: usize) {
+    use kalzit::analysis::algo::library;
+    let cases: Value = serde_json::from_str(include_str!("../src/analysis/conformance.json")).unwrap();
+    let required = graph_libraries();
+    let mut in_database = 0;
+    for case in cases["algorithms"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        if case["step"]["type"] == "mergeNodes" {
+            continue;
+        }
+        let graph = case["graph"].as_str().unwrap();
+        let query = format!(
+            "MATCH (n:KalzitAlgo {{kzg: '{graph}'}}) WITH n ORDER BY n.kzo \
+             OPTIONAL MATCH (n)-[r]->(m:KalzitAlgo) RETURN n, r, m ORDER BY n.kzo, r.kz"
+        );
+        // The step names nodes by the ids of the database.
+        let plain = t.query(id, json!({ "cypher": query })).await;
+        let ids: std::collections::BTreeMap<String, String> = plain["result"]["graph"]["nodes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name}: {plain}"))
+            .iter()
+            .map(|n| (n["properties"]["kz"].as_str().unwrap().to_string(), n["id"].as_str().unwrap().to_string()))
+            .collect();
+        let mut step = case["step"].clone();
+        let real =
+            |v: &Value| json!(ids.get(v.as_str().unwrap()).cloned().unwrap_or_else(|| v.as_str().unwrap().to_string()));
+        for key in ["from", "to"] {
+            match step.get(key).cloned() {
+                Some(Value::String(s)) => step[key] = real(&json!(s)),
+                Some(Value::Array(list)) => step[key] = Value::Array(list.iter().map(real).collect()),
+                _ => {}
+            }
+        }
+        step["id"] = json!("s");
+        step["frame"] = json!("A");
+        let r = t.query_steps(id, &query, json!([step])).await;
+        let place = &r["steps"][0];
+        if let Some(want) = case.get("error") {
+            assert_eq!(place["error"]["reason"], want["reason"], "{name}: {r}");
+            continue;
+        }
+        assert!(place["error"].is_null(), "{name}: {r}");
+        let in_library = place["ranIn"] == "database";
+        if in_library {
+            in_database += 1;
+        } else {
+            assert!(place["reason"].is_string(), "{name}: a step on the server says why: {r}");
+        }
+        if required {
+            assert_ne!(place["reason"], library::reason::LIBRARY_FAILED, "{name}: the library failed: {r}");
+            let kind = kalzit::analysis::parse_step(&step).unwrap().kind;
+            let result: kalzit::shapes::GraphSet = serde_json::from_value(plain["result"]["graph"].clone()).unwrap();
+            let routed = library::route(Some(lib), &kind, &result, &Default::default());
+            if matches!(routed, Ok(Ok(_))) {
+                assert!(in_library, "{name}: the library takes this step, but it ran on the server: {r}");
+            }
+        }
+        let library_answer = in_library;
+        let summary: kalzit::shapes::StepSummary = serde_json::from_value(place["summary"].clone()).unwrap();
+        let graph: kalzit::shapes::GraphSet = match r["result"]["shape"].as_str() {
+            Some("graph") => serde_json::from_value(r["result"]["graph"].clone()).unwrap(),
+            _ => kalzit::shapes::GraphSet::default(),
+        };
+        kalzit::analysis::algo::conformance::check_case(case, &graph, Some(&summary), library_answer).unwrap_or_else(
+            |e| panic!("{e} ({}): {r}", if library_answer { "in the database" } else { "on the server" }),
+        );
+    }
+    eprintln!("graph algorithm cases computed in the database: {in_database}");
+    if required {
+        assert!(
+            in_database >= min_in_database,
+            "{lib:?}: {in_database} cases ran in the library, at least {min_in_database} expected"
+        );
+    }
+}
+
+/// The fewest conformance cases that must run in each library with `graph_libraries()`; a change
+/// that sends fewer steps there lowers these on purpose.
+const MIN_IN_GDS: usize = 28;
+const MIN_IN_MAGE: usize = 15;
+
+#[tokio::test]
+async fn neo4j_runs_graph_algorithms() {
+    let Some(url) = env("KALZIT_TEST_NEO4J_URL") else { return };
+    let cases: Value = serde_json::from_str(include_str!("../src/analysis/conformance.json")).unwrap();
+    let setup = algorithm_setup(&cases);
+    bolt_setup(&url, &setup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({}));
+    let id = t.create("neo4j", settings, secrets).await;
+    graph_algorithms(&t, &id, kalzit::analysis::algo::library::Library::Gds, MIN_IN_GDS).await;
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn memgraph_runs_graph_algorithms() {
+    let Some(url) = env("KALZIT_TEST_MEMGRAPH_URL") else { return };
+    let cases: Value = serde_json::from_str(include_str!("../src/analysis/conformance.json")).unwrap();
+    let setup = algorithm_setup(&cases);
+    bolt_setup(&url, &setup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({ "allowWriteCapableUser": true }));
+    let id = t.create("memgraph", settings, secrets).await;
+    graph_algorithms(&t, &id, kalzit::analysis::algo::library::Library::Mage, MIN_IN_MAGE).await;
+    t.finish().await;
+}
+
 /// Whether the server accepts `query` (planned with EXPLAIN, so nothing runs).
 async fn bolt_explains(url: &str, query: &str) -> bool {
     let (host, port, user, password, _) = parts(url);

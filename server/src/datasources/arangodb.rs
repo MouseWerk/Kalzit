@@ -510,7 +510,7 @@ fn add_graph(g: &mut GraphBuilder, v: &Value, key: &str, omitted: &mut BTreeSet<
             }
         }
         let ids = |a: &[Value]| a.iter().filter_map(|x| x.get("_id")?.as_str().map(String::from)).collect();
-        return g.add_path(GraphPath { nodes: ids(&vertices), edges: ids(&edges) });
+        return g.add_path(GraphPath::new(ids(&vertices), ids(&edges)));
     }
     match v {
         Value::Array(a) => a.iter().all(|x| add_graph(g, x, key, omitted, depth + 1)),

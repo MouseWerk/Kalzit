@@ -15,6 +15,8 @@ export type ToolbarMenuEntry =
       kind?: "action";
       key: string;
       label: string;
+      /** A second, quieter line under the label: what the entry does. */
+      description?: string | undefined;
       icon?: IconName | undefined;
       onSelect: () => void;
       /** Deletes or discards: the label in the danger text color. */
@@ -22,6 +24,8 @@ export type ToolbarMenuEntry =
       disabled?: boolean | undefined;
       /** The registry's shortcut that does the same: its keys at the end of the item. */
       shortcut?: ShortcutId | undefined;
+      /** A quiet word at the end of the item instead of keys: what a disabled entry needs. */
+      note?: string | undefined;
     }
   | { kind: "radio"; key: string; label: string; checked: boolean; onSelect: () => void }
   | { kind: "separator"; key: string }
@@ -178,9 +182,17 @@ export function ToolbarMenu({
                         ) : (
                           <Icon name={entry.icon} />
                         )}
-                        <span className="toolbar-menu__label">{entry.label}</span>
+                        <span className="toolbar-menu__label">
+                          {entry.label}
+                          {entry.description === undefined ? null : (
+                            <span className="toolbar-menu__description">{entry.description}</span>
+                          )}
+                        </span>
                         {entry.shortcut === undefined ? null : (
                           <Keys id={entry.shortcut} className="toolbar-menu__key" />
+                        )}
+                        {entry.note === undefined ? null : (
+                          <span className="toolbar-menu__key toolbar-menu__note">{entry.note}</span>
                         )}
                       </button>
                     );
