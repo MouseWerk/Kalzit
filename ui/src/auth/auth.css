@@ -1188,9 +1188,6 @@
   .access-bd {
     position: absolute;
     inset: 0;
-    /* Behind the page that comes before it in the source: `.access` and the split layout's panel
-       isolate, so it stays above their own background. */
-    z-index: var(--z-below);
     overflow: hidden;
     pointer-events: none;
     container-type: size;
@@ -1293,56 +1290,45 @@
 
   /*
    * Wide screens: the form on the left, the panel on the right, both on one sheet that stops
-   * growing at 1536 px and stands in the middle of wider windows. The panel and its backdrop run
-   * on to the right edge of the window at every width (owner decision 2026-11-24, ultrawide audit
-   * UW-A2); the form column keeps its width and its left edge. The mark, what stands above the
-   * heading, the form and the fine print share one left edge. The rows: the top bar (across the
-   * sheet, so language, theme and help stand in the panel's corner), what stands above the
-   * heading, the page, the fine print. The columns: what lies left of the sheet, the form, the
-   * panel's part of the sheet, what lies right of the sheet.
+   * growing on very wide screens. The mark, what stands above the heading, the form and the fine
+   * print share one left edge. The rows: the top bar (across both, so language, theme and help
+   * stand in the panel's corner), what stands above the heading, the page, the fine print.
    */
   @media (min-width: 64rem) {
     .access--split {
-      --access-gutter: max(0px, (100% - var(--size-access-split)) / 2);
       display: grid;
       grid-template-rows: auto minmax(var(--space-12), auto) minmax(0, 1fr) auto;
-      grid-template-columns: var(--access-gutter) minmax(0, 5fr) minmax(0, 6fr) var(--access-gutter);
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       box-sizing: border-box;
       width: 100%;
+      max-width: var(--size-access-split);
+      margin-inline: auto;
     }
 
     .access--split .access__top {
       grid-row: 1;
-      grid-column: 2 / 4;
+      grid-column: 1 / -1;
       padding-inline-start: var(--space-access-edge);
     }
 
-    .access--split .access__tools {
-      inset-inline-end: calc(var(--access-gutter) + var(--space-6));
-    }
-
     /*
-     * The panel is a well a step below the page with the backdrop inside it, open towards the
-     * right edge of the window. With the line on the product it is as tall as the window and
-     * stays in view while a long form scrolls. It isolates, so the backdrop lies on its surface.
+     * The panel is a well a step below the page with the backdrop inside it. With the line on the
+     * product it is as tall as the window and stays in view while a long form scrolls.
      */
     .access--split .access__panel {
       position: sticky;
       inset-block-start: var(--space-3);
-      isolation: isolate;
       display: flex;
       flex-direction: column;
       grid-row: 1 / -1;
-      grid-column: 3 / -1;
+      grid-column: 2;
       align-self: start;
       justify-content: flex-end;
       height: calc(100dvh - var(--space-6));
-      margin: var(--space-3) 0;
+      margin: var(--space-3) var(--space-3) var(--space-3) 0;
       overflow: clip;
       border: var(--border-width) solid var(--border);
-      border-inline-end: 0;
-      border-start-start-radius: var(--radius-lg);
-      border-end-start-radius: var(--radius-lg);
+      border-radius: var(--radius-lg);
       background: var(--bg-surface);
     }
 
@@ -1395,7 +1381,7 @@
       grid-template-rows: subgrid;
       grid-template-columns: minmax(0, 1fr);
       grid-row: 2 / 4;
-      grid-column: 2;
+      grid-column: 1;
       gap: 0;
       max-width: none;
       margin: 0;
@@ -1424,7 +1410,7 @@
 
     .access--split .access__fine {
       grid-row: 4;
-      grid-column: 2;
+      grid-column: 1;
       padding-inline: var(--space-access-edge) var(--space-6);
       text-align: start;
     }

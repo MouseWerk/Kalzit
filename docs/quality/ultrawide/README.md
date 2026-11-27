@@ -39,7 +39,7 @@ Top 10, in the order we recommend fixing them:
 Owner decisions (2026-11-24), recorded in the findings:
 
 - **UW-A2:** the sign-in background fills the full screen width on every monitor; the form
-  column stays as narrow as it is now. (Fixed with UW-A1, see auth.md.)
+  column stays as narrow as it is now.
 - **UW-D2:** keep the fixed row height, like Grafana; only the axes and tables that break are
   fixed (UW-D1, UW-D3). UW-D2 itself is not fixed.
 - **UW-M3:** lists stop at the content width token (`--content-max-width`, 72rem).

@@ -61,13 +61,11 @@ link pages in `Identity.dc.html` on wide screens. Frames 1E (with a notice) and 
 stay as drawn.
 
 - **From 1024 px:** two parts on one sheet, which stops growing at 1536 px and then stands in the
-  middle of the window; the panel and its backdrop run on to the right edge of the window at
-  every width, without a frame on that side (owner decision 2026-11-24, ultrawide audit UW-A2). The form stands in a column on the left. The mark in the top bar, what
+  middle of the window. The form stands in a column on the left. The mark in the top bar, what
   stands above the heading (the organization and server on sign in, the steps of setup and of the
   second factor), the form and the fine print share one left edge, 24 px at 1024 px and growing with the window to 64 px.
   The heading starts at the same height on every page; what stands above it has a row of its own.
-  On the right a panel, a well one step below the page with a hairline and soft corners on its
-  open side towards the form, carries
+  On the right a panel, a well one step below the page with a hairline and soft corners, carries
   the calm backdrop (grid, crystal, drifting light). Language, theme and help stand in the
   panel's top corner. The wide form of setup keeps its 560 px; the panel gives way.
 - **The admin's sign-in notice** is a raised card in the panel, in the same row as the page's
