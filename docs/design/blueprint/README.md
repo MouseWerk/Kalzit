@@ -60,13 +60,20 @@ link pages in `Identity.dc.html` on wide screens. Frames 1E (with a notice) and 
 stay as drawn.
 
 - **From 1024 px:** two parts on one sheet, which stops growing at 1536 px and then stands in the
-  middle of the window. The form stands in a column on the left. The mark in the top bar, what
+  middle of the window; the panel goes on from the sheet to the window's right edge at every
+  width (owner decision of 2026-11-24, finding UW-A2), and language, theme and help stand in the
+  window's corner on it. The form stands in a column on the left. The mark in the top bar, what
   stands above the heading (the organization and server on sign in, the steps of setup and of the
   second factor), the form and the fine print share one left edge, 24 px at 1024 px and growing with the window to 64 px.
   The heading starts at the same height on every page; what stands above it has a row of its own.
   On the right a panel, a well one step below the page with a hairline and soft corners, carries
-  the calm backdrop (grid, crystal, drifting light). Language, theme and help stand in the
-  panel's top corner. The wide form of setup keeps its 560 px; the panel gives way.
+  the picture (`Auth.dc.html`, frames 3A and 13, "Doppelbrechung"): the lines of a table, a
+  document and a graph, faint behind a calcite crystal and clear and double inside it, in the
+  text color of the theme, without gradient, glow or accent color. It stands still; one light
+  runs over the crystal's edges after a successful sign-in (480 ms), and nothing moves for
+  reduced motion. Beyond the board's drawing the table goes on to the left and the graph to the
+  right, fainter with the distance, for very wide panels. The contrast theme and forced colors
+  show a plain panel. Language, theme and help stand in the panel's top corner. The wide form of setup keeps its 560 px; the panel gives way.
 - **The admin's sign-in notice** is a raised card in the panel, in the same row as the page's
   heading, in full text color and a size above body text, so that it is read before the form. A
   notice longer than the window is never cut off: the panel grows with it, the page scrolls and
@@ -74,8 +81,11 @@ stay as drawn.
   while a long form scrolls and says one line about the product at its bottom.
 - **The line about the product** shows by default. It is gone on a server with its own product
   name or logo, and admins turn it off under Settings > Appearance and brand
-  (`signin.product_line`, applied at once, with undo). The panel then carries the backdrop alone.
-- **Below 1024 px** and on the widest pages (the last setup step, help): one centred column on the
-  backdrop as on the board; the notice is the same raised card above the heading.
+  (`signin.product_line`, applied at once, with undo). The panel then carries the picture alone.
+- **The picture** shows by default and is drawn fainter on a server with its own product name or
+  logo. Admins turn it off under Settings > Appearance and brand (`signin.backdrop`, applied at
+  once, with undo); the panel is then a plain surface.
+- **Below 1024 px** and on the widest pages (the last setup step, help): one centred column
+  without a picture; the notice is the same raised card above the heading.
 - Sign in, the second step, the links for passwords, invitations and email confirmation, and
   setup steps 1 to 3 use the split layout.

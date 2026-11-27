@@ -380,6 +380,37 @@ describe("server settings rows", () => {
     await waitFor(() => expect(stored).toMatchObject({ value: true, version: 2 }));
   });
 
+  it("turns the picture next to the sign-in form off at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+      setup: (state) => {
+        state.serverSettings.push({
+          key: "signin.backdrop",
+          scope: "server",
+          value: true,
+          default: true,
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "The setting signin.backdrop",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const picture = await screen.findByRole("switch", { name: "Picture next to the sign-in form" });
+    expect((picture as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.getByText(/The calcite crystal with a table, a document and a graph/),
+    ).toBeTruthy();
+    await user.click(picture);
+    expect(await screen.findByText("“Picture next to the sign-in form” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "signin.backdrop");
+    expect(stored).toMatchObject({ value: false, version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: true, version: 2 }));
+  });
+
   it("sends a change made while another is saving afterwards, instead of dropping it", async () => {
     const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
     const theme = await screen.findByRole("radiogroup", { name: "Default mode" });

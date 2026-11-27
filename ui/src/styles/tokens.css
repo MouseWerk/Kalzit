@@ -806,9 +806,9 @@
 }
 
 /*
- * The pages before the app (sign-in, setup, help): the column widths, the step marks and the calm
- * backdrop, a fine grid and the edge of a calcite crystal under a soft light that drifts slowly.
- * The light and the lit grid are translucent, so they sit on any surface of the theme.
+ * The pages before the app (sign-in, setup, help): the column widths, the step marks and the
+ * picture in the panel, lines in the text color of the theme at a few strengths, so it follows
+ * every theme and variant by itself.
  */
 @layer tokens {
   :root {
@@ -838,18 +838,40 @@
     --size-access-facet: 0.5rem;
     --size-access-tile: 1.875rem;
     --size-access-preview: 2.75rem;
-    --size-access-cell: 4.5rem;
-    --size-access-crystal: 38rem;
-    --size-access-lamp: 45rem;
-    --size-access-drift: 20rem;
+    /* The picture in the panel. Its drawing is 2500 by 1200 units, of which the 720 by 900 around
+       the crystal always fit into the panel (auth/doppelbrechung.ts, VIEW and CORE): the height
+       is the smaller of 1200 / 900 of the panel's height and 1200 / 720 of its width. */
+    --size-access-art: min(133.3cqh, 166.7cqw);
+    --aspect-access-art: 2500 / 1200;
+    /* Its lines keep their width at every size; a tall panel (from 1200 px) takes the next. */
+    --size-access-art-line: 1px;
+    --size-access-art-edge: 1.5px;
+    --size-access-art-line-tall: 1.5px;
+    --size-access-art-edge-tall: 2px;
+    /* The light after a sign-in, in the drawing's units: its width, and its length in
+       hundredths of the path it travels. */
+    --size-access-art-light: 2.5;
+    --size-access-art-light-run: 16;
     --size-access-meter: 1.375rem;
     --size-access-os: 3.25rem;
-    --duration-drift: 30s;
-    --access-grid: light-dark(oklch(21% 0.006 286 / 0.07), oklch(100% 0 0 / 0.045));
-    --access-grid-lit: light-dark(oklch(21% 0.006 286 / 0.17), oklch(100% 0 0 / 0.15));
-    --access-lamp: light-dark(oklch(100% 0 0 / 0.8), oklch(100% 0 0 / 0.055));
-    /* The opaque end of a mask gradient: only its alpha counts. */
-    --mask-opaque: oklch(0% 0 0);
+    /* The strengths of the picture's lines (board frame 13): behind the crystal in three steps
+       of distance, inside it the second image and the clear one, the crystal's edges and the
+       tint of its top and right face. The quiet set is for a server with its own name or logo. */
+    --access-art-near: color-mix(in oklch, var(--text) 13%, transparent);
+    --access-art-mid: color-mix(in oklch, var(--text) 9%, transparent);
+    --access-art-far: color-mix(in oklch, var(--text) 5.5%, transparent);
+    --access-art-echo: color-mix(in oklch, var(--text) 28%, transparent);
+    --access-art-clear: color-mix(in oklch, var(--text) 60%, transparent);
+    --access-art-edge: color-mix(in oklch, var(--text) 50%, transparent);
+    --access-art-ridge: color-mix(in oklch, var(--text) 32%, transparent);
+    --access-art-face: color-mix(in oklch, var(--text) 5%, transparent);
+    --access-art-face-side: color-mix(in oklch, var(--text) 2.5%, transparent);
+    --access-art-near-quiet: color-mix(in oklch, var(--text) 10%, transparent);
+    --access-art-mid-quiet: color-mix(in oklch, var(--text) 7%, transparent);
+    --access-art-far-quiet: color-mix(in oklch, var(--text) 4.5%, transparent);
+    --access-art-echo-quiet: color-mix(in oklch, var(--text) 20%, transparent);
+    --access-art-clear-quiet: color-mix(in oklch, var(--text) 42%, transparent);
+    --access-art-light: var(--text);
     /* The small pictures of the four themes in the setup's theme choice. */
     --preview-light-bg: oklch(95.8% 0.002 286);
     --preview-light-raised: oklch(100% 0 0);

@@ -243,6 +243,18 @@ setzen oder dem Server folgen (**Wie der Server**).
 Die **Anmeldeseite** kann einen eigenen **Begrüßungstext** (bis zu 280 Zeichen) und einen
 **Hinweis** (bis zu 2000) zeigen, mit fett, kursiv und Links.
 
+Auf Bildschirmen ab 1024 px Breite steht neben dem Anmeldeformular eine Fläche mit einem Bild: ein
+Kalzit-Kristall mit den Linien einer Tabelle, eines Dokuments und eines Graphen. Hinter dem
+Kristall sind sie blass, in ihm deutlich und doppelt, so wie Kalzit alles doppelt zeigt, was
+hinter ihm liegt. Das Bild ist in der Textfarbe des Themes gezeichnet, steht still und gehört zu
+Kalzit selbst; es wird nichts von außen geladen. Nach einer gelungenen Anmeldung läuft einmal ein
+Licht über die Kanten des Kristalls; ist im Betriebssystem weniger Bewegung eingestellt, bewegt
+sich nichts. **Bild neben dem Anmeldeformular** schaltet das Bild ab; die Fläche bleibt dann leer
+und zeigt nur deinen Hinweis oder die Zeile zum Produkt. Die Änderung gilt sofort und lässt sich
+rückgängig machen. Auf einem Server mit eigenem Produktnamen oder Logo ist das Bild blasser
+gezeichnet. Schmale Bildschirme, das Theme „Hoher Kontrast“ und die erzwungenen Farben des
+Betriebssystems zeigen es nie.
+
 ### Ausgehender Proxy
 
 Unter **Netzwerk, HTTPS und Proxy** schickt **Ausgehender Proxy** Kalzits eigene Anfragen ins

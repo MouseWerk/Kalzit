@@ -2,8 +2,9 @@
  * The pages before the app shell: sign in, setup, the pages behind mailed links, errors and help
  * (docs/design/blueprint/Auth.dc.html, which continues Access.dc.html). A slim top bar with the
  * mark, language, theme and help. On wide screens the page stands in a 400 px column on the left
- * and a panel on the right carries the calm backdrop and the admin's notice or one line about the
- * product; narrow screens and help keep one centred column. The page stands on the page, without
+ * and a panel on the right carries the picture (a table, a document and a graph in a calcite
+ * crystal) and the admin's notice or one line about the product; narrow screens and help keep one
+ * centred column without a picture. The page stands on the page, without
  * a card; cards are kept for what is read or chosen as a whole (messages, choice tiles, codes,
  * the facts of an invitation). Graphite and hairlines as in the app; the copper only on the one
  * main action of a page. Errors are a tinted fill, selected and current states a neutral tint and
@@ -1180,135 +1181,169 @@
   }
 
   /*
-   * The backdrop: a fine grid and the crystal's edge, faint and masked towards the edges, plus a
-   * soft light that drifts. The light carries a brighter copy of grid and crystal that moves the
-   * other way, so the copy stays in place and only the lit spot travels. Both layers are as large
-   * as the backdrop (container units), so the copy lines up with the base.
+   * The picture in the panel (Backdrop.tsx, board frames 3A and 13, "Doppelbrechung"): a table, a
+   * document and a graph as lines behind a calcite crystal, faint, and clear and double inside
+   * it. Lines in the text color at a few strengths, on the panel's surface: no gradient, no glow,
+   * no accent color. Only the split layout shows it; one column (narrow screens, help) has none.
+   *
+   * The drawing is as large as the panel allows for the crystal with its table, document and
+   * graph to fit; what the drawing holds beyond that shows where the panel is wider. Its lines
+   * keep their width at every size, so they stay hairlines on a phone-sized panel and on a wall
+   * of a monitor alike; a tall panel takes the next width.
    */
   .access-bd {
     position: absolute;
     inset: 0;
+    display: none;
     overflow: hidden;
     pointer-events: none;
     container-type: size;
   }
 
-  .access-bd__layer {
+  .access-art {
     position: absolute;
-    inset-block-start: 0;
-    inset-inline-start: 0;
-    width: 100cqw;
-    height: 100cqh;
-    background-image:
-      linear-gradient(
-        to right,
-        var(--access-grid) var(--border-width),
-        transparent var(--border-width)
-      ),
-      linear-gradient(
-        to bottom,
-        var(--access-grid) var(--border-width),
-        transparent var(--border-width)
-      );
-    background-position: calc(50cqw - var(--size-access-cell) / 2) 0;
-    background-size: var(--size-access-cell) var(--size-access-cell);
-    stroke: var(--access-grid);
-  }
-
-  .access-bd__layer--base {
-    mask-image: radial-gradient(
-      ellipse 62% 70% at 50% 38%,
-      var(--mask-opaque) 30%,
-      transparent 100%
-    );
-  }
-
-  .access-bd__crystal {
-    position: absolute;
-    inset-block-start: calc(50cqh - var(--size-access-crystal) * 0.42);
-    inset-inline-start: calc(50cqw - var(--size-access-crystal) * 0.52);
-    width: var(--size-access-crystal);
-    height: var(--size-access-crystal);
+    /* A little above the middle: the line about the product stands at the bottom. */
+    inset-block-start: 44%;
+    inset-inline-start: 50%;
+    height: var(--size-access-art);
+    /* Wider than the panel on purpose: the panel shows its middle. */
+    max-width: none;
+    aspect-ratio: var(--aspect-access-art);
+    translate: -50% -50%;
     fill: none;
-    stroke-width: var(--border-width);
-    stroke-linejoin: round;
+    stroke: none;
+    stroke-width: var(--size-access-art-line);
+    stroke-linecap: round;
+    stroke-linejoin: miter;
   }
 
-  .access-bd__lamp {
-    position: absolute;
-    inset-block-start: calc(var(--size-access-lamp) / -4);
-    inset-inline-start: calc(50cqw - var(--size-access-lamp) / 2);
-    width: var(--size-access-lamp);
-    height: var(--size-access-lamp);
-    overflow: hidden;
-    background: var(--access-lamp);
-    mask-image: radial-gradient(closest-side, var(--mask-opaque), transparent);
-    animation: access-drift var(--duration-drift) ease-in-out infinite alternate;
+  .access-art path {
+    vector-effect: non-scaling-stroke;
   }
 
-  .access-bd__layer--lit {
-    --access-grid: var(--access-grid-lit);
-    inset-block-start: calc(var(--size-access-lamp) / 4);
-    inset-inline-start: calc(var(--size-access-lamp) / 2 - 50cqw);
-    animation: access-drift-back var(--duration-drift) ease-in-out infinite alternate;
+  /* Behind the crystal: fainter with each step away from it. */
+  .access-art__behind--near {
+    stroke: var(--access-art-near);
   }
 
-  @keyframes access-drift {
-    from {
-      transform: translate3d(calc(-1 * var(--size-access-drift)), calc(-1 * var(--space-12)), 0);
-    }
-
-    to {
-      transform: translate3d(var(--size-access-drift), var(--space-6), 0);
-    }
+  .access-art__behind--mid {
+    stroke: var(--access-art-mid);
   }
 
-  @keyframes access-drift-back {
-    from {
-      transform: translate3d(var(--size-access-drift), var(--space-12), 0);
-    }
+  .access-art__behind--far {
+    stroke: var(--access-art-far);
+  }
 
-    to {
-      transform: translate3d(calc(-1 * var(--size-access-drift)), calc(-1 * var(--space-6)), 0);
+  /* The graph's nodes and the crystal's body are filled with the panel's surface, so an edge
+     ends at a node's rim and nothing behind the crystal shows through it. */
+  .access-art__node,
+  .access-art__body {
+    fill: var(--bg-surface);
+  }
+
+  .access-art__face {
+    fill: var(--access-art-face);
+  }
+
+  .access-art__face--side {
+    fill: var(--access-art-face-side);
+  }
+
+  /* Inside the crystal: the lines clear, and their second image. */
+  .access-art__echo {
+    stroke: var(--access-art-echo);
+  }
+
+  .access-art__clear {
+    stroke: var(--access-art-clear);
+    stroke-width: var(--size-access-art-edge);
+  }
+
+  .access-art__edge {
+    stroke: var(--access-art-edge);
+    stroke-width: var(--size-access-art-edge);
+  }
+
+  .access-art__ridge {
+    stroke: var(--access-art-ridge);
+    stroke-width: var(--size-access-art-edge);
+  }
+
+  /* A server with its own name or logo keeps the picture, a step fainter (frame 3B). */
+  .access-bd--quiet {
+    --access-art-near: var(--access-art-near-quiet);
+    --access-art-mid: var(--access-art-mid-quiet);
+    --access-art-far: var(--access-art-far-quiet);
+    --access-art-echo: var(--access-art-echo-quiet);
+    --access-art-clear: var(--access-art-clear-quiet);
+  }
+
+  @container (min-height: 75rem) {
+    .access-art {
+      --size-access-art-line: var(--size-access-art-line-tall);
+      --size-access-art-edge: var(--size-access-art-edge-tall);
     }
   }
 
   /*
-   * The light rests for reduced motion (the busy refresh icon stops with every icon); the
-   * contrast theme has no backdrop.
+   * The light after a sign-in succeeded (signInLight.ts): a short stroke that runs once over the
+   * crystal's edges, the one movement of the picture. It is measured along the path (pathLength
+   * 100), so it scales with the drawing. Not there at all otherwise, and never for reduced motion.
    */
-  @media (prefers-reduced-motion: reduce) {
-    .access-bd__lamp,
-    .access-bd__layer--lit {
-      animation: none;
+  .access-art .access-art__light {
+    visibility: hidden;
+    stroke: var(--access-art-light);
+    stroke-width: var(--size-access-art-light);
+    stroke-linecap: butt;
+    stroke-dasharray: var(--size-access-art-light-run) 100;
+    stroke-dashoffset: var(--size-access-art-light-run);
+    vector-effect: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .access-bd[data-lit] .access-art__light {
+      visibility: visible;
+      animation: access-art-light var(--duration-icon-long) var(--easing) both;
     }
   }
 
-  :root[data-theme="contrast"] .access-bd {
-    display: none;
+  @keyframes access-art-light {
+    to {
+      stroke-dashoffset: -100;
+    }
   }
 
   /*
-   * Wide screens: the form on the left, the panel on the right, both on one sheet that stops
-   * growing on very wide screens. The mark, what stands above the heading, the form and the fine
-   * print share one left edge. The rows: the top bar (across both, so language, theme and help
-   * stand in the panel's corner), what stands above the heading, the page, the fine print.
+   * Wide screens: the form on the left, the panel on the right. Form and panel share a sheet
+   * that stops growing on very wide screens and stands in the middle; the panel goes on from
+   * there to the window's right edge at every width (owner decision of 2026-11-24, finding
+   * UW-A2), so the picture never ends at an edge in the middle of the screen. The columns: the
+   * room left of the sheet, the form, the panel's part of the sheet, the room right of it. The
+   * mark, what stands above the heading, the form and the fine print share one left edge. The
+   * rows: the top bar (language, theme and help stand in the window's corner, on the panel), what
+   * stands above the heading, the page, the fine print.
    */
   @media (min-width: 64rem) {
     .access--split {
       display: grid;
       grid-template-rows: auto minmax(var(--space-12), auto) minmax(0, 1fr) auto;
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      grid-template-columns:
+        minmax(0, 1fr)
+        calc(min(100%, var(--size-access-split)) * 5 / 11)
+        calc(min(100%, var(--size-access-split)) * 6 / 11)
+        minmax(0, 1fr);
       box-sizing: border-box;
       width: 100%;
-      max-width: var(--size-access-split);
-      margin-inline: auto;
     }
 
     .access--split .access__top {
       grid-row: 1;
-      grid-column: 1 / -1;
+      grid-column: 2 / -1;
       padding-inline-start: var(--space-access-edge);
+    }
+
+    .access--split .access-bd {
+      display: block;
     }
 
     /*
@@ -1321,7 +1356,7 @@
       display: flex;
       flex-direction: column;
       grid-row: 1 / -1;
-      grid-column: 2;
+      grid-column: 3 / -1;
       align-self: start;
       justify-content: flex-end;
       height: calc(100dvh - var(--space-6));
@@ -1381,7 +1416,7 @@
       grid-template-rows: subgrid;
       grid-template-columns: minmax(0, 1fr);
       grid-row: 2 / 4;
-      grid-column: 1;
+      grid-column: 2;
       gap: 0;
       max-width: none;
       margin: 0;
@@ -1410,18 +1445,28 @@
 
     .access--split .access__fine {
       grid-row: 4;
-      grid-column: 1;
+      grid-column: 2;
       padding-inline: var(--space-access-edge) var(--space-6);
       text-align: start;
     }
   }
 
-  /* Phones: icon buttons in the top bar, tighter cards, full-width buttons, no light. */
-  @media (max-width: 40rem) {
-    .access-bd__lamp {
+  /*
+   * No picture in the contrast theme and in forced colors: the panel is a plain surface there,
+   * with its hairline in the text color.
+   */
+  :root[data-theme="contrast"] .access--split .access-bd {
+    display: none;
+  }
+
+  @media (forced-colors: active) {
+    .access--split .access-bd {
       display: none;
     }
+  }
 
+  /* Phones: icon buttons in the top bar, tighter cards, full-width buttons. */
+  @media (max-width: 40rem) {
     .access__top {
       padding: 0 var(--space-3) 0 var(--space-4);
     }
