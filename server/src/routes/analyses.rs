@@ -1399,6 +1399,17 @@ pub struct ChoicesAnswer {
     pub more: bool,
 }
 
+/// Whether a source refused a query because it has no function `valueType` ("Unknown function
+/// 'valueType'" in Neo4j, "Function 'valueType' doesn't exist" in Memgraph).
+fn lacks_value_type(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("valuetype")
+        && (m.contains("unknown function")
+            || m.contains("doesn't exist")
+            || m.contains("does not exist")
+            || m.contains("not defined"))
+}
+
 /// The longest search text for choices.
 const MAX_SEARCH: usize = 200;
 
@@ -1426,10 +1437,18 @@ async fn choices(
     let source = analysis.choices_source(&name).ok_or_else(ApiError::not_found)?;
     let ds = crate::datasources::find_in_org(&state.db, &ctx.org_id, source, false).await?;
     let (dialect, graph) = super::datasources::graph::dialect(&ds)?;
-    let query = pattern::choices_query(dialect, graph.as_deref(), &choices)
-        .map_err(|d| ApiError::validation(d.message).with_field("choices").with_reason(d.reason, d.params))?;
-    let variables = std::collections::BTreeMap::from([("kz_search".to_string(), json!(search))]);
-    let result = super::datasources::graph::run_one(&state, &ctx, &ds, query, variables).await?;
+    let query = |typed: bool| {
+        pattern::choices_query(dialect, graph.as_deref(), &choices, typed)
+            .map_err(|d| ApiError::validation(d.message).with_field("choices").with_reason(d.reason, d.params))
+    };
+    let variables =
+        std::collections::BTreeMap::from([("kz_search".to_string(), pattern::choices_search(dialect, &search))]);
+    let run = |query: Value| super::datasources::graph::run_one(&state, &ctx, &ds, query, variables.clone());
+    let result = match run(query(true)?).await {
+        // A server without `valueType` (Neo4j before 5.13): once more without the list filter.
+        Err(e) if lacks_value_type(&e.message) => run(query(false)?).await?,
+        other => other?,
+    };
     // Cypher already searched and sorted; the same here keeps every engine alike.
     let needle = search.to_lowercase();
     let text = |v: &Value| match v {
@@ -1446,4 +1465,17 @@ async fn choices(
     let more = values.len() > pattern::MAX_CHOICES;
     values.truncate(pattern::MAX_CHOICES);
     Ok(Json(ChoicesAnswer { values, more }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_value_type_function_is_told_apart() {
+        assert!(lacks_value_type("Unknown function 'valueType' (line 1, column 60)"));
+        assert!(lacks_value_type("Function 'valueType' doesn't exist."));
+        assert!(!lacks_value_type("'toString' argument at position 1 must be either 'null', 'string'"));
+        assert!(!lacks_value_type("Unknown function 'toLower'"));
+    }
 }

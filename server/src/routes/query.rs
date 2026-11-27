@@ -217,7 +217,11 @@ pub(crate) fn big_lists_only_in_patterns<'a>(
         return Ok(());
     }
     for query in queries.filter(|q| q.get("pattern").is_none()) {
-        if let Some(name) = mentioned_names(query).iter().find(|n| big.contains(n)) {
+        // TigerGraph fills a query's declared or installed parameters from the variables by name,
+        // without `$`: such a query may name any of them.
+        let tigergraph = query.get("gsql").is_some() || query.get("installed").is_some();
+        let named = mentioned_names(query);
+        if let Some(name) = big.iter().find(|n| tigergraph || named.contains(**n)) {
             return Err(list_too_long(name).with_field("variables"));
         }
     }
@@ -1669,6 +1673,16 @@ mod tests {
         assert!(big_lists_only_in_patterns([&pattern, &other].into_iter(), &vars, &lists).is_ok());
         let e = big_lists_only_in_patterns([&pattern, &sql].into_iter(), &vars, &lists).unwrap_err();
         assert_eq!((e.reason.as_ref().unwrap().code.as_str(), e.field), ("variables.list_too_long", Some("variables")));
+        // TigerGraph takes parameters by name, without `$`: its queries may name any list.
+        let installed = json!({ "installed": "nachbarn" });
+        let gsql = json!({ "gsql": "INTERPRET QUERY (SET<STRING> ids) FOR GRAPH g { PRINT ids; }" });
+        for tg in [installed, gsql] {
+            assert!(big_lists_only_in_patterns([&pattern, &tg].into_iter(), &vars, &lists).is_err(), "{tg}");
+        }
+        // A short list is no matter.
+        let short = BTreeMap::from([("ids".to_string(), json!(["a"]))]);
+        let installed = json!({ "installed": "nachbarn" });
+        assert!(big_lists_only_in_patterns([&pattern, &installed].into_iter(), &short, &lists).is_ok());
     }
 
     fn all_model() -> DashboardModel {

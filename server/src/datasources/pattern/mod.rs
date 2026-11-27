@@ -1222,10 +1222,32 @@ pub fn count_pattern(label: Option<&str>, edge_type: Option<&str>) -> Pattern {
     Pattern { nodes, edges, limit: None, parameters: Vec::new(), count: true }
 }
 
+/// The search of a choices query as it is bound to `kz_search`: as typed for Cypher (`CONTAINS`
+/// takes text as it is), and for GSQL's `LIKE` with its wildcards `%` and `_`, the brackets of a
+/// character list and the escape character `\` escaped, so they match themselves.
+pub fn choices_search(dialect: Dialect, search: &str) -> Value {
+    match dialect {
+        Dialect::TigerGraph => {
+            let mut out = String::with_capacity(search.len());
+            for c in search.chars() {
+                if matches!(c, '\\' | '%' | '_' | '[' | ']') {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+            Value::String(out)
+        }
+        Dialect::Neo4j | Dialect::Memgraph => Value::String(search.to_string()),
+    }
+}
+
 /// The fixed query of a template parameter's choices (`Choices`): the distinct values of the
 /// property, as the source's own query form. Cypher filters by `$kz_search` (bound) and stops after
-/// `MAX_CHOICES + 1`; GSQL has no text search in a pattern, so its values are filtered by Kalzit.
-pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices) -> Result<Value, Detail> {
+/// `MAX_CHOICES + 1`; `typed` leaves out lists and maps with `valueType` (Neo4j 5.13 and later,
+/// Memgraph); without it (older servers, which lack `valueType`) the query has no such filter, and
+/// a list value there is the source's error. GSQL filters with `LIKE` (`choices_search`) and reads
+/// at most `CHOICES_SCAN` nodes; Kalzit searches, sorts and cuts the values again.
+pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices, typed: bool) -> Result<Value, Detail> {
     choices.check()?;
     match dialect {
         Dialect::Neo4j | Dialect::Memgraph => {
@@ -1234,10 +1256,14 @@ pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices) -
             // Lists and maps have no text to search or pick; they are left out first, in a `WITH`
             // of their own, since `toString` refuses them and `AND` need not stop early.
             // `valueType` names them `LIST...` and `MAP...` in Neo4j and Memgraph.
+            let kinds = if typed {
+                "AND NOT valueType(value) STARTS WITH 'LIST' AND NOT valueType(value) STARTS WITH 'MAP' "
+            } else {
+                ""
+            };
             Ok(serde_json::json!({ "cypher": format!(
                 "MATCH (n:{label}) WITH n.{property} AS value \
-                 WHERE value IS NOT NULL AND NOT valueType(value) STARTS WITH 'LIST' \
-                 AND NOT valueType(value) STARTS WITH 'MAP' \
+                 WHERE value IS NOT NULL {kinds}\
                  WITH value WHERE toLower(toString(value)) CONTAINS toLower($kz_search) \
                  RETURN DISTINCT value ORDER BY value LIMIT {}",
                 MAX_CHOICES + 1
@@ -1577,19 +1603,35 @@ Süd AG"
     #[test]
     fn choices_queries_bind_the_search_and_stay_bounded() {
         let c = Choices { label: "Firma".into(), property: "name".into(), ref_id: None };
-        let q = choices_query(Dialect::Neo4j, None, &c).unwrap();
+        let q = choices_query(Dialect::Neo4j, None, &c, true).unwrap();
         let cypher = q["cypher"].as_str().unwrap();
         assert!(cypher.contains("CONTAINS toLower($kz_search)") && cypher.ends_with("LIMIT 201"), "{cypher}");
         assert!(cypher.contains("NOT valueType(value) STARTS WITH 'LIST'"), "{cypher}");
         crate::datasources::cypher::check(cypher).unwrap();
-        let q = choices_query(Dialect::TigerGraph, Some("social"), &c).unwrap();
+        let q = choices_query(Dialect::TigerGraph, Some("social"), &c, true).unwrap();
         let gsql = q["gsql"].as_str().unwrap();
         assert!(gsql.contains("LIKE \"%\" + lower(kz_search) + \"%\"") && gsql.contains("LIMIT 10000;"), "{gsql}");
         let checked =
             crate::datasources::gsql::check_with(gsql, crate::datasources::gsql::Form::Interpret, None).unwrap();
         assert_eq!(checked.params.len(), 1);
-        let bad = Choices { label: "Firma GmbH".into(), ..c };
-        assert_eq!(choices_query(Dialect::TigerGraph, Some("social"), &bad).unwrap_err().reason, "pattern.gsql_name");
+        let bad = Choices { label: "Firma GmbH".into(), ..c.clone() };
+        assert_eq!(
+            choices_query(Dialect::TigerGraph, Some("social"), &bad, true).unwrap_err().reason,
+            "pattern.gsql_name"
+        );
+        // Older servers without `valueType`: the same query without the filter, still checked.
+        let plain = choices_query(Dialect::Memgraph, None, &c, false).unwrap();
+        let plain = plain["cypher"].as_str().unwrap();
+        assert!(!plain.contains("valueType") && plain.contains("WHERE value IS NOT NULL WITH value"), "{plain}");
+        crate::datasources::cypher::check(plain).unwrap();
+    }
+
+    #[test]
+    fn the_search_of_gsql_choices_matches_its_wildcards_as_text() {
+        assert_eq!(choices_search(Dialect::TigerGraph, "100%_[a]\\x"), json!("100\\%\\_\\[a\\]\\\\x"));
+        assert_eq!(choices_search(Dialect::TigerGraph, "_"), json!("\\_"));
+        assert_eq!(choices_search(Dialect::TigerGraph, "%"), json!("\\%"));
+        assert_eq!(choices_search(Dialect::Neo4j, "100%_"), json!("100%_"));
     }
 
     #[test]

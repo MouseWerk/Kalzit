@@ -801,7 +801,8 @@ that text through the same read-only check as a typed query.
   `pattern.too_many_values` with `max`). List parameters of a pattern are exempt from the
   variables' 1,000 values and 64 KiB; together they may take 4 MiB. The exemption is the
   pattern's only: a query of another kind in the same request (or panel) that names such a long
-  list (`$ids`) is refused with `variables.list_too_long`.
+  list (`$ids`) is refused with `variables.list_too_long`, and so is any TigerGraph `gsql` or
+  `installed` query next to it, since TigerGraph takes its parameters from the variables by name.
 - `count: true` counts the matches instead of returning them ("Treffer zählen"): a frame with one
   field `matches`.
 - Limits: 20 nodes, 30 edges, 20 conditions per node or edge, 20 parameters, `limit` at least 1
@@ -915,9 +916,12 @@ refused when saved (`model.parameters[i].choices.refId`). `POST
 false }`, at most 200 values in order, `more` when there are more. It runs a fixed query of the
 template on that source: in Cypher `MATCH (n:L) WITH n.p AS value WHERE value IS NOT NULL AND
 NOT valueType(value) STARTS WITH 'LIST' AND NOT valueType(value) STARTS WITH 'MAP' WITH value
-WHERE toLower(toString(value)) CONTAINS toLower($kz_search) RETURN DISTINCT value ... LIMIT 201` with the search bound (lists and maps are no choices); in GSQL
-the values of at most 10,000 nodes whose property is `LIKE` the search (bound as `kz_search`),
-searched, sorted and cut again by Kalzit. Reading the analysis authorizes it, as it authorizes
+WHERE toLower(toString(value)) CONTAINS toLower($kz_search) RETURN DISTINCT value ... LIMIT 201`
+with the search bound (lists and maps are no choices). `valueType` needs Neo4j 5.13 or later (or
+Memgraph); a server that answers it has no such function gets the same query without the list
+and map filter, where a list value is the source's error. In GSQL the values of at most 10,000
+nodes whose property is `LIKE` the search (bound as `kz_search`, with `\`, `%`, `_`, `[` and `]`
+escaped by `\` so they match themselves), searched, sorted and cut again by Kalzit. Reading the analysis authorizes it, as it authorizes
 the template's stored queries; readers see the values of that one property only. A parameter
 without `choices` is `404`.
 
