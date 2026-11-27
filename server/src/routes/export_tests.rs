@@ -985,7 +985,7 @@ fn small_graph() -> crate::shapes::GraphSet {
             to: "2".into(),
             properties: props(vec![("seit", json!(2020)), ("leer", Value::Null), ("type", json!("privat"))]),
         }],
-        paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+        paths: Some(vec![GraphPath::new(vec!["1".into(), "2".into()], vec!["e1".into()])]),
         schema: GraphSchema {
             labels: vec!["Kunde".into(), "Person".into()],
             edge_types: vec!["KENNT".into()],
@@ -993,6 +993,7 @@ fn small_graph() -> crate::shapes::GraphSet {
         },
         truncated: None,
         notices: None,
+        suggested: None,
     }
 }
 
@@ -1251,6 +1252,163 @@ async fn a_graph_panel_exports_for_readers_of_its_dashboard_only() {
     let viewer = t.member("viewer", "viewer").await;
     let r = t.post(&panel, body, &viewer).await;
     assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden".into()), "{}", r.text());
+}
+
+/// A graph's two lists as CSV, named after the list; other shapes refuse the two formats.
+#[tokio::test]
+async fn graphs_export_their_nodes_and_edges_as_csv() {
+    let t = T::new().await;
+    let ds = t.graph_source().await;
+    let r = t.post("/export", shaped(&ds, "csvNodes", json!([])), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_TYPE), "text/csv; charset=utf-8");
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Ergebnis-nodes.csv\"");
+    assert_eq!(r.header(header::CACHE_CONTROL), "no-store");
+    let text = r.text();
+    assert!(text.starts_with('\u{FEFF}'), "BOM");
+    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+    assert_eq!(lines[0], "id,labels,aktiv,alter,name,tags");
+    assert_eq!(lines[1], "1,:Person:Kunde,true,41,\"Jörg <&> \"\"Söhne\"\"\",");
+    assert_eq!(lines[2], "2,:Person,,36.5,Ada\u{1},\"[\"\"a\"\",1]\"");
+
+    let mut german = shaped(&ds, "csvEdges", json!([]));
+    german["language"] = json!("de");
+    let r = t.post("/export", german, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Ergebnis-edges.csv\"");
+    let text = r.text();
+    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+    assert_eq!(lines[0], "id;type;source;target;leer;seit;property:type");
+    assert_eq!(lines[1], "e1;KENNT;1;2;;2020;privat");
+
+    let summary = t.first_exported().await;
+    assert_eq!(
+        (summary["format"].clone(), summary["nodes"].clone(), summary["edges"].clone(), summary["shape"].clone()),
+        (json!("csvNodes"), json!(2), json!(1), json!("graph")),
+        "{summary}"
+    );
+
+    // Documents and tables have no node or edge list: a step would have to make a graph first.
+    let docs = t.documents_source().await;
+    let r = t.post("/export", shaped(&docs, "csvNodes", json!([])), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.format_unsupported".into()));
+    assert_eq!(r.json()["error"]["params"], json!({ "shape": "documents", "format": "csvNodes" }), "{}", r.text());
+}
+
+/// The graph CSV files are data: they need `data:export` like every other data format, on the
+/// panel route and on the free route, and the free route also the right to query the source.
+#[tokio::test]
+async fn graph_csv_needs_data_export() {
+    let t = T::new().await;
+    let ds = t.graph_source().await;
+    let created = t
+        .post(
+            "/dashboards",
+            json!({ "model": {
+                "schemaVersion": 2, "title": "Netz", "timeRange": { "from": "now-6h", "to": "now" },
+                "panels": [{ "id": "g", "type": "network", "title": "Kunden", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                    "targets": [{ "refId": "A", "datasourceId": ds, "query": {} }] }]
+            } }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    let panel = format!("/dashboards/{id}/panels/g/export");
+    let viewer = t.member("viewer", "viewer").await;
+    let editor = t.member("editor", "editor").await;
+    for format in ["csvNodes", "csvEdges"] {
+        let body = json!({ "timeRange": range(), "format": format, "language": "en" });
+        // A viewer sees the panel, but holds no data:export: neither route answers a file.
+        let r = t.post(&panel, body.clone(), &viewer).await;
+        assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden".into()), "{}", r.text());
+        let r = t.post("/export", shaped(&ds, format, json!([])), &viewer).await;
+        assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden".into()), "{}", r.text());
+        // An editor holds it by default.
+        let r = t.post(&panel, body, &editor).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        let name = if format == "csvNodes" { "Kunden-nodes.csv" } else { "Kunden-edges.csv" };
+        assert_eq!(r.header(header::CONTENT_DISPOSITION), format!("attachment; filename=\"{name}\""));
+    }
+
+    // A role that reads the dashboard and exports, but may not query the source: the stored
+    // panel's lists, never a free query's.
+    let role = t
+        .post(
+            "/roles",
+            json!({ "name": "Netzberichte", "permissions": ["dashboards:read", "folders:read", "data:export"] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text());
+    let reporter = t.member("reporter", role.json()["id"].as_str().unwrap()).await;
+    let body = json!({ "timeRange": range(), "format": "csvNodes", "language": "en" });
+    let r = t.post(&panel, body, &reporter).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("\r\n1,:Person:Kunde,"), "{}", r.text());
+    let r = t.post("/export", shaped(&ds, "csvNodes", json!([])), &reporter).await;
+    assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found".into()), "{}", r.text());
+}
+
+/// A scope names a part of the graph and where its nodes are drawn; it only ever narrows the
+/// result, and it has a bound.
+#[tokio::test]
+async fn a_graph_export_takes_a_part_and_the_drawn_positions() {
+    let t = T::new().await;
+    let ds = t.graph_source().await;
+    let mut body = shaped(&ds, "graphml", json!([]));
+    // An id the result does not have names nothing.
+    body["graph"] = json!({ "nodes": ["2", "nobody"], "positions": { "2": [1.5, -2], "1": [0, 0] } });
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let xml = r.text();
+    let node = concat!(
+        r#"<node id="2"><data key="labels">:Person</data>"#,
+        r#"<data key="x">1.5</data><data key="y">-2</data>"#
+    );
+    assert!(xml.contains(node), "{xml}");
+    assert!(!xml.contains(r#"<node id="1">"#) && !xml.contains("<edge "), "{xml}");
+    let summary = t.first_exported().await;
+    assert_eq!(
+        (summary["nodes"].clone(), summary["edges"].clone(), summary["part"].clone()),
+        (json!(1), json!(0), json!(true)),
+        "{summary}"
+    );
+
+    body["format"] = json!("csvNodes");
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let text = r.text();
+    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+    // The columns are those of the part: node 1's `aktiv` is not among them.
+    assert_eq!((lines[0], lines.len()), ("id,labels,alter,name,tags", 3), "{text}");
+    body["format"] = json!("json");
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert_eq!(r.json()["graph"]["nodes"].as_array().map(Vec::len), Some(1), "{}", r.text());
+    assert_eq!(r.json()["graph"]["paths"], json!([]), "{}", r.text());
+
+    // Positions alone leave the result whole.
+    body["format"] = json!("graphml");
+    body["graph"] = json!({ "positions": { "1": [3, 4] } });
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    let xml = r.text();
+    assert!(xml.contains(r#"<data key="x">3</data><data key="y">4</data>"#) && xml.contains("<edge "), "{xml}");
+
+    let many: Vec<String> = (0..=crate::analysis::export::SCOPE_MAX_NODES).map(|i| format!("n{i}")).collect();
+    body["graph"] = json!({ "nodes": many });
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.scope_too_large".into()));
+    assert_eq!(r.json()["error"]["field"], "graph", "{}", r.text());
+    // More positions than the bound are left out; the file is still made.
+    let places: serde_json::Map<String, Value> = (0..=crate::analysis::export::SCOPE_MAX_NODES)
+        .map(|i| (if i == 0 { "1".to_string() } else { format!("n{i}") }, json!([0, 0])))
+        .collect();
+    body["graph"] = json!({ "positions": places });
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert!(r.text().contains("<edge ") && !r.text().contains("\"x\">"), "{}", r.text());
+    body["graph"] = json!({ "nodes": ["1"], "more": true });
+    let r = t.post("/export", body, &t.owner).await;
+    assert_eq!(r.code(), "validation", "{}", r.text());
 }
 
 // ---- the audit log as a file ----

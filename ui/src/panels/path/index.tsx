@@ -1,4 +1,5 @@
 import { isRecord } from "../../api/client";
+import { loadAreas } from "../../i18n/i18n";
 import { type DataLink, parseDataLinks } from "../dataLinks";
 import { MAX_OPTION_TEXT, optionText as text } from "../graph/options";
 import { lazyPanel } from "../lazy";
@@ -30,7 +31,15 @@ export const pathPanel: PanelPlugin<PathOptions> = {
   description: "panels.describe.path",
   shapes: ["graph"],
   options: parsePathOptions,
-  Panel: lazyPanel(() => import("./PathPanel").then((m) => m.PathPanel)),
-  Editor: lazyPanel(() => import("./PathPanel").then((m) => m.PathEditor)),
+  Panel: lazyPanel(() =>
+    loadAreas("graphStyle", "graphCanvas")
+      .then(() => import("./PathPanel"))
+      .then((m) => m.PathPanel),
+  ),
+  Editor: lazyPanel(() =>
+    loadAreas("graphStyle", "graphCanvas")
+      .then(() => import("./PathPanel"))
+      .then((m) => m.PathEditor),
+  ),
   Preview: PathPreview,
 };

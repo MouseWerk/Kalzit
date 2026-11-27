@@ -2242,7 +2242,7 @@ entries. Hits are not audited.
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
 file, in the result's own shape: a frame as CSV, Excel or JSON, documents as NDJSON or JSON, a
-graph as GraphML or JSON, a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
+graph as GraphML, JSON or two CSV lists (nodes, edges), a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
 checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
 browser-side export would need the data in the browser first and could not be refused.
 
@@ -2338,6 +2338,26 @@ Graphs (results no graph step turned into a frame):
   U+FFFD. GraphML has no paths: their nodes and edges are in the file, the JSON file keeps them.
 - `json`: the result envelope, `{"shape": "graph", "graph": {...}}`, with nodes, edges, paths,
   schema and notices.
+- `csvNodes` and `csvEdges` (`text/csv`): the graph's two lists as the table CSV file is written
+  (byte order mark, CRLF, `language` decides separator and decimal mark, formula defusing).
+  Nodes: the columns `id` and `labels` (`:Person:Customer`), then one column per property; edges:
+  `id`, `type`, `source`, `target`, then one column per property. Property columns are in name
+  order and are the same for every row; a row without the property leaves the cell empty. A
+  property called like one of the file's own columns gets the header `property:<name>`. Typed
+  values are flattened: numbers, booleans and times as in the table CSV, lists and objects as
+  compact JSON text. The header is always the first line; a result cut at a limit is reported by
+  the panel and by the JSON file's `truncated`, not inside the CSV.
+- `graph` (`GraphExportScope`, graph results only; ignored for other shapes): `nodes` limits the
+  file to the nodes with these ids, the edges between them and the paths that stay whole (absent:
+  the whole result), `positions` (`{id: [x, y]}`) is where the nodes are drawn, written into
+  GraphML as `kalzit:x` and `kalzit:y`, as drawn (nodes inside a cluster have none). At most 50,000
+  ids (`422 validation`, reason `export.scope_too_large`, param `max`, `field: graph`); more
+  positions than that are left out and the file is made without them. The audit
+  entry says only that a part was exported, never which nodes. Both routes take `graph`.
+
+All graph formats except pictures need `data:export`; the server refuses the request without it
+(`403 forbidden`) whatever the client shows. Pictures of a graph (PNG, SVG, PDF) are made in the
+browser from what the panel shows and have no route.
 
 A format never converts one shape into another: `csv` or `xlsx` for documents or a graph, or
 `ndjson`/`graphml` for a frame, answers `422 validation` with reason `export.format_unsupported`
@@ -2767,6 +2787,29 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
+| `steps.algorithm_timeout` | `seconds` | a graph algorithm step computed longer than its time limit (`datasources.algorithm_timeout_secs`) and was stopped |
+| `steps.algorithm_too_large` | `nodes`, `maxNodes` | the result has more nodes than a graph algorithm step reads (`datasources.algorithm_max_nodes`, a fifth for the costly steps); nothing was computed |
+| `steps.algorithm_memory` | `neededMb`, `maxMb` | a graph algorithm step would need more memory than allowed (`datasources.algorithm_max_memory_bytes`), estimated before it starts |
+| `steps.algorithm_bound` | `param`, `max` | a parameter of a graph algorithm step (`maxCount`, `maxLength`, `k`, `maxPaths`, `topK`) is above the server or organization setting |
+| `steps.algorithm_answer` | | the database's algorithm library answered in a form Kalzit does not read; the step may run with `"place": "server"` |
+| `algorithm.no_library` | | the source has no graph algorithm library Kalzit uses, or not the one the step was planned for; the server computes the step itself, nothing to do |
+| `algorithm.unsupported` | `detail` | the source's algorithm library lacks the procedure or syntax the step needs (not installed, or an older version); the server computes the step itself and does not ask the library again for ten minutes; installing or updating the library lets the database compute it |
+| `algorithm.timeout` | `detail` | the source's algorithm library did not finish the step in time; the server computes the step itself and for ten minutes does not ask the library for that step on results of the same size or larger (by powers of two of nodes plus edges) |
+| `algorithm.local` | | the `reason` of a graph algorithm step that ran on the server (`steps[]`, not an error): the step needs only the result, which is already on the server |
+| `algorithm.not_in_library` | | step `reason`: the source's library has no read-only variant of the algorithm limited to the result |
+| `algorithm.enumerating` | | step `reason`: the step lists paths or cycles, which runs on the server with its count and length bounds |
+| `algorithm.not_cancellable` | | step `reason`: the source cannot stop a running library procedure (Memgraph), so the steps whose work grows fastest always run on the server |
+| `algorithm.option` | | step `reason`: the library does not offer an option the step uses (a label filter, a direction, ...) |
+| `algorithm.isolated_nodes` | | step `reason`: the library's projection leaves out nodes without edges, which would change the answer |
+| `algorithm.empty` | | step `reason`: nothing to compute, the result has no edges or no nodes |
+| `algorithm.library_failed` | | step `reason`: the library failed or did not answer in time; the server computed the same result |
+| `algorithm.place_server` | | step `reason`: the step asks to run on the server (`"place": "server"`) |
+| `algorithm.answer_unreadable` | | step `reason`: the library answered in a form Kalzit does not read; nothing is guessed, the step fails with `steps.algorithm_answer` and can run with `"place": "server"` |
+| `analysis.paths_cut` | `shown`, `total` | notice: only `shown` of `total` shortest paths are listed (the step's `maxCount`); a higher bound lists more |
+| `analysis.cycles_cut` | `limit` | notice: the cycle step stopped at `limit` cycles (its `maxCount`); there are more, how many is not counted |
+| `analysis.paths_too_long` | `maxLength`, `edges` | notice: no path fits within `maxLength` edges, the shortest has `edges`; a higher `maxLength` finds it |
+| `steps.weight_invalid` | `edge`, `key` | the weight property of an edge is no number of 0 or more |
+| `steps.node_missing` | `node` | a path or reachability step names a node the result does not have |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
 | `steps.field_missing` | `field` | the table has no such field |
 | `steps.field_ambiguous` | `field` | several fields have this name |
@@ -2808,6 +2851,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.no_queries` | | the panel has no query |
 | `export.frame_missing` | `frame` | no result with this reference id after the steps (`field: frame`) |
 | `export.format_unsupported` | `shape`, `format` | the format does not write results of this shape (`field: format`); a step makes a table |
+| `export.scope_too_large` | `max` | a graph's `graph` scope names more than `max` nodes (`field: graph`) |
 | `export.too_many_rows` | `max` | Excel takes at most `max` rows |
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.too_many_events` | `max` | an audit log export would hold more than `max` events (docs/api/settings-dashboards.md) |

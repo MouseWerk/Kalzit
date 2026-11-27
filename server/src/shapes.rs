@@ -349,6 +349,12 @@ pub struct GraphSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub notices: Option<Vec<Notice>>,
+    /// Edges a link prediction step suggests (`suggested: true`, with their `score`): no data of
+    /// the source, so apart from `edges`. They are not counted, no later step reads them, and
+    /// exports leave them out unless asked to take them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub suggested: Option<Vec<Edge>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -377,6 +383,16 @@ pub struct Edge {
 pub struct GraphPath {
     pub nodes: Vec<String>,
     pub edges: Vec<String>,
+    /// What a step computed for this path, by name (`aggregateAlong` over the paths).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, unknown>"))]
+    pub values: Option<BTreeMap<String, Value>>,
+}
+
+impl GraphPath {
+    pub fn new(nodes: Vec<String>, edges: Vec<String>) -> Self {
+        Self { nodes, edges, values: None }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -678,6 +694,31 @@ pub struct StepPlace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<ErrorBody>,
+    /// What a graph algorithm step found, in plain language the UI translates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub summary: Option<StepSummary>,
+    /// Why a graph algorithm step ran on the server (`algorithm.no_library`, ...; see
+    /// docs/api/settings-dashboards.md, "Graph algorithm steps").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+}
+
+impl StepPlace {
+    pub fn new(id: impl Into<String>, ran_in: RanIn) -> Self {
+        Self { id: id.into(), ran_in, error: None, summary: None, reason: None }
+    }
+}
+
+/// The plain-language summary of a step's result: a translation key (`analysis.summary.*`) and
+/// the values its text needs ("3 Communities, Modularität 0,41").
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StepSummary {
+    pub key: String,
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub values: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1020,7 +1061,9 @@ pub struct DistributionBin {
 }
 
 /// Export file formats (docs/api/datasources.md, "Export"), per result shape: frames as CSV, JSON
-/// or Excel, documents as JSON or NDJSON, graphs as GraphML or JSON.
+/// or Excel, documents as JSON or NDJSON, graphs as GraphML, JSON or two CSV lists: `csvNodes`
+/// (`id`, `labels`, then one column per property) and `csvEdges` (`id`, `type`, `source`,
+/// `target`, then one column per property).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1030,6 +1073,25 @@ pub enum ExportFormat {
     Xlsx,
     Ndjson,
     Graphml,
+    CsvNodes,
+    CsvEdges,
+}
+
+/// Which part of a graph result a file holds, and where its nodes are drawn (docs/api/
+/// datasources.md, "Export"). It narrows what the caller may export anyway; it never adds to it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphExportScope {
+    /// Only the nodes with these ids, the edges between them and the paths that stay whole.
+    /// Absent: the whole result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub nodes: Option<Vec<String>>,
+    /// Where nodes are drawn, by id, as `[x, y]`: written into GraphML files as `x` and `y`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, [number, number]>"))]
+    pub positions: Option<BTreeMap<String, [f64; 2]>>,
 }
 
 /// Decides the CSV separator and decimal mark: German `;` and `,`, English `,` and `.`.
@@ -1082,6 +1144,10 @@ pub struct ExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
     pub week_start: Option<String>,
+    /// For a graph result: the part of it to export and the drawn positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph: Option<GraphExportScope>,
 }
 
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: the stored
@@ -1116,6 +1182,10 @@ pub struct PanelExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
     pub week_start: Option<String>,
+    /// For a graph result: the part of it to export and the drawn positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph: Option<GraphExportScope>,
 }
 
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
@@ -1423,12 +1493,14 @@ mod tests {
             CacheInfo::decl(&cfg),
             CacheStatus::decl(&cfg),
             StepPlace::decl(&cfg),
+            StepSummary::decl(&cfg),
             RanIn::decl(&cfg),
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
             DatasourceAccess::decl(&cfg),
             ExportFormat::decl(&cfg),
+            GraphExportScope::decl(&cfg),
             ExportLanguage::decl(&cfg),
             ExportRequest::decl(&cfg),
             PanelExportRequest::decl(&cfg),

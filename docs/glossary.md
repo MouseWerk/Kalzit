@@ -64,6 +64,10 @@ catalog.
 | Verlauf (einer Ansicht) | History (of a view) | Die Schritte, mit denen eine Ansicht verändert wurde (Verschieben, Anheften, Ausblenden, Explorer-Schritte, Gruppen), höchstens 50; Rückgängig und Wiederholen gehen durch ihn. Zoom, Ausschnitt und Auswahl gehören nicht dazu. | |
 | Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
+| Regel (Stil) | Rule (style) | Ein Eintrag im Stil: wann (immer, Bedingung, je eindeutigem Wert), für welches Label oder welchen Kantentyp, dann was. Die untere Regel gewinnt auf demselben Ziel. Bei Alerts heißt „Regel“ die Alert-Regel. | |
+| Grundlage | Basis | Farbe, Größe und Form aus den Optionen des Graph-Panels (nach Label, nach Grad, je Label); gilt überall, wo keine Regel das Ziel setzt. | |
+| Zweites Zeichen | Second cue | Ein weiteres Merkmal neben der Farbe (Form, Abzeichen, Icon, Strichart), damit eine Aussage nicht nur an der Farbe hängt. | |
+| N von M | N of M | Ehrliche Mengenangabe, wo nicht alles gezeigt wird („12 von 48 Werten“), mit dem Grund. | |
 | Berechnetes Feld | Calculated field | Ein neues Feld aus einem Ausdruck über die Felder einer Tabelle. | Formelfeld |
 | Projektion | Projection | Sichtbarer Schritt, der eine Datenform in eine andere umwandelt. | Konvertierung |
 | Verlauf | History | Frühere Versionen oder Abfragen, wiederherstellbar. | Historie |
@@ -102,6 +106,17 @@ catalog.
 | Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
 | Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
 | API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
+| Umfang | Scope | Wie viel vom Graphen eine Exportdatei oder ein Bild enthält: Sichtbarer Ausschnitt, Ganzer Graph oder nur die Auswahl. | |
+| Sichtbarer Ausschnitt | Visible part | Umfang „so, wie das Panel es gerade zeigt“, am Rand abgeschnitten, mit den Beschriftungen, die es zeigt. | |
+| Ganzer Graph | Whole graph | Umfang „alle sichtbaren Knoten“, auch die, die die Kamera ausgelassen hat, in die Bildgröße eingepasst. | |
+| Knoten-CSV, Kanten-CSV | Nodes CSV, edges CSV | Die beiden Listen eines Graphen als CSV-Dateien; im Export-Menü „CSV: Knoten“ und „CSV: Kanten“. | |
+| Durchsichtig | Transparent | Hintergrund eines Bildes ohne Farbe (PNG, SVG); in PDF-Dateien ohne Hintergrundfläche. | |
+| Radial | Radial | Graph-Layout: Ringe um die gewählten Knoten, nach Entfernung. Ohne Auswahl steht der Knoten mit den meisten Kanten in der Mitte. | Strahlenförmig, Sternförmig |
+| Kreis | Circular | Graph-Layout: alle Knoten auf einem Kreis, geordnet nach Label, Name oder Zahl der Kanten. | Zirkulär |
+| Raster | Grid | Graph-Layout: Zeilen und Spalten, geordnet wie beim Kreis. | Gitter |
+| Koordinaten | Coordinates | Graph-Layout: zwei Zahl-Properties oder ein `point` bestimmen den Platz; Knoten ohne Wert stehen in einem Streifen. | Positionen |
+| Zeitachse | Timeline | Graph-Layout: Knoten nach einer Zeit-Property, je Label eine Bahn. | Timeline (im Deutschen) |
+| Neu anordnen | Arrange again | Ordnet die Knoten neu (Kräfte: anderer Start; Radial: um die aktuelle Auswahl); nur dort, wo das Ergebnis anders ausfallen kann. | Neu berechnen, Mischen |
 | Handbuch | Handbook | Kalzits Anleitung in der App: im Programm enthalten, durchsuchbar, nur zum Lesen; Hilfe > Handbuch und „Hilfe zu dieser Seite“. Die Dateien im Repository (`docs/guide`) heißen weiter „Anleitung“ / “guide”. | |
 | Logs | Logs | Die Ansicht und das Panel für Logzeilen aus Loki, Elasticsearch, OpenSearch und Dokument-Quellen. Eine Ansicht auf die Datenform `documents`, die Zeit, Text und Level liest; keine eigene Datenform und keine Projektion. In beiden Sprachen „Logs“. | |
 | Logzeile | Log line | Ein Eintrag in der Logs-Ansicht: ein Dokument mit Zeitpunkt, Text und, wenn vorhanden, Level. | |

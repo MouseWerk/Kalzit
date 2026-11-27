@@ -1271,5 +1271,21 @@
   "admin.shares.title": "Freigaben",
   "admin.shares.lead": "Alle öffentlichen Links und Snapshots dieser Organisation. Links in der Organisation sind normale Adressen mit Anmeldung und stehen nicht hier.",
   "admin.provisioning.title": "Provisioning",
-  "admin.provisioning.lead": "Was in dieser Organisation aus Dateien kommt, wann zuletzt angewendet wurde und wo der Server von den Dateien abweicht. Angewendet wird mit kalzit provision apply, nicht hier."
+  "admin.provisioning.lead": "Was in dieser Organisation aus Dateien kommt, wann zuletzt angewendet wurde und wo der Server von den Dateien abweicht. Angewendet wird mit kalzit provision apply, nicht hier.",
+  "admin.settings.datasources.algorithm_timeout_secs.label": "Zeitlimit je Graph-Schritt (Sekunden)",
+  "admin.settings.datasources.algorithm_timeout_secs.description": "Ein Schritt, der länger rechnet, wird gestoppt. Es gilt das kleinere aus diesem Wert und dem Zeitlimit der Abfrage. Organisationen können ihn nur senken.",
+  "admin.settings.datasources.algorithm_max_nodes.label": "Größter Graph für einen Schritt (Knoten)",
+  "admin.settings.datasources.algorithm_max_nodes.description": "Knoten im Ergebnis der Abfrage. Aufwendige Schritte (Betweenness, Closeness, Harmonic, Ähnlichkeit) rechnen bis zu einem Fünftel davon.",
+  "admin.settings.datasources.algorithm_max_memory_bytes.label": "Speicher je Graph-Schritt (Bytes)",
+  "admin.settings.datasources.algorithm_max_memory_bytes.description": "Für Schritte, die im Kalzit-Server rechnen; geschätzt, bevor der Schritt beginnt.",
+  "admin.settings.datasources.algorithm_max_parallel.label": "Graph-Schritte gleichzeitig im Server",
+  "admin.settings.datasources.algorithm_max_parallel.description": "Je Kalzit-Server. Weitere warten auf einen freien Platz, höchstens bis ihr Zeitlimit abläuft.",
+  "admin.settings.datasources.algorithm_max_results.label": "Höchstzahl beim Aufzählen",
+  "admin.settings.datasources.algorithm_max_results.description": "Alle kürzesten Pfade, k kürzeste Pfade und Zyklen hören hier auf und sagen es.",
+  "admin.settings.datasources.algorithm_max_length.label": "Höchstlänge beim Aufzählen (Kanten)",
+  "admin.settings.datasources.algorithm_max_length.description": "Für k kürzeste Pfade und Zyklen. Die Schritte bieten keinen größeren Wert an.",
+  "admin.settings.datasources.algorithm_max_top_k.label": "Höchstens ähnliche Knoten je Knoten",
+  "admin.settings.datasources.algorithm_max_top_k.description": "Das Top-k der Ähnlichkeits-Schritte. Höchstens 100.",
+  "admin.settings.datasources.algorithm_max_suggestions.label": "Höchstens vorgeschlagene Kanten je Schritt",
+  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500."
 }

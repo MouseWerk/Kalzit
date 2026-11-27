@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { DownloadedFile } from "../api/client";
-import type { ExportFormat, ExportLanguage } from "../api/generated/shapes";
+import type { ExportFormat, ExportLanguage, GraphExportScope } from "../api/generated/shapes";
 import { FormAlert } from "../components/FormAlert";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { errorMessage } from "../features/dashboards/ui/errors";
@@ -16,6 +16,8 @@ export interface ExportChoice {
   language: ExportLanguage;
   /** The result to export, by reference id; absent when there is only one. */
   frame?: string;
+  /** For a graph: the part of it to export and where its nodes are drawn. */
+  graph?: GraphExportScope;
 }
 
 /** The shape a result has after the steps; it decides the formats a file can have. */
@@ -34,7 +36,7 @@ export interface ExportResult {
 export const EXPORT_FORMATS: Readonly<Record<ExportShape, readonly ExportFormat[]>> = {
   frame: ["csv", "xlsx", "json"],
   documents: ["ndjson", "json"],
-  graph: ["graphml", "json"],
+  graph: ["graphml", "json", "csvNodes", "csvEdges"],
   trace: ["json"],
 };
 
@@ -163,7 +165,7 @@ export function ExportDialog({ results, note, run, onClose }: ExportDialogProps)
             </label>
           ))}
         </fieldset>
-        {format === "csv" ? (
+        {format === "csv" || format === "csvNodes" || format === "csvEdges" ? (
           <fieldset className="radio-group">
             <legend className="field__label">{t("analysis.export.language")}</legend>
             {LANGUAGES.map((l) => (

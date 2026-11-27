@@ -32,6 +32,8 @@ import {
   SHOW_WHEN,
   withEntry,
 } from "./options";
+import { StyleSection } from "./style/StyleSection";
+import { basisText } from "./style/usePanelStyle";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
 import { Select } from "../../components/Select";
@@ -391,6 +393,13 @@ export function GraphEditor({
           choices={SHOW_WHEN}
           text={(when) => t(`graph.options.when.${when}`)}
           onChange={(edgeLabels) => set({ edgeLabels })}
+        />
+      </Group>
+      <Group title={t("graphStyle.title")}>
+        <StyleSection
+          rules={options.style}
+          onChange={(style) => set({ style })}
+          basis={basisText(t, options)}
         />
       </Group>
       <Group title={t("graph.options.group.labels")}>

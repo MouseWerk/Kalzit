@@ -37,6 +37,11 @@ pub struct Control {
     text_left: Cell<usize>,
     max_cells: usize,
     calendar: expr::Calendar,
+    /// The bounds of graph algorithm steps (`algo::AlgoLimits`, from the server settings).
+    algorithms: super::algo::AlgoLimits,
+    /// Whether the caller already holds a place among the algorithm steps computing at once
+    /// (`algo::acquire`).
+    algorithm_slot: bool,
 }
 
 impl Default for Control {
@@ -54,7 +59,29 @@ impl Control {
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
             max_cells: MAX_CELLS,
             calendar: expr::Calendar::default(),
+            algorithms: super::algo::AlgoLimits::default(),
+            algorithm_slot: false,
         }
+    }
+
+    /// The same bounds, with graph algorithms bounded by `limits`.
+    pub fn with_algorithm_limits(self, limits: super::algo::AlgoLimits) -> Self {
+        Self { algorithms: limits, ..self }
+    }
+
+    /// The bounds of graph algorithm steps.
+    pub fn algorithm_limits(&self) -> super::algo::AlgoLimits {
+        self.algorithms
+    }
+
+    /// The same bounds, saying whether the caller holds an algorithm place already.
+    pub fn with_algorithm_slot(self, held: bool) -> Self {
+        Self { algorithm_slot: held, ..self }
+    }
+
+    /// Whether the caller holds an algorithm place (`algo::acquire`).
+    pub fn algorithm_slot(&self) -> bool {
+        self.algorithm_slot
     }
 
     /// The same bounds, with calculated fields reading times in `calendar`.
@@ -71,6 +98,8 @@ impl Control {
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
             max_cells: MAX_CELLS,
             calendar: expr::Calendar::default(),
+            algorithms: super::algo::AlgoLimits::default(),
+            algorithm_slot: false,
         }
     }
 
@@ -597,6 +626,19 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         | StepKind::SharedNeighbours { .. }
         | StepKind::Degree { .. }
         | StepKind::FilterGraph { .. }
+        | StepKind::Centrality { .. }
+        | StepKind::Communities { .. }
+        | StepKind::KCore { .. }
+        | StepKind::Triangles { .. }
+        | StepKind::Similarity { .. }
+        | StepKind::LinkPrediction { .. }
+        | StepKind::Paths { .. }
+        | StepKind::Reachable { .. }
+        | StepKind::Bridges { .. }
+        | StepKind::ArticulationPoints { .. }
+        | StepKind::Cycles { .. }
+        | StepKind::MergeNodes { .. }
+        | StepKind::AggregateAlong { .. }
         | StepKind::SpanTable { .. }
         | StepKind::TraceTable { .. }
         | StepKind::ServiceMap { .. }

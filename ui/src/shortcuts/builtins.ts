@@ -39,6 +39,12 @@ export const BUILTIN_AREAS: readonly AreaDef[] = [
     focus: ".graph__stage",
   },
   {
+    id: "graphStyle",
+    title: "shortcuts.area.graphStyle",
+    detail: "shortcuts.area.graphStyleDetail",
+    page: ".graph-style-editor",
+  },
+  {
     id: "traces",
     title: "shortcuts.area.traces",
     detail: "shortcuts.area.tracesDetail",
@@ -464,6 +470,33 @@ export const BUILTIN_SHORTCUTS = [
   { id: "graph.zoomOut", area: "graph", keys: [combo("-")], partOf: "graph.zoom" },
   { id: "graph.zoomReset", area: "graph", keys: [combo("0")], partOf: "graph.zoom" },
   { id: "graph.view", area: "graph", keys: [combo("A")], label: "shortcuts.graph.view" },
+  // The layout menu's "Arrange again".
+  {
+    id: "graph.rearrange",
+    area: "graph",
+    keys: [combo("Shift", "L")],
+    label: "shortcuts.graph.rearrange",
+  },
+
+  // A graph panel's style rules, with the focus on a rule's header
+  {
+    id: "graphStyle.move",
+    area: "graphStyle",
+    keys: [keySet(["Alt"], ...ARROWS_UD)],
+    label: "shortcuts.graphStyle.move",
+  },
+  {
+    id: "graphStyle.moveUp",
+    area: "graphStyle",
+    keys: [combo("Alt", "ArrowUp")],
+    partOf: "graphStyle.move",
+  },
+  {
+    id: "graphStyle.moveDown",
+    area: "graphStyle",
+    keys: [combo("Alt", "ArrowDown")],
+    partOf: "graphStyle.move",
+  },
 
   // Traces, with the focus on the waterfall
   {
