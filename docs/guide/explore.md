@@ -200,7 +200,7 @@ step you add opens at once.
 
 When the query answers a graph, "Add step" offers graph steps first: "Count per label",
 "Count per edge type", "Degree distribution", "Shared neighbours" (such as customers who bought
-the same products), "Top N by degree", "Calculate degree" (the degree as a node property) and
+the same products), "Top N by degree", "Degree" (the degree as a node property) and
 "Filter subgraph" (these three stay a graph) and "Turn into a table" (nodes or edges with the
 properties you pick as rows). Each step shows the shape it reads and makes ("Graph → Table") and
 where it runs: "Runs in Neo4j (Cypher)" for the first graph step of a Neo4j or Memgraph query,
@@ -208,6 +208,11 @@ which then counts over the whole result, not only the nodes drawn; "Runs on the 
 others. "Shapes of the steps" under the list follows the result from step to step. Table steps
 such as "Group" become available once a step made a table. The drawing keeps showing the query's
 own graph.
+
+The catalog also holds the graph algorithms: centrality, communities, similarity, paths,
+structures, link prediction, merging nodes and aggregating along neighbours or paths. They compute
+in the database's library or on the Kalzit server and say which, with one sentence about their
+result; see [Graph algorithms and paths](graph-algorithms.md).
 
 ## Add to dashboard
 

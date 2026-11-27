@@ -1,5 +1,5 @@
 import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
-import type { GraphPalette, RampName } from "./colors";
+import { type GraphPalette, hex, mix, type RampName, toRgb } from "./colors";
 import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
 import { SHAPE_SCALE } from "./shapes";
@@ -61,11 +61,36 @@ export interface DrawState {
   drawStyle: DrawStyle;
   /** What the style rules of the panel set, by view index (style/apply.ts); absent without rules. */
   styled?: StyledView | null | undefined;
+  /** A path or a quick action's answer, held up while everything else is dimmed. */
+  emphasis?: Emphasis | null | undefined;
+}
+
+/**
+ * What a quick action holds up (board Graph082, frames 9 and 10): its nodes and edges stay lit,
+ * the edges of the chosen path are drawn strong in the text color, everything else is dimmed.
+ * Never the accent color: it is a state of the view, not a property of the data.
+ */
+export interface Emphasis {
+  /** View node indexes. */
+  nodes: ReadonlySet<number>;
+  /** View edge indexes, drawn lit. */
+  edges: ReadonlySet<number>;
+  /** View edge indexes of the chosen path, drawn strong. */
+  strong: ReadonlySet<number>;
 }
 
 /** Whether something is singled out, so the rest is dimmed: a selected node or edge. */
-export function singlesOut(p: Pick<DrawState, "selected" | "selectedEdges">): boolean {
-  return p.selected.size > 0 || (p.selectedEdges?.size ?? 0) > 0;
+export function singlesOut(p: Pick<DrawState, "selected" | "selectedEdges" | "emphasis">): boolean {
+  return p.selected.size > 0 || (p.selectedEdges?.size ?? 0) > 0 || (p.emphasis ?? null) !== null;
+}
+
+/** Whether a node is lit: nothing singled out, or it is selected, a neighbour or held up. */
+export function nodeLit(
+  index: number,
+  p: Pick<DrawState, "selected" | "selectedEdges" | "neighbours" | "emphasis">,
+): boolean {
+  if (p.emphasis !== null && p.emphasis !== undefined) return p.emphasis.nodes.has(index);
+  return !singlesOut(p) || p.selected.has(index) || p.neighbours.has(index);
 }
 
 /** A selected edge is drawn this much wider. */
@@ -92,6 +117,38 @@ function nodeColor(
   );
 }
 
+/**
+ * A color by value: the tone mixed toward the canvas color the less saturated it is (`shade` 1 is
+ * the tone itself). A color that cannot be read stays as it is.
+ */
+export function shaded(color: string, shade: number | undefined, background: string): string {
+  if (shade === undefined || shade >= 1) return color;
+  const key = `${color}|${shade}|${background}`;
+  const known = SHADES.get(key);
+  if (known !== undefined) return known;
+  const tone = rgbOf(color);
+  const canvas = rgbOf(background);
+  const out = tone === null || canvas === null ? color : hex(mix(tone, canvas, 1 - shade));
+  // Few tones and steps per theme: the renderer asks for the same ones on every frame.
+  if (SHADES.size > 4096) SHADES.clear();
+  SHADES.set(key, out);
+  return out;
+}
+
+const SHADES = new Map<string, string>();
+
+/** A color as RGB: hex and rgb() read directly, anything else through the canvas (`toRgb`). */
+function rgbOf(color: string): [number, number, number] | null {
+  const short = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (short !== null) {
+    const n = Number.parseInt(short[1] as string, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgb = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(color.trim());
+  if (rgb !== null) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  return toRgb(color);
+}
+
 /** A selected node is drawn this much larger. */
 export const SELECTED_SCALE = 1.4;
 
@@ -103,7 +160,14 @@ export function labelWish(
   index: number,
   p: Pick<
     DrawState,
-    "view" | "visibility" | "ranks" | "selected" | "neighbours" | "selectedEdges" | "drawStyle"
+    | "view"
+    | "visibility"
+    | "ranks"
+    | "selected"
+    | "neighbours"
+    | "selectedEdges"
+    | "drawStyle"
+    | "emphasis"
   >,
   ratio: number,
   budget: number = LABEL_BUDGET,
@@ -111,6 +175,10 @@ export function labelWish(
   const node = p.view.nodes[index];
   if (node === undefined || p.visibility.nodes[index] === 0) return "hidden";
   if (p.selected.has(index)) return "visible";
+  // A path's nodes carry their name tags; the rest of the drawing is dimmed and unnamed.
+  if (p.emphasis !== null && p.emphasis !== undefined) {
+    return p.emphasis.nodes.has(index) ? "visible" : "hidden";
+  }
   if (singlesOut(p) && !p.neighbours.has(index)) return "hidden";
   const mode = p.drawStyle.labels;
   if (mode === "always") return "visible";
@@ -142,15 +210,14 @@ export function nodeDisplay(
     return { ...data, visibility: "hidden" };
   }
   const isSelected = p.selected.has(index);
-  const selecting = singlesOut(p);
-  const lit = !selecting || isSelected || p.neighbours.has(index);
+  const lit = nodeLit(index, p);
   // What a rule set wins over the basis; a rule's size is in px, like the panel's size range.
   const look = p.styled?.nodes[index];
   const shape = look?.shape ?? node.shape;
   const color =
     look?.color === undefined
       ? nodeColor(node.group, lit, p)
-      : ruleColor(p.palette, look.color, lit);
+      : shaded(ruleColor(p.palette, look.color, lit), look.shade, p.palette.background);
   const labelVisibility = labelWish(index, p, ratio, budget);
   const size = (look?.size ?? data.size) * SHAPE_SCALE[shape] * nodeScale;
   const caption = look?.caption ?? data.label;
@@ -205,11 +272,17 @@ function touches(edge: { source: number; target: number }, selected: ReadonlySet
  */
 export function edgeColor(
   edge: { source: number; target: number },
-  p: Pick<DrawState, "view" | "palette" | "selected" | "selectedEdges">,
+  p: Pick<DrawState, "view" | "palette" | "selected" | "selectedEdges" | "emphasis">,
   index = -1,
   rule?: StyleColor,
 ): string {
   if (p.selectedEdges?.has(index) === true) return p.palette.text;
+  if (p.emphasis !== null && p.emphasis !== undefined) {
+    if (p.emphasis.strong.has(index)) return p.palette.text;
+    const held = p.emphasis.edges.has(index);
+    if (rule !== undefined) return ruleColor(p.palette, rule, held);
+    return held ? p.palette.edge : p.palette.edgeDimmed;
+  }
   const lit = !singlesOut(p) || touches(edge, p.selected) || !dimsEdges(p.view);
   if (rule !== undefined) return ruleColor(p.palette, rule, lit);
   return lit ? p.palette.edge : p.palette.edgeDimmed;
@@ -225,7 +298,7 @@ export function edgeDisplay(
   if (edge === undefined || p.visibility.edges[index] === 0) {
     return { ...data, visibility: "hidden" };
   }
-  const isSelected = p.selectedEdges?.has(index) === true;
+  const isSelected = p.selectedEdges?.has(index) === true || p.emphasis?.strong.has(index) === true;
   const near = isSelected || touches(edge, p.selected);
   const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
   // What a rule set wins over the panel's options: its arrow and its text show always.

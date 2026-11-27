@@ -2862,6 +2862,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 | `export.user_busy` | | `503 busy`: the user has an export running (making or sending its file) |
 | `export.disk_space` | `free`, `needed` | `503 busy`: too little free disk space to make the file |
+| `graph_actions.busy` | | `503 busy`: as many quick actions of the graph canvas as the server runs at once are running; try again shortly |
+| `graph_actions.user_busy` | | `503 busy`: the user has a quick action of the graph canvas running |
+| `graph_actions.too_large` | `maxNodes`, `maxEdges` | the graph sent for a quick action has more nodes or edges than a canvas holds |
 | `export.stalled` | | audit only (`data.export_aborted`): the client took no chunk for 60 s |
 | `export.download_too_long` | | audit only: the download needed more than 15 minutes |
 | `export.client_gone` | | audit only: the client went away during the download |

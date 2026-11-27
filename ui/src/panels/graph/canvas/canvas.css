@@ -269,6 +269,120 @@
     font-size: var(--font-size-sm);
   }
 
+  /* The quick actions above the selection bar (board Graph082, frame 8). */
+  .graph-canvas__middle {
+    grid-column: 2;
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .graph-canvas__middle > * {
+    pointer-events: auto;
+  }
+
+  .graph-quick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+    font-size: var(--font-size-sm);
+  }
+
+  .graph-quick__menu {
+    position: relative;
+  }
+
+  .graph-quick__choices {
+    position: absolute;
+    inset-block-end: calc(100% + var(--space-1));
+    inset-inline-start: 0;
+    display: grid;
+    gap: var(--space-half);
+    min-width: max-content;
+    padding: var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .graph-quick__choices > .button {
+    justify-content: start;
+    min-height: 1.5rem;
+  }
+
+  .graph-quick__choices > .button[aria-disabled="true"] {
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .graph-quick__why {
+    margin-inline-start: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  .graph-quick__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-quick__sentence {
+    margin: 0;
+  }
+
+  .graph-quick__list {
+    display: grid;
+    gap: var(--space-half);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* The chosen path: a quiet neutral tint and weight, never an accent (board, decision 3). */
+  .graph-quick__item {
+    width: 100%;
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .graph-quick__item[aria-pressed="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-quick__item:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .graph-quick__rank {
+    display: inline-block;
+    min-width: 1.5em;
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-quick__measures,
+  .graph-quick__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
   .graph-selbar__count {
     padding-inline-end: var(--space-1);
     font-weight: var(--font-weight-medium);

@@ -6,6 +6,7 @@ import { useI18n } from "../i18n/i18n";
 import { isComposingKey } from "../lib/ime";
 import { readPreference, writePreference } from "../lib/storage";
 import { formatValue } from "../panels/frame";
+import { GRAPH_GROUPS, type GraphGroup } from "./algoSteps";
 import type { StepType } from "./steps";
 import "../features/dashboards/ui/shared.css";
 import "../components/iconButton.css";
@@ -40,6 +41,8 @@ export type CatalogGroup = (typeof CATALOG_GROUPS)[number];
 
 /** One kind of step in the catalog. */
 export interface CatalogEntry {
+  /** What the catalog tells entries apart by: the type, or a type with its measure ("centrality.pageRank"). */
+  key: string;
   type: StepType;
   label: string;
   about: string;
@@ -51,6 +54,12 @@ export interface CatalogEntry {
   to: ShapeName;
   /** The group of a table step. */
   group?: CatalogGroup;
+  /** The group of a graph step (board Graph082, frame 1). */
+  graphGroup?: GraphGroup;
+  /** The name of that group, in the person's language. */
+  groupLabel?: string;
+  /** Where the step computes with the chosen source, in one or two words next to its name. */
+  whereShort?: string;
   /** Marked "new". */
   isNew?: boolean;
   /** Where the step runs, in words. */
@@ -109,19 +118,19 @@ export function searchEntries(entries: readonly CatalogEntry[], query: string): 
 const RECENT_KEY = "kalzit.steps.recent";
 const MAX_RECENT = 5;
 
-/** The step types added last, newest first (this browser only). */
-export function recentSteps(): StepType[] {
+/** The catalog entries (their keys) added last, newest first (this browser only). */
+export function recentSteps(): string[] {
   try {
     const parsed: unknown = JSON.parse(readPreference(RECENT_KEY) ?? "[]");
     return Array.isArray(parsed)
-      ? parsed.filter((v): v is StepType => typeof v === "string").slice(0, MAX_RECENT)
+      ? parsed.filter((v): v is string => typeof v === "string").slice(0, MAX_RECENT)
       : [];
   } catch {
     return [];
   }
 }
 
-function rememberStep(type: StepType): void {
+function rememberStep(type: string): void {
   const next = [type, ...recentSteps().filter((t) => t !== type)].slice(0, MAX_RECENT);
   writePreference(RECENT_KEY, JSON.stringify(next));
 }
@@ -153,8 +162,8 @@ export function StepCatalog({
   before: BeforeStep;
   /** The first rows of the result before the step, for the preview. */
   sample: Frame | undefined;
-  previewOf: (type: StepType) => StepPreview;
-  onAdd: (type: StepType) => void;
+  previewOf: (key: string) => StepPreview;
+  onAdd: (key: string) => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -202,9 +211,9 @@ function CatalogDialog({
   shapes: readonly ShapeName[];
   before: BeforeStep;
   sample: Frame | undefined;
-  previewOf: (type: StepType) => StepPreview;
+  previewOf: (key: string) => StepPreview;
   onClose: () => void;
-  onAdd: (type: StepType) => void;
+  onAdd: (key: string) => void;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -218,15 +227,21 @@ function CatalogDialog({
   const hits = searchEntries(ofShape, query);
   // Without a search the list follows the groups; with one, the best hits come first.
   const grouped = !searching && shape === "frame";
+  const graphGrouped = !searching && shape === "graph" && hits.some((h) => h.entry.graphGroup);
   const ordered: Hit[] = grouped
     ? CATALOG_GROUPS.flatMap((g) => hits.filter((h) => h.entry.group === g))
-    : hits;
+    : graphGrouped
+      ? [
+          ...GRAPH_GROUPS.flatMap((g) => hits.filter((h) => h.entry.graphGroup === g)),
+          ...hits.filter((h) => h.entry.graphGroup === undefined),
+        ]
+      : hits;
   const current = ordered[Math.min(active, ordered.length - 1)]?.entry;
   // The previews of all steps on the sample, so the ones that do not fit show dimmed.
   // The previews of all steps on the sample, worked out once when the catalog opens (the data
   // does not change under an open dialog), so the ones that do not fit show dimmed.
-  const [previews] = useState(() => new Map(entries.map((e) => [e.type, previewOf(e.type)])));
-  const optionId = (type: StepType) => `${id}-${type}`;
+  const [previews] = useState(() => new Map(entries.map((e) => [e.key, previewOf(e.key)])));
+  const optionId = (key: string) => `${id}-${key.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 
   // A new search starts at its best hit.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the active entry resets when the list changes
@@ -234,7 +249,7 @@ function CatalogDialog({
 
   function add(entry: CatalogEntry | undefined) {
     if (entry === undefined || entry.unavailable !== undefined) return;
-    onAdd(entry.type);
+    onAdd(entry.key);
   }
 
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -285,7 +300,7 @@ function CatalogDialog({
   const option = (hit: Hit) => {
     const { entry } = hit;
     const index = ordered.indexOf(hit);
-    const preview = previews.get(entry.type);
+    const preview = previews.get(entry.key);
     const dim = entry.unavailable !== undefined || preview?.kind === "error";
     const reason =
       !searching || hit.reason === "name"
@@ -296,13 +311,13 @@ function CatalogDialog({
     return (
       // biome-ignore lint/a11y/useKeyWithClickEvents: the search field leads the list by keyboard (aria-activedescendant)
       <div
-        key={entry.type}
-        id={optionId(entry.type)}
+        key={entry.key}
+        id={optionId(entry.key)}
         role="option"
         tabIndex={-1}
         aria-selected={index === active}
         aria-disabled={entry.unavailable !== undefined ? true : undefined}
-        aria-describedby={`${optionId(entry.type)}-about`}
+        aria-describedby={`${optionId(entry.key)}-about`}
         className="step-catalog__option"
         data-dim={dim ? "true" : undefined}
         onPointerEnter={() => setActive(index)}
@@ -312,7 +327,10 @@ function CatalogDialog({
         {entry.isNew === true ? (
           <span className="step-catalog__new">{t("analysis.catalog.new")}</span>
         ) : null}
-        <span className="step-catalog__about" id={`${optionId(entry.type)}-about`}>
+        {entry.whereShort === undefined ? null : (
+          <span className="step-catalog__where">{entry.whereShort}</span>
+        )}
+        <span className="step-catalog__about" id={`${optionId(entry.key)}-about`}>
           {entry.unavailable ?? entry.about}
         </span>
         {reason === null ? null : <span className="step-catalog__reason">{reason}</span>}
@@ -354,6 +372,24 @@ function CatalogDialog({
     ) : null;
   if (ordered.length === 0) {
     list = null;
+  } else if (graphGrouped) {
+    const groups: (GraphGroup | "other")[] = [...GRAPH_GROUPS, "other"];
+    list = groups.map((g) => {
+      const inGroup = ordered.filter((h) => (h.entry.graphGroup ?? "other") === g);
+      if (inGroup.length === 0) return null;
+      return (
+        // biome-ignore lint/a11y/useSemanticElements: a group of options inside a listbox
+        <div key={g} role="group" aria-labelledby={`${id}-gg-${g}`} className="step-catalog__group">
+          <div className="step-catalog__heading" id={`${id}-gg-${g}`} role="presentation">
+            {t("analysis.catalog.groupCount", {
+              group: inGroup[0]?.entry.groupLabel ?? "",
+              count: inGroup.length,
+            })}
+          </div>
+          <div className="step-catalog__grid">{inGroup.map(option)}</div>
+        </div>
+      );
+    });
   } else if (grouped) {
     list = CATALOG_GROUPS.map((g) => {
       const inGroup = ordered.filter((h) => h.entry.group === g);
@@ -376,7 +412,7 @@ function CatalogDialog({
   }
 
   const recentHere = recent
-    .map((type) => ofShape.find((e) => e.type === type))
+    .map((key) => ofShape.find((e) => e.key === key))
     .filter((e): e is CatalogEntry => e !== undefined && e.unavailable === undefined);
 
   return (
@@ -412,7 +448,7 @@ function CatalogDialog({
             placeholder={t("analysis.catalog.searchHint")}
             aria-label={t("analysis.catalog.search")}
             aria-controls={`${id}-list`}
-            aria-activedescendant={current === undefined ? undefined : optionId(current.type)}
+            aria-activedescendant={current === undefined ? undefined : optionId(current.key)}
             data-autofocus
             onChange={(event) => setQuery(event.currentTarget.value)}
             onKeyDown={onSearchKeyDown}
@@ -467,7 +503,7 @@ function CatalogDialog({
                 <div className="step-catalog__chips" role="group" aria-labelledby={`${id}-recent`}>
                   {recentHere.map((e) => (
                     <button
-                      key={e.type}
+                      key={e.key}
                       type="button"
                       className="button button--ghost button--small step-catalog__chip"
                       onClick={() => add(e)}
@@ -492,7 +528,7 @@ function CatalogDialog({
             <CatalogPreview
               entry={current}
               sample={sample}
-              preview={previews.get(current.type) ?? { kind: "noData" }}
+              preview={previews.get(current.key) ?? { kind: "noData" }}
             />
           )}
         </div>

@@ -216,9 +216,9 @@
   "analysis.chain.off": "{step} is off",
   "analysis.chain.unknown": "not run yet",
   "analysis.preview.graph": "Graph {name}: {size}",
-  "analysis.kind.degree": "Calculate degree",
+  "analysis.kind.degree": "Degree",
   "analysis.kind.filterGraph": "Filter subgraph",
-  "analysis.about.degree": "Edges per node as a new property, by direction.",
+  "analysis.about.degree": "Edges per node as a new property, by direction, edge type and weight.",
   "analysis.about.filterGraph": "Nodes by label or property, edges by type; stays a graph.",
   "analysis.graph.property": "Name of the new property",
   "analysis.graph.fields.degree": "Stays a graph; each node gets its degree. A loop counts twice.",
@@ -423,5 +423,6 @@
   "analysis.stat.variance": "Variance",
   "analysis.stat.firstRow": "First row",
   "analysis.stat.lastRow": "Last row",
-  "analysis.stat.pN": "Percentile {n}"
+  "analysis.stat.pN": "Percentile {n}",
+  "analysis.keywords.degree": "important, count, neighbours"
 }

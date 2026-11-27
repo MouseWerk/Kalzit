@@ -216,9 +216,9 @@
   "analysis.chain.off": "{step} ist aus",
   "analysis.chain.unknown": "noch nicht gelaufen",
   "analysis.preview.graph": "Graph {name}: {size}",
-  "analysis.kind.degree": "Grad berechnen",
+  "analysis.kind.degree": "Grad",
   "analysis.kind.filterGraph": "Teilgraph filtern",
-  "analysis.about.degree": "Kanten je Knoten als neue Property, wählbar nach Richtung.",
+  "analysis.about.degree": "Kanten je Knoten als neue Property, nach Richtung, Kantentyp und Gewicht.",
   "analysis.about.filterGraph": "Knoten nach Label oder Property, Kanten nach Typ; bleibt ein Graph.",
   "analysis.graph.property": "Name der neuen Property",
   "analysis.graph.fields.degree": "Bleibt ein Graph; jeder Knoten bekommt seinen Grad. Eine Schleife zählt doppelt.",
@@ -423,5 +423,6 @@
   "analysis.stat.variance": "Varianz",
   "analysis.stat.firstRow": "Erste Zeile",
   "analysis.stat.lastRow": "Letzte Zeile",
-  "analysis.stat.pN": "{n}. Perzentil"
+  "analysis.stat.pN": "{n}. Perzentil",
+  "analysis.keywords.degree": "wichtig, Anzahl, Nachbarn"
 }

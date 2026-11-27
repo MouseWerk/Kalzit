@@ -216,7 +216,7 @@ den Schritt-Katalog mit Suche und Vorschau; ein hinzugefügter Schritt öffnet s
 
 Liefert die Abfrage einen Graphen, bietet „Schritt hinzufügen“ zuerst Graph-Schritte an: „Anzahl
 je Label“, „Anzahl je Kantentyp“, „Gradverteilung“, „Gemeinsame Nachbarn“ (etwa Kunden, die
-dieselben Produkte gekauft haben), „Top-N nach Grad“, „Grad berechnen“ (der Grad als Property des
+dieselben Produkte gekauft haben), „Top-N nach Grad“, „Grad“ (der Grad als Property des
 Knotens) und „Teilgraph filtern“ (diese drei bleiben ein Graph) sowie „In Tabelle umwandeln“
 (Knoten oder Kanten mit den gewählten Properties als Zeilen). Jeder Schritt zeigt die Form, die
 er liest und erzeugt („Graph → Tabelle“), und wo er läuft: „Läuft in Neo4j (Cypher)“ beim ersten
@@ -225,6 +225,11 @@ nur über die gezeichneten Knoten; „Im Server“ bei den anderen. „Formen de
 Liste verfolgt das Ergebnis von Schritt zu Schritt. Tabellenschritte wie „Gruppieren“ stehen zur
 Verfügung, sobald ein Schritt eine Tabelle erzeugt hat. Die Zeichnung zeigt weiter den eigenen
 Graphen der Abfrage.
+
+Der Katalog enthält auch die Graph-Algorithmen: Zentralität, Communities, Ähnlichkeit, Pfade,
+Strukturen, Kanten-Vorhersage, Knoten zusammenfassen und Entlang aggregieren. Sie rechnen in der
+Bibliothek der Datenbank oder im Kalzit-Server, sagen wo, und fassen ihr Ergebnis in einem Satz
+zusammen; siehe [Graph-Algorithmen und Pfade](graph-algorithms.md).
 
 ## Zum Dashboard hinzufügen
 

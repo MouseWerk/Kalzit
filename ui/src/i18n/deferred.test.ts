@@ -201,6 +201,12 @@ describe("keys of a deferred area", () => {
       "panels/graph/canvas/Minimap.tsx",
       "panels/graph/canvas/SearchBox.tsx",
       "panels/graph/canvas/ToolStrip.tsx",
+      "panels/graph/canvas/QuickActions.tsx",
+    ],
+    graphSteps: [
+      "analysis/graphCatalog.ts",
+      "analysis/AlgoStepForm.tsx",
+      "analysis/AlgoOutcome.tsx",
     ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
   };
@@ -248,6 +254,7 @@ describe("keys of a deferred area", () => {
     handbook: 1,
     graphStyle: 8,
     graphCanvas: 6,
+    graphSteps: 1,
   };
 
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {

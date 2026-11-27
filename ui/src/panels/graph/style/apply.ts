@@ -53,6 +53,8 @@ export interface NodeLook {
   size?: number;
   shape?: DrawnShape;
   color?: StyleColor;
+  /** How saturated the color draws, 0.25 to 1 (a color by value); absent: fully. */
+  shade?: number;
   icon?: string;
   border?: "solid" | "dashed";
   badge?: string;
@@ -98,6 +100,7 @@ export function nodeLook(style: ItemStyle, shape: DrawnShape): NodeLook {
   // A color the palette hands out a second time comes with another shape, unless a rule set one.
   else if (style.shifted) look.shape = shiftedShape(shape);
   if (set.color !== undefined) look.color = set.color;
+  if (set.color !== undefined && set.shade !== undefined) look.shade = set.shade;
   if (set.icon !== undefined) look.icon = set.icon;
   if (set.border === "solid" || set.border === "dashed") look.border = set.border;
   if (set.badge !== undefined) look.badge = set.badge;

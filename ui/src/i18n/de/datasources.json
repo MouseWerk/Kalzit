@@ -1564,5 +1564,8 @@
   "datasources.reason.steps.pattern": "{pattern} ist kein regulärer Ausdruck, den dieser Schritt lesen kann.",
   "datasources.reason.steps.filter_value": "„{value}“ lässt sich nicht mit dem Feld {field} vergleichen.",
   "datasources.reason.steps.stack_types": "Das Feld {field} ist in einer Tabelle {first} und in einer anderen {other}.",
-  "datasources.reason.steps.result_rows": "Der Schritt ergäbe mehr als {max} Zeilen."
+  "datasources.reason.steps.result_rows": "Der Schritt ergäbe mehr als {max} Zeilen.",
+  "datasources.reason.graph_actions.busy": "Gerade laufen viele Auswertungen auf dem Server. Versuch es gleich noch einmal.",
+  "datasources.reason.graph_actions.user_busy": "Deine vorige Auswertung läuft noch. Warte, bis sie fertig ist.",
+  "datasources.reason.graph_actions.too_large": "Die Zeichenfläche hält mehr, als eine Auswertung liest: höchstens {maxNodes} Knoten und {maxEdges} Kanten. Blende Teile aus oder grenze die Abfrage ein."
 }

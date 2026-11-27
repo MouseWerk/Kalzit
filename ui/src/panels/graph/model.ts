@@ -26,6 +26,20 @@ export interface ModelEdge {
 }
 
 /**
+ * An edge a link prediction step suggests (board Graph082, frame 11): no data of the source, so
+ * apart from the edges. It is drawn dotted with an open diamond, not counted, read by no rule
+ * and left out of exports.
+ */
+export interface SuggestedEdge {
+  id: string;
+  type: string;
+  /** Indexes into `GraphModel.nodes`. */
+  source: number;
+  target: number;
+  score: number | null;
+}
+
+/**
  * One or more graph results merged by id and cut to the node limit, the form every graph panel
  * and the layout work on. Nodes and edges are arrays, so typed arrays can mirror them by index.
  */
@@ -37,6 +51,8 @@ export interface GraphModel {
   labels: string[];
   edgeTypes: string[];
   paths: GraphPath[];
+  /** Suggested edges whose ends are both drawn; never among `edges`. */
+  suggested: SuggestedEdge[];
   /** Node and edge counts before the node limit. */
   total: { nodes: number; edges: number };
   /** The node limit dropped nodes (and their edges). */
@@ -63,6 +79,7 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
   const nodeById = new Map<string, { labels: string[]; properties: Record<string, unknown> }>();
   const edgeById = new Map<string, GraphSet["edges"][number]>();
   const paths: GraphPath[] = [];
+  const suggestedRaw: GraphSet["edges"] = [];
   const labelOrder: string[] = [];
   const seenLabels = new Set<string>();
   const edgeTypes: string[] = [];
@@ -118,6 +135,7 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
       }
     }
     paths.push(...(set.paths ?? []));
+    if (Array.isArray(raw.suggested)) suggestedRaw.push(...raw.suggested);
   }
 
   // Degrees over every edge whose ends exist, before the cut, so the cut keeps the hubs.
@@ -179,6 +197,15 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
     t.inDegree++;
   }
 
+  const suggested: SuggestedEdge[] = [];
+  for (const edge of suggestedRaw) {
+    const source = index.get(edge.from);
+    const target = index.get(edge.to);
+    if (source === undefined || target === undefined) continue;
+    const score = readNumber(edge.properties?.score);
+    suggested.push({ id: edge.id, type: edge.type, source, target, score });
+  }
+
   return {
     nodes,
     edges,
@@ -186,6 +213,7 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
     labels: labelOrder,
     edgeTypes,
     paths,
+    suggested,
     total: { nodes: ids.length, edges: edgeById.size - dangling },
     cut: kept.length < ids.length,
     dangling,

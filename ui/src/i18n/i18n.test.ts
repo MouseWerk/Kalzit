@@ -294,6 +294,18 @@ describe("catalogs", () => {
       "Level",
       "Info",
       "Debug",
+      // Graph algorithms keep the names of the literature (board Graph082.dc.html, frame 2).
+      "PageRank",
+      "Betweenness",
+      "Closeness",
+      "Harmonic",
+      "Louvain",
+      "Leiden",
+      "Jaccard",
+      "Overlap",
+      "Adamic-Adar",
+      "Communities",
+      "Property",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

@@ -10,6 +10,7 @@ import {
   MAX_VALUE_COLORS,
   type NodeTargets,
   PALETTE_COLORS,
+  type SizeByValue,
   type StyleColor,
   type StyleRule,
 } from "./schema";
@@ -346,6 +347,12 @@ export function evaluateRules(
       styles[item] = style;
     }
     style.rules.push(rule);
+    // A color and its shade are one target: a plain color from a lower rule drops the shade of
+    // a color by value above it.
+    if (set.color !== undefined && set.shade === undefined) {
+      delete style.set.shade;
+      delete style.from.shade;
+    }
     for (const key of Object.keys(set) as TargetKey[]) {
       (style.set as Record<string, unknown>)[key] = set[key];
       style.from[key] = rule;
@@ -431,6 +438,17 @@ export function evaluateRules(
     }
     report.matched = hits.length;
     if (!rule.on) return;
+    // A size or color by value rests like a rule whose property the result lacks (a step
+    // turned off).
+    const sizes = sizeByValue(rule.set.sizeBy, hits, items);
+    const shades =
+      rule.set.colorBy === undefined
+        ? new Map()
+        : valueShares(rule.set.colorBy.property, hits, items);
+    if (sizes === null || shades === null) {
+      report.state = "dormant";
+      return;
+    }
     // "Is missing" matches exactly the items without the property, so it never rests.
     const asksForAbsence = when.kind === "condition" && when.op === "missing";
     if (!present && !asksForAbsence) {
@@ -449,6 +467,19 @@ export function evaluateRules(
         const badge = fillTemplate(set.badge, item.properties, MAX_BADGE_CHARS);
         if (badge === "") delete set.badge;
         else set.badge = badge;
+      }
+      if (set.sizeBy !== undefined) {
+        delete set.sizeBy;
+        const size = sizes.get(i);
+        if (size !== undefined) set.size = size;
+      }
+      if (set.colorBy !== undefined) {
+        const share = shades.get(i);
+        if (share !== undefined) {
+          set.color = set.colorBy.color;
+          set.shade = Math.round((0.25 + 0.75 * share) * 100) / 100;
+        }
+        delete set.colorBy;
       }
       apply(i, r, set);
     }
@@ -471,6 +502,51 @@ export function evaluateRules(
   });
 
   return { styles, rules: reports };
+}
+
+/**
+ * The sizes a size by value gives the items `hits`: their number property mapped onto `min` to
+ * `max` over the smallest and largest value among them, by the square root (the area grows with
+ * the value). Items without a number keep their size; equal values all take the middle. An
+ * empty map without a size by value, null when no item has a number of the property.
+ */
+export function sizeByValue(
+  sizeBy: SizeByValue | undefined,
+  hits: readonly number[],
+  items: readonly StyleItem[],
+): Map<number, number> | null {
+  const out = new Map<number, number>();
+  if (sizeBy === undefined) return out;
+  const shares = valueShares(sizeBy.property, hits, items);
+  if (shares === null) return null;
+  for (const [i, share] of shares) {
+    const root = Math.sqrt(share);
+    out.set(i, Math.round((sizeBy.min + (sizeBy.max - sizeBy.min) * root) * 10) / 10);
+  }
+  return out;
+}
+
+/**
+ * Where each item's number property lies between the smallest and the largest among `hits`, 0 to
+ * 1 (all the same: 0.5); items without a number are left out; null when none has one.
+ */
+export function valueShares(
+  property: string,
+  hits: readonly number[],
+  items: readonly StyleItem[],
+): Map<number, number> | null {
+  const values = new Map<number, number>();
+  for (const i of hits) {
+    const v = readNumber((items[i] as StyleItem).properties[property]);
+    if (v !== null) values.set(i, v);
+  }
+  if (values.size === 0) return null;
+  const all = [...values.values()];
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  const out = new Map<number, number>();
+  for (const [i, v] of values) out.set(i, hi === lo ? 0.5 : (v - lo) / (hi - lo));
+  return out;
 }
 
 /**

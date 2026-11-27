@@ -45,12 +45,18 @@ export function NumberField({
   min,
   max,
   onChange,
+  hint,
+  decimals = false,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
   onChange: (value: number) => void;
+  /** The allowed range or what the value means, under the field. */
+  hint?: string | undefined;
+  /** Takes fractions (a damping, a tolerance), not only whole numbers. */
+  decimals?: boolean;
 }) {
   const id = useId();
   return (
@@ -64,12 +70,20 @@ export function NumberField({
         type="number"
         min={min}
         max={max}
+        step={decimals ? "any" : undefined}
         value={value}
+        aria-describedby={hint === undefined ? undefined : `${id}-hint`}
         onChange={(event) => {
-          const n = Math.round(Number(event.currentTarget.value));
+          const raw = Number(event.currentTarget.value);
+          const n = decimals ? raw : Math.round(raw);
           if (Number.isFinite(n)) onChange(Math.min(Math.max(n, min), max));
         }}
       />
+      {hint === undefined ? null : (
+        <p className="field__hint" id={`${id}-hint`}>
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

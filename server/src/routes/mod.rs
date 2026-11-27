@@ -22,6 +22,7 @@ pub mod explore_history;
 pub mod export;
 pub mod folders;
 pub mod grants;
+pub mod graph_actions;
 pub mod health;
 pub mod home;
 pub mod instances;
@@ -98,6 +99,7 @@ pub fn all() -> Vec<table::RouteDef> {
         explore_history::routes(),
         live::routes(),
         export::routes(),
+        graph_actions::routes(),
         members::routes(),
         service_accounts::routes(),
         teams::routes(),

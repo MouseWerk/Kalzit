@@ -155,12 +155,13 @@ it work on the table. At most 200 columns.
 ## Graph steps
 
 On a `graph` result the steps start with graph steps: **Count per label**, **Count per edge
-type**, **Degree distribution**, **Top N by degree**, **Shared neighbours**, **Calculate degree**,
+type**, **Degree distribution**, **Top N by degree**, **Shared neighbours**, **Degree**,
 **Filter subgraph** and **Turn into a table**. Each says which shape it reads and makes
 ("Graph → Table") and where it runs: for Neo4j and Memgraph the first graph step runs in the
 database as Cypher and counts over the whole result; the others run on the server. Once a step has
 made a table, the table steps above (group, statistics, calculated fields) follow. Details and an
-example: [Explore, graph steps](explore.md#graph-steps).
+example: [Explore, graph steps](explore.md#graph-steps). The graph algorithms (centrality,
+communities, paths and more) are described in [Graph algorithms and paths](graph-algorithms.md).
 
 ## Limits
 

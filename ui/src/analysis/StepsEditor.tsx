@@ -4,6 +4,20 @@ import { LazyPiece, pieceSource } from "../components/LazyPiece";
 import { reasonText } from "../features/datasources/reasons";
 import { hasMessage, loadArea, type MessageKey, type Translate, useI18n } from "../i18n/i18n";
 import { formatValue, isNumeric } from "../panels/frame";
+import type { ResultUse } from "./AlgoOutcome";
+import {
+  type AlgoStepKind,
+  algoMakesTable,
+  GRAPH_VARIANTS,
+  type GraphVariant,
+  type GraphWords,
+  graphWords,
+  isAlgoType,
+  newAlgoStep,
+  plannedPlace,
+  variantOf,
+} from "./algoSteps";
+import { summarySentence } from "./algoText";
 import { DetailError, FUNCTIONS, parse } from "./expr";
 import {
   type Direction,
@@ -28,6 +42,7 @@ import {
   type Agg,
   type Aggregation,
   GRAPH_STEP_TYPES,
+  isAlgoStep,
   isGraphStep,
   isTraceStep,
   MAX_SORT_KEYS,
@@ -85,6 +100,11 @@ interface StepsEditorProps {
    * for editing on a click; one "Add step" button opens the kinds of steps as a menu.
    */
   compact?: boolean | undefined;
+  /**
+   * Shows the property an algorithm step added on the canvas (a style rule: size or color by
+   * value, a color per community); absent where the screen draws no graph.
+   */
+  onUseResult?: ((use: ResultUse, property: string, step: Step) => void) | undefined;
 }
 
 /** Graph steps the graph databases run themselves (server/src/analysis/pushdown.rs). */
@@ -169,6 +189,7 @@ const GRAPH_TO_GRAPH: readonly StepType[] = ["topDegree", "degree", "filterGraph
 /** The shape a step reads and the one it makes. */
 function shapesOf(step: StepKind): [ShapeName, ShapeName] {
   if (isTraceStep(step)) return ["trace", TRACE_STEP_OUT[step.type]];
+  if (isAlgoStep(step)) return ["graph", algoMakesTable(step) ? "frame" : "graph"];
   if (GRAPH_TO_GRAPH.includes(step.type)) return ["graph", "graph"];
   if (isGraphStep(step)) return ["graph", "frame"];
   if (step.type === "toFrame") return ["documents", "frame"];
@@ -177,6 +198,10 @@ function shapesOf(step: StepKind): [ShapeName, ShapeName] {
 
 /** The step's name: a projection of a graph is "In Tabelle umwandeln". */
 function kindLabel(t: Translate, step: StepKind): string {
+  if (isAlgoStep(step)) {
+    const variant = variantOf(step as unknown as { type: string } & Record<string, unknown>);
+    return graphWords.current?.kind(t, variant?.key ?? step.type) ?? step.type;
+  }
   return step.type === "toFrame" && step.rows !== undefined
     ? t("analysis.kind.graphToFrame")
     : t(`analysis.kind.${step.type}`);
@@ -257,6 +282,18 @@ export function stepSummary(t: Translate, step: StepKind): string {
       return (step.attributes ?? []).join(", ");
     case "filterSpans":
       return [...(step.services ?? []), ...(step.operations ?? [])].join(", ");
+    case "paths":
+      return step.from === "" || step.to === "" ? "" : `${step.from} → ${step.to}`;
+    case "reachable":
+      return step.from.join(", ");
+    case "similarity":
+      return (step.properties ?? []).join(", ");
+    case "mergeNodes":
+      return step.by === "property"
+        ? (step.property ?? "")
+        : (graphWords.current?.mergeByLabel(t) ?? "");
+    case "aggregateAlong":
+      return step.name;
     default:
       return "";
   }
@@ -293,8 +330,25 @@ export function StepsEditor({
   run: given,
   kindOf = () => undefined,
   compact = false,
+  onUseResult,
 }: StepsEditorProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  // The algorithm steps' words and forms, a deferred area loaded once a graph is there.
+  const [words, setWords] = useState<GraphWords | null>(graphWords.current);
+  const wantsWords = inputs.some((i) => "graph" in i) || steps.some((s) => isAlgoType(s.type));
+  useEffect(() => {
+    if (!wantsWords || words !== null) return;
+    let current = true;
+    void loadArea("graphSteps")
+      .then(() => import("./graphCatalog"))
+      .then((module) => {
+        graphWords.current = module.GRAPH_WORDS;
+        if (current) setWords(module.GRAPH_WORDS);
+      });
+    return () => {
+      current = false;
+    };
+  }, [wantsWords, words]);
   // Compact cards open for editing one by one; a step just added opens at once.
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const isOpen = (id: string) => !compact || opened.has(id);
@@ -352,6 +406,28 @@ export function StepsEditor({
     target?.focus();
     setFocus(null);
   }, [focus]);
+
+  // An algorithm step that finished says its sentence once in the live region (board, frame 20).
+  const said = useRef(new Set<string>());
+  const finished = run.steps
+    .map((o) => {
+      const step = steps.find((s) => s.id === o.id);
+      const sentence = summarySentence(t, language, o.summary);
+      return step === undefined || sentence === null
+        ? null
+        : {
+            key: `${o.id}:${JSON.stringify(o.summary)}`,
+            text: `${kindLabel(t, step)}: ${sentence}`,
+          };
+    })
+    .filter((x): x is { key: string; text: string } => x !== null);
+  const finishedKey = finished.map((f) => f.key).join("|");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: announces when the finished set changes
+  useEffect(() => {
+    const fresh = finished.filter((f) => !said.current.has(f.key));
+    for (const f of fresh) said.current.add(f.key);
+    if (fresh.length > 0) announce(fresh.map((f) => f.text).join(" "));
+  }, [finishedKey]);
 
   const update = (index: number, step: Step) =>
     onChange(steps.map((s, i) => (i === index ? step : s)));
@@ -415,6 +491,14 @@ export function StepsEditor({
     const step = steps[index] as Step;
     const said = outcomeAt(index)?.ranIn;
     if (said !== undefined) return said;
+    if (isAlgoStep(step)) {
+      const variant = variantOf(step as unknown as { type: string } & Record<string, unknown>);
+      return step.place !== "server" &&
+        variant !== undefined &&
+        plannedPlace(variant, kindOf(step.frame)) !== undefined
+        ? "database"
+        : "server";
+    }
     const first = steps.find(
       (s) => s.disabled !== true && isGraphStep(s) && s.frame === stepTarget(step),
     );
@@ -436,19 +520,56 @@ export function StepsEditor({
     ...(graphsLeft ? (["toFrame"] as const) : []),
     ...(tablesThere ? STEP_TYPES : []),
   ];
-  function add(type: StepType) {
+  function add(key: string) {
     const input = run.frames.length > 0 ? run.frames : frames;
+    const variant = GRAPH_VARIANTS.find((v) => v.key === key);
+    const type = (variant?.type ?? key) as StepType;
     const traceStep = (TRACE_STEP_TYPES as readonly string[]).includes(type);
-    const step: Step = traceStep
-      ? ({
-          id: crypto.randomUUID(),
-          type,
-          frame: run.traces[0]?.name ?? refIds[0] ?? "A",
-        } as Step)
-      : newStep(type, refIds, input, t, run.graphs);
+    const target = run.graphs[0];
+    const step: Step =
+      variant !== undefined && isAlgoType(variant.type)
+        ? ({
+            id: crypto.randomUUID(),
+            ...newAlgoStep(variant, target?.name ?? refIds[0] ?? "A", target?.graph),
+          } as Step)
+        : traceStep
+          ? ({
+              id: crypto.randomUUID(),
+              type,
+              frame: run.traces[0]?.name ?? refIds[0] ?? "A",
+            } as Step)
+          : newStep(type, refIds, input, t, run.graphs);
     onChange([...steps, step]);
     setOpened((current) => new Set([...current, step.id]));
   }
+  /** The data source kind of the graph the steps read now, for where its steps compute. */
+  const graphKind = kindOf(run.graphs[0]?.name ?? refIds[0] ?? "");
+  /** One graph step of the catalog: an entry of the board's seven groups. */
+  const graphEntryOf = (variant: GraphVariant): CatalogEntry => {
+    const base = entryOf(variant.type as StepType);
+    if (!isAlgoType(variant.type) && variant.type !== "degree") {
+      const group = words?.group(t, variant.group);
+      return {
+        ...base,
+        key: variant.key,
+        graphGroup: variant.group,
+        ...(group === undefined ? {} : { groupLabel: group }),
+      };
+    }
+    const group = words?.group(t, variant.group);
+    if (variant.type === "degree") {
+      return {
+        ...base,
+        key: variant.key,
+        graphGroup: variant.group,
+        ...(group === undefined ? {} : { groupLabel: group }),
+        whereShort: t("analysis.where.server"),
+      };
+    }
+    // The algorithms' words come with their deferred area (graphCatalog.ts).
+    const entry = words?.entry(t, variant, base, graphKind) ?? base;
+    return { ...entry, ...(group === undefined ? {} : { groupLabel: group }) };
+  };
   /** One kind of step for the catalog, with its group, keywords and where it runs. */
   const entryOf = (type: StepType): CatalogEntry => {
     const graphStep = GRAPH_STEP_TYPES.includes(type as never) || type === "toFrame";
@@ -459,8 +580,12 @@ export function StepsEditor({
     const words = `analysis.keywords.${type}` as MessageKey;
     const needsTwo = (type === "join" || type === "stack") && refIds.length < 2;
     return {
+      key: type,
       type,
-      label: type === "toFrame" ? t("analysis.kind.graphToFrame") : t(`analysis.kind.${type}`),
+      label:
+        type === "toFrame"
+          ? t("analysis.kind.graphToFrame")
+          : t(`analysis.kind.${type}` as MessageKey),
       about: t(`analysis.about.${type}` as MessageKey),
       ...(hasMessage(help) ? { help: t(help) } : {}),
       keywords: [
@@ -488,7 +613,10 @@ export function StepsEditor({
   ) as StepType[];
   const catalog: CatalogEntry[] = [
     ...(tracesLeft ? TRACE_STEP_TYPES : []).map(entryOf),
-    ...(graphsLeft ? [...GRAPH_STEP_TYPES, "toFrame" as const] : []).map(entryOf),
+    // The algorithm steps join once their words are there (a moment after the first graph).
+    ...(graphsLeft ? GRAPH_VARIANTS : [])
+      .filter((v) => words !== null || !isAlgoType(v.type))
+      .map(graphEntryOf),
     ...tableOrder.map(entryOf),
   ];
   const catalogShapes: ShapeName[] = [
@@ -525,7 +653,8 @@ export function StepsEditor({
           ? { kind: "trace", count: run.traces[0].trace.spans.length }
           : { kind: "none" };
   /** A new step of `type` with its defaults, run on the first rows of the person's tables. */
-  const previewOf = (type: StepType): StepPreview => {
+  const previewOf = (key: string): StepPreview => {
+    const type = (GRAPH_VARIANTS.find((v) => v.key === key)?.type ?? key) as StepType;
     if (!hasData || sampleFrames.length === 0) {
       return GRAPH_STEP_TYPES.includes(type as never) ||
         (TRACE_STEP_TYPES as readonly string[]).includes(type) ||
@@ -580,7 +709,9 @@ export function StepsEditor({
           } else if (outcome?.skipped === true) {
             status = t("analysis.steps.status.notRun");
           } else if (outcome?.waiting === true) {
-            status = t("analysis.chain.unknown");
+            status = isAlgoStep(step)
+              ? (words?.running(t) ?? t("analysis.chain.unknown"))
+              : t("analysis.chain.unknown");
           } else if (outcome?.traces?.some((x) => stepTarget(step) === x.name) === true) {
             status = t("analysis.chain.spans", {
               count:
@@ -603,13 +734,16 @@ export function StepsEditor({
           const [from, to] = shapesOf(step);
           const where = isTraceStep(step)
             ? t("analysis.where.server")
-            : isGraphStep(step)
-              ? placeOf(index) === "database"
-                ? t("analysis.where.database", {
-                    engine: PUSHDOWN_KINDS[kindOf(stepTarget(step)) ?? ""] ?? "",
-                  })
-                : t("analysis.where.server")
-              : t("analysis.where.browser");
+            : isAlgoStep(step)
+              ? (words?.badge(t, placeOf(index), kindOf(stepTarget(step))) ??
+                t("analysis.where.server"))
+              : isGraphStep(step)
+                ? placeOf(index) === "database"
+                  ? t("analysis.where.database", {
+                      engine: PUSHDOWN_KINDS[kindOf(stepTarget(step)) ?? ""] ?? "",
+                    })
+                  : t("analysis.where.server")
+                : t("analysis.where.browser");
           const open = isOpen(step.id);
           const summary = stepSummary(t, step);
           return (
@@ -715,6 +849,30 @@ export function StepsEditor({
                     traces={tracesOf(index)}
                   />
                   <p className="step__status">{status}</p>
+                  {isAlgoStep(step) && step.disabled !== true && words !== null ? (
+                    <words.AlgoOutcome
+                      step={step}
+                      outcome={outcome}
+                      onServer={() => update(index, { ...step, place: "server" })}
+                      onFilterBefore={() => {
+                        const filter: Step = {
+                          id: crypto.randomUUID(),
+                          type: "filterGraph",
+                          frame: step.frame,
+                        };
+                        onChange([...steps.slice(0, index), filter, ...steps.slice(index)]);
+                        setOpened((current) => new Set([...current, filter.id]));
+                      }}
+                      onUse={
+                        onUseResult === undefined
+                          ? undefined
+                          : (use, property) => {
+                              onUseResult(use, property, step);
+                              announce(words.added(t, use, property));
+                            }
+                      }
+                    />
+                  ) : null}
                   {/* A service map or span tree over very many spans asks before it runs. */}
                   {outcome?.error?.reason === "steps.trace_graph_large" &&
                   (step.type === "serviceMap" || step.type === "spanTree") ? (
@@ -997,6 +1155,19 @@ function StepForm({ step, onChange, refIds, input, graphs, traces }: FormProps) 
   if (isTraceStep(step)) {
     const trace = traces.find((x) => x.name === step.frame)?.trace;
     return <LazyPiece source={TRACE_FORM} props={{ step, trace, frameChoice, onChange }} />;
+  }
+  if (isAlgoStep(step)) {
+    const graph = graphs.find((g) => g.name === step.frame)?.graph;
+    const Form = graphWords.current?.AlgoStepForm;
+    if (Form === undefined) return <p className="field__hint">{t("common.loading")}</p>;
+    return (
+      <Form
+        step={step as AlgoStepKind & { id: string }}
+        graph={graph}
+        frameChoice={frameChoice}
+        onChange={(next) => onChange(next as Step)}
+      />
+    );
   }
   if (isGraphStep(step)) {
     const graph = graphs.find((g) => g.name === step.frame)?.graph;

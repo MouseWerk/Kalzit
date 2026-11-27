@@ -140,5 +140,10 @@
   "shortcuts.field.cancel": "Cancel editing a name",
   "shortcuts.handbook.search": "Search the handbook",
   "shortcuts.handbook.pages": "Previous and next page of the handbook",
-  "shortcuts.chart.readoutEnd": "End reading values"
+  "shortcuts.chart.readoutEnd": "End reading values",
+  "shortcuts.graph.path": "Path between two selected nodes, for more: how they are connected",
+  "shortcuts.graph.nextPath": "Next path in the list",
+  "shortcuts.graph.previousPath": "Previous path in the list",
+  "shortcuts.graph.top": "Most important nodes on and off",
+  "shortcuts.graph.suggestions": "Show and hide suggested edges"
 }

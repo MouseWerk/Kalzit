@@ -162,5 +162,15 @@
   "graphStyle.sheet.viewOnly": "Änderungen hier gelten nur für dich und nur in dieser Ansicht. Gespeichert wird im Bearbeiten-Modus.",
   "graphStyle.sheet.reset": "Zurücksetzen",
   "graphStyle.table.hint": "Für Knoten- und Kanten-Tabellen aus einem Graphen: Farbe als Punkt vor dem Wert, Icon und Abzeichen an der Beschriftung, die Beschriftungs-Regel ersetzt den Text. Eine Kanten-Tabelle nimmt nur die Farbe. Die Tabelle braucht dafür die Spalte @labels oder @type.",
-  "graphStyle.table.ruleWins": "Spalte {column}: Regel {rule} gilt vor Farbschema, Schwellenwerten und Wertzuordnungen dieser Spalte. Diese bleiben gespeichert und gelten wieder, wenn die Regel aus ist."
+  "graphStyle.table.ruleWins": "Spalte {column}: Regel {rule} gilt vor Farbschema, Schwellenwerten und Wertzuordnungen dieser Spalte. Diese bleiben gespeichert und gelten wieder, wenn die Regel aus ist.",
+  "graphStyle.target.sizeBy": "Größe nach Wert",
+  "graphStyle.sizeBy.text": "Größe nach {property}, von {min} bis {max}",
+  "graphStyle.sizeBy.property": "Zahl-Property",
+  "graphStyle.sizeBy.min": "Kleinster Knoten",
+  "graphStyle.sizeBy.max": "Größter Knoten",
+  "graphStyle.sizeBy.hint": "Wertebereich aus dem Ergebnis. Die Fläche wächst mit dem Wert; Knoten ohne Zahl behalten ihre Größe.",
+  "graphStyle.target.colorBy": "Farbe nach Wert",
+  "graphStyle.colorBy.text": "Farbe nach {property}, {color} von hell bis satt",
+  "graphStyle.colorBy.tone": "Farbton",
+  "graphStyle.colorBy.hint": "Wertebereich aus dem Ergebnis: der kleinste Wert hell, der größte satt. Knoten ohne Zahl behalten ihre Farbe."
 }

@@ -105,10 +105,39 @@ export type RuleWhen =
   | Condition
   | { kind: "values"; property: string; colors: ValueColor[] };
 
+/**
+ * A size by value (board Graph082, frame 5, decision 1): the node's number property `property`
+ * mapped onto `min` to `max` px over the values in the result; areas grow with the value, so the
+ * size grows with its square root.
+ */
+export interface SizeByValue {
+  property: string;
+  min: number;
+  max: number;
+}
+
+/**
+ * A color by value (board Graph082, frame 5, decision 1): one tone of the data palette, from
+ * light for the smallest value of `property` in the result to saturated for the largest.
+ */
+export interface ColorByValue {
+  property: string;
+  color: StyleColor;
+}
+
 export interface NodeTargets {
   color?: StyleColor;
+  /** A color from a number property: one tone, light to saturated. */
+  colorBy?: ColorByValue;
+  /**
+   * How saturated a color by value draws a node, 0.25 to 1; worked out by the evaluation, never
+   * stored.
+   */
+  shade?: number;
   /** In px. */
   size?: number;
+  /** A size from a number property instead of one fixed size. */
+  sizeBy?: SizeByValue;
   shape?: RuleShape;
   /** A name of the icon set (icons/lucide.json). */
   icon?: string;
@@ -151,7 +180,17 @@ export interface GraphStyle {
 
 export const EMPTY_STYLE: GraphStyle = { version: STYLE_VERSION, nodes: [], edges: [] };
 
-export const NODE_TARGETS = ["color", "size", "shape", "icon", "border", "label", "badge"] as const;
+export const NODE_TARGETS = [
+  "color",
+  "colorBy",
+  "size",
+  "sizeBy",
+  "shape",
+  "icon",
+  "border",
+  "label",
+  "badge",
+] as const;
 export const EDGE_TARGETS = ["color", "width", "dash", "label", "arrow"] as const;
 export type NodeTarget = (typeof NODE_TARGETS)[number];
 export type EdgeTarget = (typeof EDGE_TARGETS)[number];
@@ -224,6 +263,16 @@ function parseWhen(stored: unknown): RuleWhen | null {
   return null;
 }
 
+/** A size by value as stored: a property, and the smallest and largest size in bounds. */
+function parseSizeBy(stored: unknown): SizeByValue | undefined {
+  if (!isRecord(stored)) return undefined;
+  const property = text(stored.property);
+  const min = clampInt(stored.min, RULE_SIZE.min, RULE_SIZE.max);
+  const max = clampInt(stored.max, RULE_SIZE.min, RULE_SIZE.max);
+  if (property === "" || min === undefined || max === undefined) return undefined;
+  return { property, min: Math.min(min, max), max: Math.max(min, max) };
+}
+
 function parseNodeTargets(stored: unknown): NodeTargets {
   const value = isRecord(stored) ? stored : {};
   const out: NodeTargets = {};
@@ -231,6 +280,13 @@ function parseNodeTargets(stored: unknown): NodeTargets {
   if (color !== undefined) out.color = color;
   const size = clampInt(value.size, RULE_SIZE.min, RULE_SIZE.max);
   if (size !== undefined) out.size = size;
+  const sizeBy = parseSizeBy(value.sizeBy);
+  if (sizeBy !== undefined) out.sizeBy = sizeBy;
+  if (isRecord(value.colorBy)) {
+    const property = text(value.colorBy.property);
+    const tone = choice(STYLE_COLORS, value.colorBy.color);
+    if (property !== "" && tone !== undefined) out.colorBy = { property, color: tone };
+  }
   const shape = choice(RULE_SHAPES, value.shape);
   if (shape !== undefined) out.shape = shape;
   if (isIconName(value.icon)) out.icon = value.icon;

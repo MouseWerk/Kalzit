@@ -22,6 +22,7 @@ The whole guide is also available [in German](de/README.md).
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |
+| [Graph algorithms and paths](graph-algorithms.md) | Centrality, communities, similarity, paths, structures and suggested edges as steps; where they compute; quick actions on the canvas |
 | [Explore](explore.md) | Free queries per source kind (Cypher and GSQL included), the three result shapes, steps and graph steps, add to dashboard |
 | [Query languages for beginners](query-languages.md) | What each source holds, small read-only example queries per language (SQL, PromQL, Flux and InfluxQL, LogQL, Lucene and Query DSL, MongoDB pipelines, Cypher, GSQL), files and HTTP JSON, and how the time range and variables apply |
 | [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |

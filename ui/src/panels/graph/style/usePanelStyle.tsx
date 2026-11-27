@@ -6,6 +6,7 @@ import type { GraphModel } from "../model";
 import type { GraphPanelOptions } from "../options";
 import type { GraphView } from "../view";
 import { edgeItems, nodeItems, ruleNodes, valueNodes } from "./apply";
+import { type ResultRule, withResultRule } from "./fromResult";
 import { StyleLegend } from "./StyleLegend";
 import { StyleSheet } from "./StyleSheet";
 import { type GraphStyle, readableStyle, ruleCount } from "./schema";
@@ -110,10 +111,18 @@ export function usePanelStyle({
       />
     );
 
+  /** A rule from a step's result (fromResult.ts); answers its number in the list. */
+  const addRule = (use: ResultRule, property: string): number => {
+    const next = withResultRule(latest.current.style, use, property);
+    change(next.style);
+    return next.number;
+  };
+
   return {
     style,
     styled,
     evaluation,
+    addRule,
     /** The header button's state: rules in the panel, and whether the sheet is open. */
     button: { count: ruleCount(drawn), open, toggle: () => setOpen((o) => !o) },
     /** Closes the sheet, so the details of a node picked on the drawing show instead. */

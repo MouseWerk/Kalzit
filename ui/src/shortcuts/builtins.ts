@@ -470,6 +470,22 @@ export const BUILTIN_SHORTCUTS = [
   { id: "graph.zoomOut", area: "graph", keys: [combo("-")], partOf: "graph.zoom" },
   { id: "graph.zoomReset", area: "graph", keys: [combo("0")], partOf: "graph.zoom" },
   { id: "graph.view", area: "graph", keys: [combo("A")], label: "shortcuts.graph.view" },
+  // Quick actions of the canvas (board Graph082, frame 20, decision 13).
+  { id: "graph.path", area: "graph", keys: [combo("W")], label: "shortcuts.graph.path" },
+  { id: "graph.nextPath", area: "graph", keys: [combo("J")], label: "shortcuts.graph.nextPath" },
+  {
+    id: "graph.previousPath",
+    area: "graph",
+    keys: [combo("Shift", "J")],
+    label: "shortcuts.graph.previousPath",
+  },
+  { id: "graph.top", area: "graph", keys: [combo("G")], label: "shortcuts.graph.top" },
+  {
+    id: "graph.suggestions",
+    area: "graph",
+    keys: [combo("U")],
+    label: "shortcuts.graph.suggestions",
+  },
   // The layout menu's "Arrange again".
   {
     id: "graph.rearrange",
