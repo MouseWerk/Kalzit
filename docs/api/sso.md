@@ -912,6 +912,10 @@ outcome. They are not answered as API errors.
 | `sso.email_link_other_sign_in` | the account with the email has no password and no second factor and signs in through another provider or directory (`sso=link_refused`) |
 | `sso.email_link_no_proof` | the account with the email has no password and no second factor, and no SCIM of an organization the provider's mapping gives this person owns it (`sso=link_refused`) |
 | `sso.service_account` | the identity is linked to a service account, or a service account has the email; service accounts never sign in through a provider |
+| `sso.reauth_stale` | a re-authentication for a sensitive change (`POST /me/security/confirm/provider`) came back without a fresh `auth_time` (`reauth=stale`) |
+| `sso.reauth_other_person` | a re-authentication came back with another person than the signed-in account (`reauth=failed`) |
+| `sso.reauth_other_session` | the browser no longer holds the session that started the re-authentication, or that session has ended (`reauth=failed`) |
+| `sso.reauth_invalid` | the re-authentication names no session (`reauth=failed`) |
 | `ldap.unreachable` | a directory could not be reached at sign-in (`detail` says why) |
 | `ldap.service_bind_failed` | the service account's bind was refused at sign-in |
 | `ldap.search_failed` | the search for the person failed |

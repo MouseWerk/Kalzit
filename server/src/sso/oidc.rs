@@ -266,6 +266,9 @@ pub struct Request {
     pub state: String,
     pub nonce: String,
     pub verifier: Option<String>,
+    /// A sign-in again at the provider: `max_age=0` and `prompt=login` ask it to check the
+    /// person now, whatever session it has (OpenID Connect Core 1.0, 3.1.2.1).
+    pub reauthenticate: bool,
 }
 
 pub fn random_token() -> String {
@@ -274,7 +277,7 @@ pub fn random_token() -> String {
 
 impl Request {
     pub fn new(pkce: bool) -> Self {
-        Self { state: random_token(), nonce: random_token(), verifier: pkce.then(random_token) }
+        Self { state: random_token(), nonce: random_token(), verifier: pkce.then(random_token), reauthenticate: false }
     }
 }
 
@@ -301,6 +304,9 @@ pub fn authorization_url(
             .append_pair("nonce", &request.nonce);
         if let Some(verifier) = &request.verifier {
             q.append_pair("code_challenge", &challenge(verifier)).append_pair("code_challenge_method", "S256");
+        }
+        if request.reauthenticate {
+            q.append_pair("max_age", "0").append_pair("prompt", "login");
         }
     }
     Ok(url)
@@ -490,6 +496,9 @@ pub struct Person {
     /// The provider said it checked several factors (`amr`).
     #[serde(skip)]
     pub mfa_done: bool,
+    /// When the person last signed in at the provider (the ID token's `auth_time`, seconds).
+    #[serde(skip)]
+    pub auth_time: Option<i64>,
 }
 
 /// Reads the person from the checked ID token's claims, with the userinfo claims added (the ID
@@ -542,6 +551,7 @@ pub fn person(config: &OidcConfig, id_claims: &Map<String, Value>, userinfo: &Ma
         name: text(&config.name_claim),
         groups,
         mfa_done: several_factors(&amr),
+        auth_time: id_claims.get("auth_time").and_then(Value::as_f64).map(|t| t as i64),
     }
 }
 

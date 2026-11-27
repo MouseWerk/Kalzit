@@ -18,6 +18,9 @@ http_addr = "0.0.0.0:3000"
 
 [paths]
 data_dir = "/var/lib/kalzit"
+# The installed plugins, default "plugins" in the data directory (docs/guide/plugins.md,
+# "Plugin folder"). It must belong to the kalzit user with mode 0700.
+# plugins_dir = "/srv/kalzit/plugins"
 
 # Prometheus metrics at /metrics, off by default (docs/guide/monitoring.md). Give the token in
 # KALZIT_METRICS_TOKEN, not here.

@@ -102,6 +102,8 @@ export interface DatasourceSummary {
   createdAt: number;
   /** Set for items of the trash. */
   deletedAt?: number;
+  /** Items of the trash: when they are deleted for good at the earliest. */
+  purgeAt?: number;
   /** The organization's default data source: Explore and new panels start with it. */
   isDefault?: boolean;
   /** Always sent by the server; `sourceAccess` covers an answer without it. */
@@ -518,6 +520,9 @@ function parseSummary(value: unknown): DatasourceSummary | null {
   };
   if (typeof value.deletedAt === "number") {
     summary.deletedAt = value.deletedAt;
+  }
+  if (typeof value.purgeAt === "number") {
+    summary.purgeAt = value.purgeAt;
   }
   if (value.isDefault === true) {
     summary.isDefault = true;
