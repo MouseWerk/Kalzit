@@ -9,17 +9,27 @@ import { panelAction, startEditing } from "./support/ui";
 /**
  * Graph algorithms and paths (board Graph082, docs/guide/graph-algorithms.md), against the shop
  * graph of e2e/fixtures/graph-shop.cypher: an algorithm step from the catalog in the panel editor
- * with its place and its sentence, its result as a style rule, and the quick actions of the
- * canvas for a viewer, who asks no data source anything with them. Memgraph computes the same
- * step with MAGE or on the server.
+ * with its place, its sentence and its result as a style rule; the quick actions of the canvas for
+ * a viewer (paths with their keys, "how are these connected", the most important nodes, Escape),
+ * who asks no data source anything with them, with their sheet in place of the node sheet;
+ * suggested edges with the key U; and Memgraph computing the same step.
  */
 
 const STEP_MS = 20_000;
 
-/** Customers, their orders and the products in them: Ana reaches the monitor arm through Ben. */
+/**
+ * Customers, their orders and the products in them: Ana reaches the monitor arm through Ben.
+ * CONTAINS carries a number (`quantity`), which a weighted path can sum.
+ */
 const SHOP =
   "MATCH (c:Customer)-[p:PLACED]->(o:Order)-[k:CONTAINS]->(x:Product) RETURN c, p, o, k, x";
-const PANEL = "Shop for algorithms";
+/** Customers and their orders only: no number on any edge. */
+const ORDERS = "MATCH (c:Customer)-[p:PLACED]->(o:Order) RETURN c, p, o";
+const PANELS = {
+  shop: "Shop for algorithms",
+  orders: "Orders without weights",
+  suggested: "Shop with suggestions",
+} as const;
 
 const SIGMA_WEBGL_NOTICES = [
   /^warning: \[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels/,
@@ -30,27 +40,43 @@ test.beforeEach(({ consoleGuard }) => {
 });
 
 function dashboard(title: string, datasourceId: string) {
+  const panel = (id: string, name: string, y: number, cypher: string, more = {}) => ({
+    id,
+    type: "network",
+    title: name,
+    grid: { x: 0, y, w: 24, h: 14 },
+    targets: [{ refId: "A", datasourceId, query: { cypher } }],
+    options: {},
+    ...more,
+  });
   return {
     schemaVersion: 2,
     title,
     timeRange: { from: "now-6h", to: "now" },
     panels: [
-      {
-        id: "shop",
-        type: "network",
-        title: PANEL,
-        grid: { x: 0, y: 0, w: 24, h: 14 },
-        targets: [{ refId: "A", datasourceId, query: { cypher: SHOP } }],
-        options: {},
-      },
+      panel("shop", PANELS.shop, 0, SHOP),
+      panel("orders", PANELS.orders, 14, ORDERS),
+      panel("suggested", PANELS.suggested, 28, SHOP, {
+        transformations: [
+          {
+            id: "0199f0a0-1c2e-7a4b-9e1d-3f5a6b7c8d91",
+            type: "linkPrediction",
+            frame: "A",
+            measure: "adamicAdar",
+            topK: 3,
+          },
+        ],
+      }),
     ],
   };
 }
 
-const card = (page: Page) => page.getByRole("article", { name: PANEL, exact: true });
+const card = (page: Page, title: string) => page.getByRole("article", { name: title, exact: true });
+const bar = (panel: Locator) =>
+  panel.getByRole("group", { name: t("graphCanvas.quick.bar"), exact: true });
 
 /** Switches the panel to its tables, picks the rows of `names` (Ctrl adds), and back. */
-async function choose(panel: Locator, names: readonly string[]) {
+async function choose(panel: Locator, title: string, names: readonly string[]) {
   const view = panel.getByRole("group", { name: t("graph.view.label"), exact: true });
   await view.getByRole("button", { name: t("graph.view.table"), exact: true }).click();
   for (const [i, name] of names.entries()) {
@@ -58,7 +84,16 @@ async function choose(panel: Locator, names: readonly string[]) {
     await row.click({ modifiers: i === 0 ? [] : ["ControlOrMeta"], timeout: STEP_MS });
   }
   await view.getByRole("button", { name: t("graph.view.graph"), exact: true }).click();
-  await expect(panel.getByRole("application", { name: PANEL, exact: true })).toBeVisible();
+  await expect(panel.getByRole("application", { name: title, exact: true })).toBeVisible();
+}
+
+/** Waits for the drawing; skips where the browser cannot draw graphs. */
+async function drawn(panel: Locator, title: string): Promise<Locator> {
+  const drawing = panel.getByRole("application", { name: title, exact: true });
+  const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+  await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+  test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+  return drawing;
 }
 
 async function addPageRank(page: Page, steps: Locator) {
@@ -104,13 +139,13 @@ test.describe("graph algorithms", () => {
     }
   });
 
-  test("PageRank from the catalog says where it ran and what it found; its result becomes a rule", async ({
-    page,
-  }) => {
+  test("PageRank from the catalog says where it ran and what it found; its result becomes rules", {
+    tag: "@smoke",
+  }, async ({ page }) => {
     await signInOwner(page);
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
     await startEditing(page);
-    await panelAction(page, PANEL, "dashboards.panel.editNamed");
+    await panelAction(page, PANELS.shop, "dashboards.panel.editNamed");
     await page.getByRole("tab", { name: /^Steps/ }).click();
     const steps = page.getByRole("region", { name: t("analysis.steps.title"), exact: true });
     await addPageRank(page, steps);
@@ -128,12 +163,16 @@ test.describe("graph algorithms", () => {
     await expect(
       page.getByText(t("graphSteps.algo.added.size", { property: "pagerank" })),
     ).toBeAttached();
+    await first.getByRole("button", { name: t("graphSteps.algo.useColor"), exact: true }).click();
+    await expect(
+      page.getByText(t("graphSteps.algo.added.color", { property: "pagerank" })),
+    ).toBeAttached();
     expect(await seriousViolations(page)).toEqual([]);
   });
 
-  test("a viewer finds the path between two nodes and the most important nodes", async ({
-    page,
-  }) => {
+  test("a viewer finds paths, walks them, sees how nodes connect, and the most important nodes", {
+    tag: "@smoke",
+  }, async ({ page }) => {
     if (viewer === null) throw new Error("no viewer");
     await signIn(page, viewer.email, viewer.password);
     const queries: string[] = [];
@@ -141,42 +180,128 @@ test.describe("graph algorithms", () => {
       if (/\/query$/.test(new URL(request.url()).pathname)) queries.push(request.url());
     });
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
-    const panel = card(page);
-    const drawing = panel.getByRole("application", { name: PANEL, exact: true });
-    const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
-    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
-    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+    const panel = card(page, PANELS.shop);
+    const drawing = await drawn(panel, PANELS.shop);
     const before = queries.length;
 
-    await choose(panel, ["Ana", "Monitor arm"]);
-    const bar = panel.getByRole("group", { name: t("graphCanvas.quick.bar"), exact: true });
-    await bar.getByRole("button", { name: t("graphCanvas.quick.findPath"), exact: true }).click();
-    await bar
-      .getByRole("button", { name: t("graphCanvas.quick.path.shortest"), exact: true })
-      .click();
-    const sheet = panel.getByRole("region", {
-      name: t("graphCanvas.quick.path.shortest"),
-      exact: true,
+    await test.step("three shortest paths, walked with J and Shift+J", async () => {
+      await choose(panel, PANELS.shop, ["Ana", "Monitor arm"]);
+      await bar(panel)
+        .getByRole("button", { name: t("graphCanvas.quick.findPath") })
+        .click();
+      // Focus is in the menu; a weight per number on the edges.
+      await expect(
+        bar(panel).getByRole("button", { name: t("graphCanvas.quick.path.shortest") }),
+      ).toBeFocused();
+      await expect(
+        bar(panel).getByRole("button", {
+          name: t("graphCanvas.quick.path.weightedBy", { property: "quantity" }),
+        }),
+      ).toBeVisible();
+      await bar(panel)
+        .getByRole("button", { name: t("graphCanvas.quick.path.kShortestN", { k: 3 }) })
+        .click();
+      const sheet = panel.getByRole("region", {
+        name: t("graphCanvas.quick.path.kShortestN", { k: 3 }),
+        exact: true,
+      });
+      const first = sheet.getByRole("button", { name: /^Path 1: Ana › .*Ben.* › Monitor arm/ });
+      await expect(first).toHaveAttribute("aria-pressed", "true", { timeout: STEP_MS });
+      // One sheet at a time: the answer stands where the node sheet would, beside the drawing.
+      await expect(panel.locator(".graph__details")).toHaveCount(1);
+      const canvasBox = await drawing.boundingBox();
+      const sheetBox = await sheet.boundingBox();
+      if (canvasBox === null || sheetBox === null) throw new Error("no layout");
+      const overlaps =
+        sheetBox.x < canvasBox.x + canvasBox.width &&
+        canvasBox.x < sheetBox.x + sheetBox.width &&
+        sheetBox.y < canvasBox.y + canvasBox.height &&
+        canvasBox.y < sheetBox.y + sheetBox.height;
+      expect(overlaps).toBe(false);
+      expect(await seriousViolations(page)).toEqual([]);
+      await drawing.focus();
+      await page.keyboard.press("j");
+      await expect(sheet.getByRole("button", { name: /^Path 2: / })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      await page.keyboard.press("Shift+J");
+      await expect(first).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press("Escape");
+      await expect(sheet).toHaveCount(0);
     });
-    // Along PLACED and CONTAINS, Ana reaches the monitor arm only through Ben.
-    await expect(
-      sheet.getByRole("button", { name: /^Path 1: Ana › .*Ben.* › Monitor arm/ }),
-    ).toBeVisible({ timeout: STEP_MS });
-    expect(await seriousViolations(page)).toEqual([]);
-    await sheet.getByRole("button", { name: t("graphCanvas.quick.close"), exact: true }).click();
 
-    await bar.getByRole("button", { name: t("graphCanvas.quick.top"), exact: true }).click();
-    const top = panel.getByRole("region", { name: t("graphCanvas.quick.top"), exact: true });
-    await expect(top.getByRole("listitem").first()).toBeVisible({ timeout: STEP_MS });
-    await top
-      .getByRole("radio", { name: t("graphCanvas.quick.measure.degree"), exact: true })
-      .click();
-    await expect(
-      top.getByRole("radio", { name: t("graphCanvas.quick.measure.degree") }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(await seriousViolations(page)).toEqual([]);
+    await test.step("how three nodes are connected, with W", async () => {
+      await choose(panel, PANELS.shop, ["Ana", "Ben", "Clara"]);
+      await drawing.focus();
+      await page.keyboard.press("w");
+      const sheet = panel.getByRole("region", {
+        name: t("graphCanvas.quick.connect"),
+        exact: true,
+      });
+      await expect(sheet.getByText(t("graphCanvas.quick.connected", { count: 3 }))).toBeVisible({
+        timeout: STEP_MS,
+      });
+      await sheet.getByRole("button", { name: t("graphCanvas.quick.close") }).click();
+    });
+
+    await test.step("the most important nodes by another measure", async () => {
+      await bar(panel)
+        .getByRole("button", { name: t("graphCanvas.quick.top") })
+        .click();
+      const top = panel.getByRole("region", { name: t("graphCanvas.quick.top"), exact: true });
+      await expect(top.getByRole("listitem").first()).toBeVisible({ timeout: STEP_MS });
+      const pageRank = top.getByRole("radio", { name: t("graphCanvas.quick.measure.pageRank") });
+      await pageRank.focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(
+        top.getByRole("radio", { name: t("graphCanvas.quick.measure.degree") }),
+      ).toHaveAttribute("aria-checked", "true");
+      expect(await seriousViolations(page)).toEqual([]);
+    });
     // The quick actions computed on the loaded graph: no new query reached the data source.
     expect(queries.length).toBe(before);
+  });
+
+  test("without a number on the edges the weighted path says why", async ({ page }) => {
+    if (viewer === null) throw new Error("no viewer");
+    await signIn(page, viewer.email, viewer.password);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = card(page, PANELS.orders);
+    await drawn(panel, PANELS.orders);
+    await choose(panel, PANELS.orders, ["Ana", "Ben"]);
+    await bar(panel)
+      .getByRole("button", { name: t("graphCanvas.quick.findPath") })
+      .click();
+    const weighted = bar(panel).getByRole("button", {
+      name: new RegExp(`^${t("graphCanvas.quick.path.weighted")}`),
+    });
+    await expect(weighted).toHaveAttribute("aria-disabled", "true");
+    await expect(weighted).toContainText(t("graphCanvas.quick.noWeight"));
+    await page.keyboard.press("Escape");
+    await expect(weighted).toHaveCount(0);
+  });
+
+  test("suggested edges are not counted; U hides and shows them", async ({ page }) => {
+    if (viewer === null) throw new Error("no viewer");
+    await signIn(page, viewer.email, viewer.password);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = card(page, PANELS.suggested);
+    const drawing = await drawn(panel, PANELS.suggested);
+    const toggle = panel.getByRole("button", {
+      name: t("graphCanvas.quick.suggestionsToggle"),
+      exact: true,
+    });
+    await expect(toggle).toHaveAttribute("aria-pressed", "true", { timeout: STEP_MS });
+    await expect(panel.getByText(/suggested edges; they are not counted/)).toBeVisible();
+    await drawing.focus();
+    await page.keyboard.press("u");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      panel.getByText(t("graphCanvas.quick.suggestionsHidden"), { exact: true }),
+    ).toBeAttached();
+    await page.keyboard.press("u");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
   });
 });
 
@@ -185,12 +310,11 @@ test("Memgraph computes PageRank too, in MAGE or on the server", async ({ page }
   const owner = await Api.owner();
   let dashboardId = "";
   try {
-    const sourceId = await owner.createSource(
-      unique("Shop graph in Memgraph"),
-      "memgraph",
+    const sourceId = await owner.createSource(unique("Shop graph in Memgraph"), "memgraph", {
+      ...boltTarget(address),
       // The container has no users, so anyone may write: the source accepts that explicitly.
-      { ...boltTarget(address), allowWriteCapableUser: true },
-    );
+      allowWriteCapableUser: true,
+    });
     dashboardId = await owner.createDashboard(dashboard(unique("Memgraph algorithms"), sourceId));
   } finally {
     await owner.dispose();
@@ -198,7 +322,7 @@ test("Memgraph computes PageRank too, in MAGE or on the server", async ({ page }
   await signInOwner(page);
   await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
   await startEditing(page);
-  await panelAction(page, PANEL, "dashboards.panel.editNamed");
+  await panelAction(page, PANELS.shop, "dashboards.panel.editNamed");
   await page.getByRole("tab", { name: /^Steps/ }).click();
   const steps = page.getByRole("region", { name: t("analysis.steps.title"), exact: true });
   await addPageRank(page, steps);
