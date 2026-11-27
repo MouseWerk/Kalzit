@@ -6,7 +6,7 @@ import { pickOption } from "../../test/select";
 import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import { elkInput, elkPositions } from "./elkGraph";
-import { type ElkRunner, elkLayout, MAIN_THREAD_ELK_LIMIT, setElkLoader } from "./elkLayout";
+import { type ElkRunner, elkLayout, setElkLoader } from "./elkLayout";
 import { hierarchyLayout, type LayoutGraph } from "./layoutEngine";
 import { buildGraphModel, edgeWidths, nodeSizes } from "./model";
 import { type ElkSettings, elkSettings, parseGraphOptions } from "./options";
@@ -48,15 +48,23 @@ function viewOf(nodes: number, edges: number): GraphView {
 
 /** A runner that places node i at (10 i, 20 i), as ELK would answer, and counts its calls. */
 function fakeRunner() {
-  const answer = async (graph: Parameters<ElkRunner["layoutOnMainThread"]>[0]) => ({
+  const answer = async (graph: ElkNode) => ({
     ...graph,
     children: (graph.children ?? []).map((child, i) => ({ ...child, x: 10 * i, y: 20 * i })),
   });
-  return {
-    layoutInWorker: vi.fn((graph: Parameters<ElkRunner["layoutInWorker"]>[0]) => answer(graph)),
-    layoutOnMainThread: vi.fn(answer),
-  };
+  return { layoutInWorker: vi.fn((graph: ElkNode, _signal: AbortSignal) => answer(graph)) };
 }
+
+/**
+ * Real ELK for the tests, which have no workers: the bundled build runs in the test itself. The
+ * app ships only the worker build (elkRunner.ts).
+ */
+const realElk: ElkRunner = {
+  layoutInWorker: async (graph) => {
+    const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
+    return new ELK().layout(graph);
+  },
+};
 
 let restores: (() => void)[] = [];
 afterEach(() => {
@@ -141,9 +149,10 @@ describe("ELK graph", () => {
   });
 
   it("lays out the same graph the same way every time, roots on top", async () => {
+    restores.push(setElkLoader(async () => realElk));
     const signal = new AbortController().signal;
-    const first = await elkLayout(tree(), SETTINGS, signal, false);
-    const second = await elkLayout(tree(), SETTINGS, signal, false);
+    const first = await elkLayout(tree(), SETTINGS, signal, true);
+    const second = await elkLayout(tree(), SETTINGS, signal, true);
     expect([...first.positions]).toEqual([...second.positions]);
     expect(first.reversed).toBe(0);
     const y = (node: number) => first.positions[2 * node + 1] as number;
@@ -179,7 +188,6 @@ describe("ELK in the hierarchy panel", () => {
     await waitFor(() => expect(result.current.running).toBe(false));
     expect(loader).toHaveBeenCalledTimes(1);
     expect(runner.layoutInWorker).toHaveBeenCalledTimes(1);
-    expect(runner.layoutOnMainThread).not.toHaveBeenCalled();
     expect(result.current).toMatchObject({ engine: "elk", notice: null, worker: true });
     expect(result.current.positions?.[2]).toBe(10 + (view.nodes[1]?.size ?? 0));
   });
@@ -191,6 +199,7 @@ describe("ELK in the hierarchy panel", () => {
       }),
       setLayoutWorkerFactory(() => null),
     );
+    vi.stubGlobal("Worker", class {});
     const view = viewOf(40, 60);
     const { result } = renderHook(() => useGraphLayout(view, "hierarchy", SETTINGS));
     await waitFor(() => expect(result.current.notice).toBe("elkFailed"));
@@ -199,38 +208,29 @@ describe("ELK in the hierarchy panel", () => {
     expect(result.current.positions).toEqual(kalzit.positions);
   });
 
-  it("keeps Kalzit's layout for large graphs when ELK would run on the page", async () => {
+  it("keeps Kalzit's layout with a notice in a browser without workers, without loading ELK", async () => {
     const loader = vi.fn(async () => fakeRunner());
     restores.push(
       setElkLoader(loader),
       setLayoutWorkerFactory(() => null),
     );
-    const view = viewOf(MAIN_THREAD_ELK_LIMIT + 1, MAIN_THREAD_ELK_LIMIT);
-    const { result } = renderHook(() => useGraphLayout(view, "hierarchy", SETTINGS));
-    await waitFor(() => expect(result.current.notice).toBe("elkTooLarge"));
-    expect(loader).not.toHaveBeenCalled();
-    expect(result.current.engine).toBe("kalzit");
-  });
-
-  it("runs small graphs on the page without a worker", async () => {
-    const runner = fakeRunner();
-    restores.push(setElkLoader(async () => runner));
     const view = viewOf(20, 30);
     const { result } = renderHook(() => useGraphLayout(view, "hierarchy", SETTINGS));
-    await waitFor(() => expect(result.current.running).toBe(false));
-    expect(runner.layoutOnMainThread).toHaveBeenCalledTimes(1);
-    expect(result.current).toMatchObject({ engine: "elk", worker: false });
+    await waitFor(() => expect(result.current.notice).toBe("elkNoWorker"));
+    expect(loader).not.toHaveBeenCalled();
+    const kalzit = hierarchyLayout(layoutRequest(view, "hierarchy", 1, new Map()));
+    expect(result.current).toMatchObject({ engine: "kalzit", running: false });
+    expect(result.current.positions).toEqual(kalzit.positions);
   });
 
   it("starts no new layout for the same settings in a new object, and drops a stale answer", async () => {
     let finish: (() => void) | undefined;
     const runner = fakeRunner();
-    const slow: ElkRunner = {
-      layoutInWorker: runner.layoutInWorker,
-      layoutOnMainThread: vi.fn(
-        (graph: ElkNode) =>
+    const slow = {
+      layoutInWorker: vi.fn(
+        (graph: ElkNode, signal: AbortSignal) =>
           new Promise<ElkNode>((resolve) => {
-            finish = () => resolve(runner.layoutOnMainThread(graph));
+            finish = () => resolve(runner.layoutInWorker(graph, signal));
           }),
       ),
     };
@@ -238,13 +238,14 @@ describe("ELK in the hierarchy panel", () => {
       setElkLoader(async () => slow),
       setLayoutWorkerFactory(() => null),
     );
+    vi.stubGlobal("Worker", class {});
     const view = viewOf(20, 30);
     const { result, rerender } = renderHook(
       ({ elk }: { elk: ElkSettings | null }) => useGraphLayout(view, "hierarchy", elk),
       { initialProps: { elk: { ...SETTINGS } as ElkSettings | null } },
     );
     rerender({ elk: { ...SETTINGS } });
-    await waitFor(() => expect(slow.layoutOnMainThread).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(slow.layoutInWorker).toHaveBeenCalledTimes(1));
     // Back to Kalzit's layout before ELK answers: the late answer is not shown.
     rerender({ elk: null });
     await act(async () => finish?.());

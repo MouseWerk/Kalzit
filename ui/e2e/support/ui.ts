@@ -26,8 +26,10 @@ export async function panelAction(
   action: string,
   language: Language = "en",
 ): Promise<void> {
-  await page
-    .getByRole("article", { name: title, exact: true })
+  const panel = page.getByRole("article", { name: title, exact: true });
+  // While viewing, a panel's actions show once the pointer is on the panel, as for a person.
+  await panel.getByRole("heading", { level: 2 }).first().hover();
+  await panel
     .getByRole("button", { name: t("dashboards.panel.menuNamed", { title }, language) })
     .click();
   await page.getByRole("menuitem", { name: t(action, { title }, language) }).click();

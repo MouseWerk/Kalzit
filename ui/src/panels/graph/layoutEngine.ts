@@ -1,4 +1,6 @@
 import iterate from "graphology-layout-forceatlas2/iterate.js";
+import type { LayoutDirection } from "./layoutProtocol";
+import { seededRandom } from "./layouts/random";
 
 /**
  * Layout algorithms on flat typed arrays, so they run the same in the layout worker and, for
@@ -19,20 +21,26 @@ export interface LayoutGraph {
    * nodes of a layer by it. Absent: no labels.
    */
   labels?: Float32Array;
+  /** Per node, 1 for a pinned one, which a layout leaves where `start` puts it (pinned.ts). */
+  fixed?: Uint8Array;
+  /** Where the nodes are before the layout; read for the pinned ones. */
+  start?: Float32Array;
 }
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 /**
  * Starting positions on a sunflower spiral: deterministic, evenly spread and without overlaps, so
- * the force layout starts calm and the same data always settles the same way.
+ * the force layout starts calm and the same data always settles the same way. Another `seed`
+ * turns the spiral, which gives another arrangement, the same one each time for that seed.
  */
-export function seedPositions(count: number, previous?: Float32Array): Float32Array {
+export function seedPositions(count: number, previous?: Float32Array, seed = 0): Float32Array {
   const out = new Float32Array(count * 2);
+  const turn = seed === 0 ? 0 : seededRandom(seed)() * 2 * Math.PI;
   for (let i = 0; i < count; i++) {
     const r = 10 * Math.sqrt(i + 0.5);
-    out[2 * i] = r * Math.cos(i * GOLDEN_ANGLE);
-    out[2 * i + 1] = r * Math.sin(i * GOLDEN_ANGLE);
+    out[2 * i] = r * Math.cos(i * GOLDEN_ANGLE + turn);
+    out[2 * i + 1] = r * Math.sin(i * GOLDEN_ANGLE + turn);
   }
   if (previous !== undefined) {
     out.set(previous.subarray(0, Math.min(previous.length, out.length)));
@@ -46,6 +54,7 @@ const PPE = 3;
 const NODE_MASS = 6;
 const NODE_CONVERGENCE = 7;
 const NODE_SIZE = 8;
+const NODE_FIXED = 9;
 
 /** Iterations a force layout runs for a graph of `count` nodes: fewer for large ones. */
 export function forceIterations(count: number): number {
@@ -71,6 +80,8 @@ export class ForceLayout {
       this.nodes[at + NODE_MASS] = 1;
       this.nodes[at + NODE_CONVERGENCE] = 1;
       this.nodes[at + NODE_SIZE] = graph.sizes[i] ?? 1;
+      // A pinned node pulls and pushes the others but does not move itself.
+      this.nodes[at + NODE_FIXED] = graph.fixed?.[i] === 1 ? 1 : 0;
     }
     const size = graph.sources.length;
     this.edges = new Float32Array(size * PPE);
@@ -137,15 +148,19 @@ const NODE_GAP = 30;
 const LABEL_GAP = 12;
 const SWEEPS = 4;
 
-/** Where a layer's nodes stand along it: each one its size and label away from the one before. */
-function rowOffsets(row: readonly number[], graph: LayoutGraph): number[] {
+/**
+ * Where a layer's nodes stand along it: each one its size and label away from the one before.
+ * Without `labels` (layers side by side, where a label reaches towards the next layer instead)
+ * only the sizes count.
+ */
+function rowOffsets(row: readonly number[], graph: LayoutGraph, labels: boolean): number[] {
   const out: number[] = [];
   let x = 0;
   row.forEach((node, i) => {
     if (i > 0) {
       const prev = row[i - 1] as number;
       const before = graph.sizes[prev] ?? 0;
-      const label = graph.labels?.[prev] ?? 0;
+      const label = labels ? (graph.labels?.[prev] ?? 0) : 0;
       const own = graph.sizes[node] ?? 0;
       x += Math.max(NODE_GAP, before + (label > 0 ? label + LABEL_GAP : 0) + own + LABEL_GAP);
     }
@@ -153,17 +168,36 @@ function rowOffsets(row: readonly number[], graph: LayoutGraph): number[] {
   });
   // Centred on the node in the middle of the span, label included.
   const last = row.at(-1);
-  const end = last === undefined ? 0 : (out.at(-1) ?? 0) + (graph.labels?.[last] ?? 0);
+  const end =
+    last === undefined ? 0 : (out.at(-1) ?? 0) + (labels ? (graph.labels?.[last] ?? 0) : 0);
   return out.map((at) => at - end / 2);
 }
 
+export interface HierarchyOptions {
+  /** Where the edges point; the layers lie across it (default: down). */
+  direction?: LayoutDirection;
+  /** Told how many nodes' worth of the work is done, a few times per layout. */
+  work?: (done: number, total: number) => void;
+}
+
+/** The parts of the work, in shares of the whole: cycles, layers and the sweeps; placing is the rest. */
+const WORK_CYCLES = 0.1;
+const WORK_LAYERS = 0.1;
+const WORK_SWEEPS = 0.6;
+
 /**
- * A layered layout for directed graphs (dependencies, org charts): edges point down. Cycles are
- * broken by reversing the edges a depth-first search finds going back, layers follow the
- * longest path from the roots, and a few barycenter sweeps order each layer to cut crossings.
+ * A layered layout for directed graphs (dependencies, org charts): edges point down, or in the
+ * direction asked for. Cycles are broken by reversing the edges a depth-first search finds going
+ * back, layers follow the longest path from the roots, and a few barycenter sweeps order each
+ * layer to cut crossings.
  */
-export function hierarchyLayout(graph: LayoutGraph): HierarchyResult {
+export function hierarchyLayout(
+  graph: LayoutGraph,
+  options: HierarchyOptions = {},
+): HierarchyResult {
   const { count, sources, targets } = graph;
+  const direction = options.direction ?? "down";
+  const report = (share: number) => options.work?.(Math.round(share * count), count);
   const out: number[][] = Array.from({ length: count }, () => []);
   for (let e = 0; e < sources.length; e++) {
     const s = sources[e] as number;
@@ -203,6 +237,8 @@ export function hierarchyLayout(graph: LayoutGraph): HierarchyResult {
     }
   }
 
+  report(WORK_CYCLES);
+
   // Longest-path layering in topological order (Kahn).
   const indegree = new Uint32Array(count);
   for (const list of children) for (const c of list) indegree[c] = (indegree[c] as number) + 1;
@@ -236,6 +272,7 @@ export function hierarchyLayout(graph: LayoutGraph): HierarchyResult {
       });
     });
   place();
+  report(WORK_CYCLES + WORK_LAYERS);
   const barycenter = (node: number, neighbours: number[]) => {
     if (neighbours.length === 0) return order[node] as number;
     let sum = 0;
@@ -254,16 +291,38 @@ export function hierarchyLayout(graph: LayoutGraph): HierarchyResult {
         order[node] = i;
       });
     }
+    report(WORK_CYCLES + WORK_LAYERS + (WORK_SWEEPS * (sweep + 1)) / SWEEPS);
   }
 
+  // Layers one under the other keep their labels apart along the layer; layers side by side
+  // stand a label's width further apart instead.
+  const across = direction === "down" || direction === "up";
+  let widest = 0;
+  if (!across && graph.labels !== undefined) {
+    for (const width of graph.labels) widest = Math.max(widest, width);
+  }
+  const gap = LAYER_GAP + widest;
   const positions = new Float32Array(count * 2);
   for (const row of rows) {
-    const offsets = rowOffsets(row, graph);
+    const offsets = rowOffsets(row, graph, across);
     row.forEach((node, i) => {
-      positions[2 * node] = offsets[i] as number;
-      // Graph coordinates grow upwards; the first layer goes on top.
-      positions[2 * node + 1] = -(layer[node] as number) * LAYER_GAP;
+      const along = offsets[i] as number;
+      const depth = (layer[node] as number) * gap;
+      // Graph coordinates grow upwards: "down" puts the first layer on top, and layers side by
+      // side read from the top, too.
+      positions[2 * node] = across ? along : direction === "right" ? depth : -depth;
+      positions[2 * node + 1] = across ? (direction === "down" ? -depth : depth) : -along;
     });
   }
+  if (graph.fixed !== undefined && graph.start !== undefined) {
+    // Pinned nodes stay where they are; the layers are arranged without them moving.
+    for (let i = 0; i < count; i++) {
+      if (graph.fixed[i] === 1) {
+        positions[2 * i] = graph.start[2 * i] ?? 0;
+        positions[2 * i + 1] = graph.start[2 * i + 1] ?? 0;
+      }
+    }
+  }
+  report(1);
   return { positions, reversed, layers };
 }

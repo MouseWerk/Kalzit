@@ -16,6 +16,8 @@ const rel = (path: string) => relative(SRC, path).replaceAll("\\", "/");
 const ALLOWED = new Set([
   "panels/graph/options.ts",
   "panels/graph/adapter.ts",
+  // The stored form of the style rules, which the options of graph and table panels parse.
+  "panels/graph/style/schema.ts",
   "panels/network/index.tsx",
   "panels/hierarchy/index.tsx",
   "panels/path/index.tsx",
@@ -111,9 +113,12 @@ describe("graph panel bundle", () => {
     expect(importsOf(layout, true)).toContain("./elkRunner");
     const runner = closure(resolve(SRC, "panels/graph/elkRunner.ts"), true);
     expect(runner.packages).toEqual(["elkjs/lib/elk-worker.min.js?url"]);
+    // ELK ships once, as its worker build: no main-thread build next to it.
     expect(
-      importsOf(readFileSync(resolve(SRC, "panels/graph/elkRunner.ts"), "utf8"), true),
-    ).toContain("elkjs/lib/elk.bundled.js");
+      importsOf(readFileSync(resolve(SRC, "panels/graph/elkRunner.ts"), "utf8"), true).filter(
+        (spec) => spec.startsWith("elkjs"),
+      ),
+    ).toEqual(["elkjs/lib/elk-worker.min.js?url"]);
   });
 
   it("reads mixed and type-only imports as the bundler does", () => {

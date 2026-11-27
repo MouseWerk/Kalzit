@@ -2069,8 +2069,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   graph panels' chunk (`bundle.test.ts`). The runner starts elkjs's own worker build
   (`elk-worker.min.js`, emitted as a separate asset) as a classic same-origin worker, which the
   CSP (`worker-src 'self' blob:`, no eval needed) allows, registers the layered algorithm and lays
-  out; one worker per run, ended on answer, error, abort or after 60 s. Without workers it runs
-  `elk.bundled.js` on the page for at most 300 nodes. A fixed `elk.randomSeed` keeps results
+  out; one worker per run, ended on answer, error, abort or after 60 s. The worker build is the only
+  copy of ELK in the bundle: there is no main-thread build (`elk.bundled.js` would ship the same
+  code a second time, about 440 kB gzip), so a browser without workers keeps the Kalzit layout with
+  a notice. A fixed `elk.randomSeed` keeps results
   deterministic. Any failure (load, CSP, timeout, a node without a position) falls back to the
   Kalzit layout with a notice. elkjs is offered under "EPL-2.0 OR GPL-3.0-or-later"; Kalzit uses
   it under GPL-3.0-or-later, which combines with the AGPL-3.0 (GPLv3/AGPLv3 section 13), and it

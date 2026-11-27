@@ -3,6 +3,8 @@
 // page waits for. Their keys are part of `MessageKey` like all others; i18n.ts merges an area
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
+import type enGraphCanvas from "./en/graphCanvas.json";
+import type enGraphStyle from "./en/graphStyle.json";
 import type enHandbook from "./en/handbook.json";
 import type enProvisioning from "./en/provisioning.json";
 import type enReports from "./en/reports.json";
@@ -16,6 +18,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enTraces &
   typeof enServerAdmin &
   typeof enApps &
+  typeof enGraphStyle &
+  typeof enGraphCanvas &
   typeof enHandbook;
 
 export const DEFERRED_AREAS = [
@@ -27,6 +31,11 @@ export const DEFERRED_AREAS = [
   // The server sections of 0.7.5 (CORS, self-registration with the visitor's pages, backups).
   "serverAdmin",
   "apps",
+  // The style rules of graph data: the graph panels and tables made from a graph load them.
+  "graphStyle",
+  // The graph panels' canvas (tools, search, minimap, info card, node and edge sheets, the table
+  // view): the graph panels load it together with the style rules (loadAreas).
+  "graphCanvas",
   // The built-in handbook: its page, the search and the article's parts (src/handbook).
   "handbook",
 ] as const;
@@ -61,6 +70,14 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   apps: {
     de: () => import("./de/apps.json").then(pick),
     en: () => import("./en/apps.json").then(pick),
+  },
+  graphStyle: {
+    de: () => import("./de/graphStyle.json").then(pick),
+    en: () => import("./en/graphStyle.json").then(pick),
+  },
+  graphCanvas: {
+    de: () => import("./de/graphCanvas.json").then(pick),
+    en: () => import("./en/graphCanvas.json").then(pick),
   },
   handbook: {
     de: () => import("./de/handbook.json").then(pick),
