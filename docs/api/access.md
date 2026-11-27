@@ -1298,6 +1298,9 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.passkey_known` | `409 conflict` | this passkey is registered already |
 | `second_factor.last_method` | `409 conflict` | the last method while a second factor is required |
 | `second_factor.method_off` | `403 forbidden` | the method is turned off on this server |
+| `passkey_sign_in.off` | `403 forbidden` | signing in with a passkey alone does not work here (passkeys off, an IP address, or password sign-in off on the server) |
+| `passkey_sign_in.expired` | `401 invalid_credentials` | no started passkey dialog for this answer, or it ended |
+| `passkey_sign_in.refused` | `401 invalid_credentials` | the passkey signs no one in (one answer for every reason) |
 | `second_factor.admin_needs_factor` | `403 forbidden` | a reset by an admin without a second factor of their own |
 | `second_factor.reset_self` | `403 forbidden` | an admin's reset of their own second factor |
 | `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |

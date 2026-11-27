@@ -117,6 +117,8 @@ mod tests {
         "mail",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
+        // Signing in with a passkey alone (docs/api/access.md, "Passkey sign-in").
+        "passkey_sign_in",
         // Members joining and leaving organizations (docs/api/access.md).
         "members",
         // Single sign-on (docs/api/sso.md), with the causes it records in the audit log.
