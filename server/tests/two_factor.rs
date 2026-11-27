@@ -1132,6 +1132,8 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     let setup = t.post("/api/me/security/passkeys/setup", json!({}), &owner).await;
     // New passkeys are asked to be discoverable, so they can sign in without a password later.
     assert_eq!(setup.body["publicKey"]["authenticatorSelection"]["residentKey"], "preferred", "{}", setup.body);
+    // No credProtect policy, which Chromium refuses next to a preferred user verification.
+    assert!(setup.body["publicKey"]["extensions"].get("credentialProtectionPolicy").is_none(), "{}", setup.body);
     key.discoverable(&setup.body);
     let r =
         t.post("/api/me/security/passkeys", json!({ "credential": key.register(&setup.body, ORIGIN) }), &owner).await;

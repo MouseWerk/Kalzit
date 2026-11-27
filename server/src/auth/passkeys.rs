@@ -74,6 +74,14 @@ pub fn start_registration(
     if let Some(selection) = options.pointer_mut("/publicKey/authenticatorSelection").and_then(Value::as_object_mut) {
         selection.insert("residentKey".into(), Value::from("preferred"));
     }
+    // Chromium refuses a credProtect policy of "userVerificationRequired" next to a preferred
+    // user verification ("Requested protection policy is inconsistent", NotSupportedError), so
+    // the extension webauthn-rs adds is left out: the sign-in with a passkey alone requires the
+    // verification itself (`start_discoverable`).
+    if let Some(extensions) = options.pointer_mut("/publicKey/extensions").and_then(Value::as_object_mut) {
+        extensions.remove("credentialProtectionPolicy");
+        extensions.remove("enforceCredentialProtectionPolicy");
+    }
     Ok((options, state))
 }
 
