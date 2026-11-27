@@ -25,6 +25,10 @@ import {
   topStep,
   unconnected,
 } from "./quickSteps";
+import "../../../features/dashboards/ui/shared.css";
+import "../../../analysis/analysis.css";
+import "../graph.css";
+import "./canvas.css";
 
 /** The person's choice "Richtung der Kanten beachten", remembered in this browser (decision 11). */
 const DIRECTED_KEY = "kalzit.graph.pathDirected";

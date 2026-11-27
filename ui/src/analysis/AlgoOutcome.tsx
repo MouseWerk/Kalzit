@@ -8,6 +8,7 @@ import {
 } from "./algoSteps";
 import { placeReason, summarySentence } from "./algoText";
 import type { StepOutcome } from "./steps";
+import "./analysis.css";
 
 /**
  * What an algorithm step's card says after a run (board Graph082, frames 3, 15 and 16): its

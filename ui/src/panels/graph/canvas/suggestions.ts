@@ -1,5 +1,6 @@
 import type Sigma from "sigma";
 import type { GraphPalette } from "../colors";
+import "../graph.css";
 
 /**
  * Suggested edges (board Graph082, frame 11 and decision 5): dotted, with an open diamond in the
