@@ -442,7 +442,12 @@ mod tests {
             variables: serde_json::from_value(variables).unwrap(),
             identifier_variables: None,
             cursor: None,
-            limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(1 << 20) },
+            limits: Limits {
+                timeout: Duration::from_secs(5),
+                max_rows,
+                budget: ResponseBudget::new(1 << 20),
+                pattern: Default::default(),
+            },
             filters: Vec::new(),
         }
     }
@@ -589,7 +594,12 @@ mod hardening_tests {
             variables: BTreeMap::new(),
             identifier_variables: None,
             cursor: None,
-            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            limits: Limits {
+                timeout: Duration::from_secs(5),
+                max_rows: 100,
+                budget: ResponseBudget::new(1 << 20),
+                pattern: Default::default(),
+            },
             filters: Vec::new(),
         }
     }

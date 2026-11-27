@@ -169,16 +169,23 @@ struct PatternQuery {
 /// The Cypher of a query and the request it runs with. A pattern's values (its literals and the
 /// template parameters from the request's variables) become the parameters of its Cypher, and
 /// nothing else: no variable reaches a pattern's query as a name.
-fn cypher_of(flavor: Flavor, req: SourceQuery) -> Result<(String, SourceQuery), SourceError> {
+fn cypher_of(flavor: Flavor, req: SourceQuery) -> Result<(String, SourceQuery, Option<Compiled>), SourceError> {
     if req.query.get("pattern").is_none() {
         let q: CypherQuery = req.parse()?;
-        return Ok((q.cypher, req));
+        return Ok((q.cypher, req, None));
     }
     let q: PatternQuery = req.parse()?;
-    let compiled =
-        pattern::compile(&q.pattern, flavor.dialect(), None, &req.variables).map_err(SourceError::Rejected)?;
-    let req = SourceQuery { variables: compiled.parameters, identifier_variables: Some(BTreeSet::new()), ..req };
-    Ok((compiled.text, req))
+    let compiled = pattern::compile(&q.pattern, flavor.dialect(), None, &req.variables, &req.limits.pattern)
+        .map_err(SourceError::Rejected)?;
+    let req =
+        SourceQuery { variables: compiled.parameters.clone(), identifier_variables: Some(BTreeSet::new()), ..req };
+    Ok((compiled.text.clone(), req, Some(Compiled { pattern: q.pattern, compiled })))
+}
+
+/// A pattern and what it compiled to, for the notices on its result (`pattern::annotate`).
+struct Compiled {
+    pattern: Pattern,
+    compiled: pattern::Compiled,
 }
 
 /// `{"communities": {"nodeIds": [...]}}`: the communities of these nodes, by the database's own
@@ -695,7 +702,7 @@ impl DataSourcePlugin for GraphDb {
             return Err(SourceError::rejected("query.invalid_form", "a plan needs a Cypher query or a pattern")
                 .with("detail", "cypher or pattern"));
         }
-        let (cypher, req) = cypher_of(self.0, req)?;
+        let (cypher, req, _) = cypher_of(self.0, req)?;
         // The mode decides; an `EXPLAIN` or `PROFILE` already in the text gives way to it.
         let cypher = without_plan_keyword(&cypher).to_string();
         let checked = super::cypher::check(&cypher).map_err(SourceError::Rejected)?;
@@ -721,20 +728,21 @@ impl DataSourcePlugin for GraphDb {
             let q: CommunitiesQuery = req.parse()?;
             return communities(self.0, conn, &req, &q.communities.node_ids).await;
         }
-        let (cypher, req) = cypher_of(self.0, req)?;
+        let (cypher, req, compiled) = cypher_of(self.0, req)?;
         let checked = super::cypher::check(&cypher).map_err(SourceError::Rejected)?;
         let s: Settings = conn.settings_as()?;
         let db = s.database.as_deref();
         let pool = pool(conn).await?;
         let first = lease(self.0, conn, &pool).await?;
         let reused = first.reused();
-        match run(first, conn, &req, &cypher, &checked, db).await {
+        let compiled = compiled.as_ref();
+        match run(first, conn, &req, &cypher, &checked, db, compiled).await {
             // The pooled connection broke before any record arrived (the server restarted after
             // it was checked): once more on a fresh connection, which is safe as the query only
             // reads. A query error is never retried.
             Err(Attempt::Lost(_)) if reused => {
                 let fresh = lease(self.0, conn, &pool).await?;
-                run(fresh, conn, &req, &cypher, &checked, db).await.map_err(Attempt::into_source)
+                run(fresh, conn, &req, &cypher, &checked, db, compiled).await.map_err(Attempt::into_source)
             }
             other => other.map_err(Attempt::into_source),
         }
@@ -952,6 +960,13 @@ async fn memgraph_schema(c: &mut BoltConn, db: Option<&str>) -> Result<GraphSour
 
 // ---- query plans ----
 
+/// Whether Memgraph refused a query because it runs only outside an explicit transaction
+/// ("... not allowed in multicommand transactions").
+fn outside_transaction_only(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("multicommand transaction") || m.contains("multi-command transaction")
+}
+
 /// `text` without a leading `EXPLAIN` or `PROFILE`.
 fn without_plan_keyword(text: &str) -> &str {
     let trimmed = text.trim_start();
@@ -997,10 +1012,12 @@ async fn plan_rows(
     let mut in_transaction = true;
     let fields = match c.run(text, params.clone()).await {
         Ok(fields) => fields,
-        Err(BoltError::Failure { .. }) if flavor == Flavor::Memgraph => {
+        // Memgraph runs some queries only outside a transaction; only that refusal runs it again,
+        // as a read with the same timeout. Any other failure is the query's own.
+        Err(BoltError::Failure { message, .. }) if flavor == Flavor::Memgraph && outside_transaction_only(&message) => {
             c.reset().await?;
             in_transaction = false;
-            c.run_auto_with(text, params, db).await?
+            c.run_auto_read(text, params, db, timeout).await?
         }
         Err(e) => return Err(e),
     };
@@ -1447,9 +1464,11 @@ async fn run(
     cypher: &str,
     checked: &Checked,
     db: Option<&str>,
+    compiled: Option<&Compiled>,
 ) -> Result<QueryResult, Attempt> {
     let params = parameters(checked, req, lease.conn.utc).map_err(Attempt::Failed)?;
     let mut received = false;
+    let mut records = 0usize;
     let outcome = async {
         let c = &mut lease.conn;
         let utc = c.utc;
@@ -1463,6 +1482,7 @@ async fn run(
             let pulled = c
                 .pull(BATCH, max_message, |record, size| {
                     received = true;
+                    records += 1;
                     result.push(record, size)
                 })
                 .await;
@@ -1492,7 +1512,11 @@ async fn run(
             if clean {
                 lease.release();
             }
-            Ok(result.finish(cypher.to_string()))
+            let mut result = result.finish(cypher.to_string());
+            if let Some(c) = compiled {
+                pattern::annotate(&mut result, &c.pattern, &c.compiled, Some(records));
+            }
+            Ok(result)
         }
         Err(e) if e.is_dead() => {
             lease.discard();
@@ -2071,6 +2095,26 @@ mod algorithm_errors {
 }
 
 #[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    #[test]
+    fn only_memgraphs_transaction_refusal_runs_a_plan_again() {
+        assert!(outside_transaction_only("EXPLAIN not allowed in multicommand transactions."));
+        assert!(outside_transaction_only("PROFILE is not allowed in Multi-Command Transactions"));
+        assert!(!outside_transaction_only("Unbound variable: n"));
+        assert!(!outside_transaction_only("Query timed out"));
+    }
+
+    #[test]
+    fn the_mode_replaces_a_leading_plan_keyword() {
+        assert_eq!(without_plan_keyword("  profile MATCH (n) RETURN n"), "MATCH (n) RETURN n");
+        assert_eq!(without_plan_keyword("EXPLAIN MATCH (n) RETURN n"), "MATCH (n) RETURN n");
+        assert_eq!(without_plan_keyword("MATCH (explain) RETURN explain"), "MATCH (explain) RETURN explain");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::datasources::Limits;
@@ -2088,7 +2132,12 @@ mod tests {
             variables: serde_json::from_value(json!({ "land": "Österreich", "ids": [1, 2], "doc": { "a": 1 } }))
                 .unwrap(),
             identifier_variables: None,
-            limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(1 << 20) },
+            limits: Limits {
+                timeout: Duration::from_secs(5),
+                max_rows,
+                budget: ResponseBudget::new(1 << 20),
+                pattern: Default::default(),
+            },
             cursor: None,
             filters: Vec::new(),
         }

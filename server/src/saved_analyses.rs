@@ -14,9 +14,13 @@
 //! dashboards link cannot go to the trash (`409`, reason `analysis.in_use`).
 //!
 //! An analysis with `parameters` is a search template ("Kunden von $firma"): whoever may read it
-//! runs it with their own values for those parameters and nothing else. The values reach the
-//! queries as bound values of the declared type (`pattern::coerce`), never as query text, as the
-//! parameters of a graph pattern target do (their parameters count as declared too).
+//! runs it with their own values for those parameters and nothing else. Each value takes the
+//! declared type first (`pattern::coerce`) and then reaches the queries as any variable does in
+//! that query language: as a bound parameter in SQL, Cypher, GSQL and graph patterns, and as
+//! escaped text where a language has no parameters (PromQL, LogQL; docs/api/datasources.md,
+//! "Variables"). The parameters of a graph pattern target count as declared too. A parameter
+//! may offer its choices ("Auswahl aus Werten", `pattern::Choices`): the values of one property,
+//! read with a fixed query of the template, at most `pattern::MAX_CHOICES`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,15 +110,25 @@ impl AnalysisModel {
 
     /// The given values of the template's parameters in their declared types (pasted lists split);
     /// a value that does not fit is `422` on `variables`.
-    pub fn typed_values(&self, variables: &mut BTreeMap<String, Value>) -> ApiResult<()> {
+    pub fn typed_values(&self, variables: &mut BTreeMap<String, Value>, max_values: usize) -> ApiResult<()> {
         for p in self.template_parameters() {
             if let Some(v) = variables.get_mut(&p.name) {
-                *v = pattern::coerce(&p.name, p.ty, v).map_err(|d| {
+                *v = pattern::coerce(&p.name, p.ty, v, max_values).map_err(|d| {
                     ApiError::validation(d.message).with_field("variables").with_reason(d.reason, d.params)
                 })?;
             }
         }
         Ok(())
+    }
+
+    /// The data source a parameter's choices are read from: the first pattern target that
+    /// declares it, else the first target.
+    pub fn choices_source(&self, name: &str) -> Option<&str> {
+        let declaring = self
+            .targets
+            .iter()
+            .find(|t| matches!(target_pattern(t), Some(Ok(p)) if p.parameters.iter().any(|p| p.name == name)));
+        declaring.or(self.targets.first()).map(|t| t.datasource_id.as_str())
     }
 
     /// The analysis as a dashboard with one panel (`PANEL_ID`), for the dashboard's checks and
@@ -214,6 +228,9 @@ fn check_parameters(analysis: &AnalysisModel) -> Result<(), String> {
         }
         if analysis.parameters[..i].iter().any(|o| o.name == p.name) {
             return Err(format!("model.parameters[{i}].name {} is declared twice", p.name));
+        }
+        if let Some(c) = &p.choices {
+            c.check().map_err(|d| format!("model.parameters[{i}].choices: {}", d.message))?;
         }
     }
     for (i, t) in analysis.targets.iter().enumerate() {

@@ -694,7 +694,17 @@ connection for five minutes (a change of the source's settings starts afresh).
   lower case as the source names it. `mandatory` is omitted where the source does not say.
 - At most 2,000 labels, edge types and links each; `truncated` is true when there were more.
 
+Labels, edge types and links come largest first, so the cut leaves out the smallest; without
+counts by name.
+
 Other kinds answer `422 query_rejected` with `graph.schema_unsupported`. Errors as for `schema`.
+
+### Counting on request: `POST /orgs/{orgId}/datasources/{datasourceId}/graph-schema/count`
+
+"Zählen" for a label or edge type without a count (TigerGraph, a Memgraph sample): `{ "label":
+"Kunde" }` or `{ "edgeType": "KAUFT" }` answers `{ "count": 18240 }`, counted with a counting
+pattern (`count: true`) run as any query, with its limits and timeout. Needs `datasources:query`;
+other kinds `pattern.unsupported_source`.
 
 ## Query plans: `POST /orgs/{orgId}/datasources/{datasourceId}/plan`
 
@@ -709,9 +719,11 @@ plan is a free query, and `PROFILE` runs it.
 `timeRange` (optional, for the time macros) defaults to the last hour. The query goes through
 the same read-only check as running it (a leading `EXPLAIN` or `PROFILE` in the text is replaced
 by `mode`), runs in a read transaction with the source's time limit, and with `PROFILE` its
-records are counted and dropped, never sent. Memgraph refusing a plan inside a transaction runs
-it outside one, where the query check and the user's privileges keep it read-only as for every
-Memgraph query.
+records are counted and dropped, never sent. Memgraph refusing a plan inside a transaction
+("not allowed in multicommand transactions", and only that) runs it outside one, still as a read
+(`mode: "r"`) with the same server-side timeout (`tx_timeout`); there the query check and the
+user's privileges keep it read-only as for every Memgraph query. A plan counts as a query of the
+source in its usage (docs/api/usage.md), as a free query does.
 
 ```json
 {
@@ -755,29 +767,50 @@ that text through the same read-only check as a typed query.
     { "id": "e", "from": "k", "to": "f", "types": ["KUNDE_VON"], "direction": "out" },
     { "id": "o", "from": "f", "to": "s", "types": ["SITZ_IN"], "optional": true, "minHops": 1, "maxHops": 1 }
   ],
-  "limit": 100,
-  "parameters": [{ "name": "firma", "type": "string", "label": "Firma" }, { "name": "nummern", "type": "idList" }]
+  "limit": 500,
+  "parameters": [
+    { "name": "firma", "type": "string", "label": "Firma", "choices": { "label": "Firma", "property": "name" } },
+    { "name": "nummern", "type": "idList" }
+  ]
 }
 ```
 
 - Nodes: `id` (letters, digits and `_`, starting with a letter, at most 32 characters, not a
-  keyword, not starting with `kz_`), `labels` (all of them; TigerGraph takes one vertex type),
-  `conditions`, and `ids`, the database's own ids (Neo4j element ids, Memgraph ids as whole
-  numbers, TigerGraph primary ids of the node's vertex type), a list or an `idList` parameter.
+  keyword of Cypher or GSQL, not starting with `kz_`), `labels` (one of them; TigerGraph takes one
+  vertex type), `conditions` with `matches` (`all`, the default, or `any`: one of them), and
+  `ids`, the database's own ids (Neo4j element ids, Memgraph ids as whole numbers, TigerGraph
+  primary ids of the node's vertex type), a list or an `idList` parameter.
 - Edges: `id`, `from`, `to`, `types` (any of them; any type when empty), `direction` (`out`, `in`,
-  `both`), `minHops` and `maxHops` (1 to 10, default 1), `optional` (Cypher only), and
-  `conditions` (only on a single edge, not a path).
+  `both`), `minHops` and `maxHops` (default 1; at most the server setting
+  `datasources.pattern_max_hops`, default 6, ceiling 20; a longer path is `pattern.hops_invalid`
+  with `max`), `optional` (Cypher only), and `conditions` with `matches` (only on a single edge,
+  not a path).
 - Conditions: `property`, `op` (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `contains`, `startsWith`,
   `endsWith`, `in`, `isNull`, `isNotNull`) and `value`, a literal `{ "value": ... }` (text, number,
-  true or false, or for `in` a list of one kind) or a parameter `{ "param": "name" }`.
+  true or false, or for `in` a list of texts or numbers of one kind; lists of true and false are
+  refused) or a parameter `{ "param": "name" }`. Names (labels, types, properties) have no
+  control characters and no backslashes.
 - `parameters`: the template parameters with their `type` (`string`, `integer`, `float`,
-  `boolean`, `stringList`, `integerList`, `floatList`, `idList`) and an optional `label`. Values
-  come from the request's variables and are converted to the type (text holding a number becomes
-  the number; text for a list is split at line breaks, commas, semicolons, tabs and spaces, empty
-  parts and repeats left out: pasted ids). At most 1,000 values in a list.
-- Limits: 20 nodes, 30 edges, 20 conditions per node or edge, 20 parameters, `limit` 1 to 10,000
-  (default 100). The required part must hang together (no cross product); each optional edge
-  touches the rest of the pattern.
+  `boolean`, `stringList`, `integerList`, `floatList`, `idList`), an optional `label`, and
+  optional `choices` ("Auswahl aus Werten": the values of `property` on nodes of `label`, see
+  "Search templates"). A parameter may not have the name of a node or edge. Values come from the
+  request's variables and are converted to the type (text holding a number becomes the number;
+  text for a list is pasted values: split at line breaks, commas, semicolons and tabs, for
+  `idList` also at spaces; empty entries and repeats are left out and reported). A list holds at
+  most `datasources.pattern_max_values` values (server setting, default 10,000; ceiling 100,000;
+  `pattern.too_many_values` with `max`). List parameters of a pattern are exempt from the
+  variables' 1,000 values and 64 KiB; together they may take 4 MiB.
+- `count: true` counts the matches instead of returning them ("Treffer zählen"): a frame with one
+  field `matches`.
+- Limits: 20 nodes, 30 edges, 20 conditions per node or edge, 20 parameters, `limit` at least 1
+  (default 500); the data source's row limit caps it. The required part must hang together (no
+  cross product); each optional edge touches the rest of the pattern.
+
+Notices on a pattern's result (`info`): `pattern.limit_reached` (`limit`) when the matches reached
+the limit; whether there are more is not counted ("nicht gezählt"; a second query with `count:
+true` counts them). For each list used as `ids` or with `in`: `pattern.values_found` (`name`,
+`found`, `total`, and for pasted text `duplicates`, `empty`), how many of its values the result
+holds ("9 von 12 gefunden"); a literal list is named `list`.
 
 Values never become text in the query: every literal is a parameter of its own (`$kz_v0`), every
 template parameter the parameter of its name, both typed; labels, types and property names are
@@ -792,25 +825,31 @@ MATCH kz_p0 = (k:Kunde)-[e:KUNDE_VON]->(f:Firma)
 WHERE elementId(k) IN $nummern AND f.name = $firma
 OPTIONAL MATCH kz_p1 = (f)-[o:SITZ_IN]->(s:Ort)
 RETURN kz_p0, kz_p1
-LIMIT 100
+LIMIT 500
 ```
 
-Memgraph writes `id(k) IN $nummern`. GSQL (syntax v2) is an interpreted query whose header
-declares every value with its type (`SET<VERTEX<Kunde>>` for ids, which seed the node); the
-nodes and single edges of all matches are collected and printed. TigerGraph refuses with a
+Several labels are written as a condition, `(k:Kunde OR k:Interessent)`; "any" conditions as one
+group joined by `OR`. A count ends with `RETURN count(*) AS matches` and no limit. Memgraph writes
+`id(k) IN $nummern`. GSQL (syntax v2) is an interpreted query whose header declares every value
+with its type (`SET<VERTEX<Kunde>>` for ids, which seed the node): a first `SELECT` picks the
+limited set of first nodes (`kz_m ... LIMIT n`), a second one collects the nodes and single edges
+of only the matches that start there (GSQL runs `ACCUM` before `LIMIT`, so collecting in the
+first one would gather every match); a count adds one per match. TigerGraph refuses with a
 reason what GSQL cannot say: optional edges (`pattern.gsql_optional`), more than one type per
 node (`pattern.gsql_one_type`), ids without a vertex type (`pattern.gsql_ids_type`), and the
 operators `contains`, `startsWith`, `endsWith`, `isNull` and `isNotNull`
 (`pattern.gsql_operator`). In GSQL a path of more than one edge has no edge alias, so its edges
-are not in the result, only its nodes; the limit caps the matches of the first node, and the
-source's node and edge limits cut what is collected along them.
+are not in the result, only its nodes. `pattern.limit_reached` is not given for TigerGraph, whose
+answer does not say how many matches there were.
 
 ### Compile: `POST /orgs/{orgId}/datasources/{datasourceId}/patterns/compile`
 
 `{ "pattern": {...}, "variables": { "firma": "Acme" } }` answers the text the pattern runs as on
 this source and the values of its parameters: `{ "text": "MATCH ...", "parameters": { "firma":
-"Acme", "kz_v0": 18 } }`. A template parameter without a value compiles all the same and is left
-out of `parameters`. Needs `datasources:query` on the source. A pattern that is not valid is
+"Acme", "kz_v0": 18 }, "limit": 500, "lists": [{ "name": "ids", "values": 12, "duplicates": 1,
+"empty": 1 }] }` (`limit` after the source's cap, none for a count; `lists` for pasted lists: "12
+Werte erkannt, 1 doppelt entfernt, 1 leere Zeile übergangen"). A template parameter without a
+value compiles all the same and is left out of `parameters`. Needs `datasources:query` on the source. A pattern that is not valid is
 `422 validation` with `field: pattern` and its reason; other kinds `pattern.unsupported_source`.
 
 ### The way back: `POST /orgs/{orgId}/datasources/{datasourceId}/patterns/parse`
@@ -826,20 +865,25 @@ become template parameters, typed by where they stand (`string`; `stringList` af
 
 - Cypher: one or more `MATCH` clauses with comma-separated paths, each with an optional `WHERE`;
   then `OPTIONAL MATCH` clauses with exactly one relationship each and a `WHERE` that names only
-  what that clause brings in; then `RETURN` with names only (or `*`) and an optional `LIMIT`
-  with a number (without it, the pattern's default limit). Nodes `(a:L1:L2 {key: value})`,
+  what that clause brings in; then `RETURN` with names only (or `*`, or `count(*)` for a count)
+  and an optional `LIMIT` with a number (without it, the pattern's default limit). Nodes
+  `(a:L {key: value})` or `(a:L1|L2)` (one of them; `(a:L1:L2)`, all of them, is not
+  representable),
   relationships `-[r:A|B*1..3 {key: value}]->`, `<-[...]-`, `-[...]-` and the forms without
   brackets; a path needs a maximum length. Conditions joined by `AND`: `x.key` with `=`, `<>`,
   `<`, `<=`, `>`, `>=`, `CONTAINS`, `STARTS WITH`, `ENDS WITH`, `IN`, `IS NULL`, `IS NOT NULL`,
-  and `elementId(x) IN ...` or `id(x) IN ...`; values are literals or `$parameters`.
+  and `elementId(x) IN ...` or `id(x) IN ...`; in parentheses, one element's conditions joined
+  by `OR` ("any") or its label tests `(x:A OR x:B)`; values are literals or `$parameters`.
 - GSQL: `INTERPRET QUERY (...) FOR GRAPH g [SYNTAX v2] { ... }` with parameters of the types
   above, optional `SetAccum<VERTEX>` and `SetAccum<EDGE>` declarations, seeds `X = {param};`,
   `X = {Type.*};` or `X = {ANY};`, exactly one `SELECT` with comma-separated paths (`Type:a
   -(T>|U>:e)- Type:b`, `<T` and `T` for the other directions, `(T>)*1..3` for a path), `WHERE`
-  with conditions joined by `AND` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `IN`), `ACCUM` only adding
-  aliases to those accumulators, and `LIMIT` with a number; then `X = {@@acc};` and `PRINT`.
-- Everything else (`OR`, `NOT`, `WITH`, functions, aggregations, `ORDER BY`, more than one
-  `SELECT`, other statements) is not representable.
+  with conditions joined by `AND` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `IN`) or one element's in
+  parentheses joined by `OR`, `ACCUM` only adding aliases to those accumulators, and `LIMIT` with
+  a number; or the compiled pair, a limited `SELECT` and an equal one from its result; then
+  `X = {@@acc};` and `PRINT`.
+- Everything else (`OR` across elements, `NOT`, `WITH`, functions, other aggregations,
+  `ORDER BY`, other `SELECT`s, other statements) is not representable.
 
 ### Search templates
 
@@ -851,7 +895,20 @@ an unknown variable is `422` (`variables.unknown`). It runs the stored queries, 
 query, so a viewer needs no `datasources:query`. Values are converted to the declared type
 (`pattern.parameter_type`, `422` with `field: variables`), bound as parameters (also in a
 template's Cypher or GSQL text, where `$firma` is a parameter), and a pattern target without a
-value answers `pattern.parameter_missing` for its `refId`.
+value answers `pattern.parameter_missing` for its `refId`. Each value takes the declared type and
+then reaches the query as that language takes variables: bound in SQL, Cypher, GSQL and patterns,
+escaped text where the language has no parameters (PromQL, LogQL; "Variables").
+
+A parameter with `choices` offers the values of one property ("Auswahl aus Werten"): `POST
+/orgs/{orgId}/analyses/{analysisId}/parameters/{name}/choices` with `{ "search": "nord" }`
+(optional, at most 200 characters, without regard to case) answers `{ "values": [...], "more":
+false }`, at most 200 values in order, `more` when there are more. It runs a fixed query of the
+template on the source of the first pattern target that declares the parameter (else the first
+target): in Cypher `MATCH (n:L) WHERE n.p IS NOT NULL AND toLower(toString(n.p)) CONTAINS
+toLower($kz_search) RETURN DISTINCT n.p ... LIMIT 201` with the search bound, in GSQL the set of
+the property's values, searched by Kalzit. Reading the analysis authorizes it, as it authorizes
+the template's stored queries; readers see the values of that one property only. A parameter
+without `choices` is `404`.
 
 ## Queries: `POST /orgs/{orgId}/query`
 
@@ -2934,15 +2991,15 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `pattern.empty` | | `query_rejected` (running) or `422 validation` with `field: pattern` (compile): the pattern has no node |
 | `pattern.too_large` | `nodes`, `edges`, `conditions`, `parameters` or `bytes` | more than the pattern limits allow (one of the params is set), or a text to read back longer than `bytes` |
 | `pattern.limit_invalid` | `max` | `limit` not 1 to `max` |
-| `pattern.name_invalid` | `what`, `name` | a node, edge or parameter name that is not letters, digits and `_` (or a keyword, or starts with `kz_`), or a label, type or property that is empty, too long or has control characters |
-| `pattern.duplicate_name` | `name` | two nodes, edges or parameters with one name |
+| `pattern.name_invalid` | `what`, `name` | a node, edge or parameter name that is not letters, digits and `_` (or a keyword of Cypher or GSQL, or starts with `kz_`), or a label, type or property that is empty, too long or has control characters or backslashes |
+| `pattern.duplicate_name` | `name` | two nodes, edges or parameters with one name, or a parameter named like a node or edge |
 | `pattern.unknown_node` | `edge`, `node` | an edge names a node the pattern does not have |
-| `pattern.hops_invalid` | `edge`, `max` | a path length outside 1 to `max`, or the least after the most |
+| `pattern.hops_invalid` | `edge`, `max` | a path length outside 1 to `max` (`datasources.pattern_max_hops`), or the least after the most |
 | `pattern.path_conditions` | `edge` | conditions on an edge that stands for a path |
 | `pattern.value_missing` | `element`, `property` | the operator needs a value |
 | `pattern.value_unexpected` | `element`, `property` | `isNull` or `isNotNull` with a value |
-| `pattern.value_invalid` | `want`, `element` | a literal that is not text, a number, true or false, or for `in` not a list of one kind |
-| `pattern.too_many_values` | `max`, `name` | a list with more than `max` values |
+| `pattern.value_invalid` | `want`, `element` | a literal that is not text, a number, true or false, or for `in` not a list of texts or numbers of one kind |
+| `pattern.too_many_values` | `max`, `name` | a list with more than `max` values (`datasources.pattern_max_values`); also `422 validation` on `variables` |
 | `pattern.parameter_undeclared` | `name` | a condition or `ids` uses a parameter not in `parameters` |
 | `pattern.parameter_type` | `name`, `type` or `element` | a parameter's value does not fit its type (`422 validation`, `field: variables`, when a template runs), or a list parameter stands where one value belongs (and the other way round), or Memgraph ids that are not whole numbers |
 | `pattern.parameter_missing` | `name` | the pattern runs without a value for this template parameter |
@@ -2954,6 +3011,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `pattern.gsql_optional` | `edge` | TigerGraph: an optional edge |
 | `pattern.gsql_one_type` | `node` | TigerGraph: a node with more than one type |
 | `pattern.gsql_ids_type` | `node` or `name` | TigerGraph: ids on a node without a type, or one id parameter for two types |
+| `pattern.limit_reached` | `limit` | notice: the matches reached the pattern's limit; more were not counted |
+| `pattern.values_found` | `name`, `found`, `total`, `duplicates`, `empty` | notice: how many values of a list the result holds |
 | `pattern.unsupported_source` | `kind` | `422 validation`: compile or read back on a source that is not Neo4j, Memgraph or TigerGraph |
 | `graph.schema_unsupported` | | `query_rejected`: the source has no graph schema |
 | `plan.not_available_gsql` | | `available: false` in a plan: TigerGraph gives no plan for GSQL |

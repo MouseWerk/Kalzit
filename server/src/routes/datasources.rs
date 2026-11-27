@@ -70,6 +70,13 @@ pub fn routes() -> Vec<RouteDef> {
             graph::graph_schema,
         )
         .long_running(),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/datasources/{datasourceId}/graph-schema/count",
+            Access::OrgMember,
+            graph::count,
+        )
+        .long_running(),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/plan", Access::OrgMember, graph::plan)
             .long_running(),
         route(

@@ -310,6 +310,7 @@ on_both_databases! {
     saving_rechecks_the_query_right,
     readers_run_the_stored_queries_only,
     search_templates_run_with_typed_values,
+    graph_routes_need_the_query_right,
     distributions_follow_the_stored_query_rule,
     folder_trash_takes_analyses_along,
     other_organizations_see_nothing,
@@ -871,9 +872,27 @@ async fn search_templates_run_with_typed_values(t: TestApp) {
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
     assert_eq!(r.body["error"]["reason"], "pattern.parameter_type", "{}", r.body);
     assert_eq!(r.body["error"]["field"], "variables", "{}", r.body);
-    // Only the template's parameters may be sent.
-    let r = t.post(&path, body(json!({ "land": "DE", "mindest": 1, "tabelle": "orders" })), &vera).await;
-    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    // Only the template's parameters may be sent: no other variable, none of Kalzit's own names.
+    for extra in [json!({ "tabelle": "orders" }), json!({ "kz_v0": "x" }), json!({ "__timeFrom": 1 })] {
+        let mut variables = json!({ "land": "DE", "mindest": 1 });
+        variables.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let r = t.post(&path, body(variables), &vera).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{extra}: {}", r.body);
+    }
+    // The field distribution of a template takes the same typed values.
+    let dist = |mindest: Value| {
+        json!({ "refId": "A", "path": ["country"], "timeRange": { "from": T0 - DAY, "to": T0 },
+                "variables": { "land": "DE", "mindest": mindest } })
+    };
+    let r = t.post(&format!("~/analyses/{id}/distribution"), dist(json!("zwanzig")), &vera).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::UNPROCESSABLE_ENTITY, json!("pattern.parameter_type")),
+        "{}",
+        r.body
+    );
+    let r = t.post(&format!("~/analyses/{id}/distribution"), dist(json!("5")), &vera).await;
+    assert_ne!(r.body["error"]["reason"], "pattern.parameter_type", "{}", r.body);
     // The same query as a free query is not the viewer's to run.
     let free = json!({
         "queries": [{ "refId": "A", "datasourceId": source, "query": { "sql": sql } }],
@@ -909,6 +928,68 @@ async fn search_templates_run_with_typed_values(t: TestApp) {
         assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{place}: {}", r.body);
         let message = r.body["error"]["message"].as_str().unwrap();
         assert!(message.starts_with(place), "{place}: {message}");
+    }
+}
+
+/// The graph routes of a data source (schema as a graph, counts, plans, patterns) need the right
+/// to query it, as its schema and free queries do: a viewer is refused, a query grant on the
+/// source lets them in, and another organization's source is not found. A SQLite source answers
+/// past the check that it has no graph schema, plan or patterns.
+async fn graph_routes_need_the_query_right(t: TestApp) {
+    let source = t.source("shop").await;
+    let (vera_id, vera) = t.member("Vera", "viewer").await;
+    let pattern = json!({ "nodes": [{ "id": "a" }] });
+    let routes = [
+        ("GET", "graph-schema".to_string(), Value::Null),
+        ("POST", "graph-schema/count".to_string(), json!({ "label": "Kunde" })),
+        ("POST", "plan".to_string(), json!({ "query": { "sql": SQL }, "mode": "explain" })),
+        ("POST", "patterns/compile".to_string(), json!({ "pattern": pattern })),
+        ("POST", "patterns/parse".to_string(), json!({ "text": "MATCH (a) RETURN a" })),
+    ];
+    let app = &t;
+    let call = |method: &'static str, route: String, body: Value, org: String, cookie: String| {
+        let path = format!("/orgs/{org}/datasources/{source}/{route}");
+        async move { if method == "GET" { app.get(&path, &cookie).await } else { app.post(&path, body, &cookie).await } }
+    };
+    for (method, route, body) in routes.clone() {
+        // A viewer may not query the source, which is hidden from them: refused as not found.
+        let r = call(method, route.clone(), body, t.org.clone(), vera.clone()).await;
+        assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{route}: {}", r.body);
+        assert!(r.body["error"].is_object() && r.body["available"].is_null(), "{route}: {}", r.body);
+    }
+    t.grant("user", &vera_id, "datasource", &source, "query").await;
+    let expected = [
+        (StatusCode::UNPROCESSABLE_ENTITY, "graph.schema_unsupported"),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+        (StatusCode::OK, ""),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+    ];
+    for ((method, route, body), (status, reason)) in routes.clone().into_iter().zip(expected) {
+        let r = call(method, route.clone(), body, t.org.clone(), vera.clone()).await;
+        assert_eq!(r.status, status, "{route}: {}", r.body);
+        if reason.is_empty() {
+            assert_eq!(
+                (r.body["available"].clone(), r.body["reason"].clone()),
+                (json!(false), json!("plan.unsupported"))
+            );
+        } else {
+            assert_eq!(r.body["error"]["reason"], reason, "{route}: {}", r.body);
+        }
+    }
+    // Another organization's member reaches nothing here, through their own organization either.
+    let (stranger_id, stranger) = t.member("Fremd", "admin").await;
+    let other =
+        id_of(t.post("/admin/orgs", json!({ "name": "Andere GmbH", "ownerUserId": stranger_id }), &t.owner).await);
+    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(&t.org)
+        .bind(&stranger_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    for (method, route, body) in routes {
+        let r = call(method, route.clone(), body, other.clone(), stranger.clone()).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{route}: {}", r.body);
     }
 }
 

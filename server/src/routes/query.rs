@@ -193,6 +193,21 @@ const OPTIONS_REF_ID: &str = "options";
 
 /// Bounds the variables of a request: count, names and total size.
 pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
+    check_variables_with(variables, &BTreeSet::new(), MAX_LIST_VALUES)
+}
+
+/// The bytes the list parameters of graph patterns (pasted ids) may take together, apart from the
+/// other variables' `MAX_VARIABLES_BYTES`.
+const MAX_PATTERN_LIST_BYTES: usize = 4 * 1024 * 1024;
+
+/// `check_variables`, where the variables in `lists` are list parameters of graph patterns: lists
+/// of up to `max_list` values, or pasted text, counted apart from the others' size
+/// (`MAX_PATTERN_LIST_BYTES`). The pattern checks their values again with its types.
+pub(crate) fn check_variables_with(
+    variables: &BTreeMap<String, Value>,
+    lists: &BTreeSet<String>,
+    max_list: usize,
+) -> ApiResult<()> {
     let refuse = |e: ApiError| Err(e.with_field("variables"));
     if variables.len() > MAX_VARIABLES {
         return refuse(
@@ -213,12 +228,32 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
                 .param("name", bad),
         );
     }
-    if let Some((name, _)) =
-        variables.iter().find(|(_, v)| v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
+    if let Some((name, _)) = variables
+        .iter()
+        .find(|(name, v)| !lists.contains(*name) && v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
     {
         return refuse(list_too_long(name));
     }
-    if serde_json::to_string(variables).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
+    if let Some((name, _)) =
+        variables.iter().find(|(name, v)| lists.contains(*name) && v.as_array().is_some_and(|i| i.len() > max_list))
+    {
+        return refuse(
+            ApiError::validation(format!("{name} holds more than {max_list} values"))
+                .because("pattern.too_many_values")
+                .param("name", name)
+                .param("max", max_list),
+        );
+    }
+    let (pasted, others): (BTreeMap<&String, &Value>, BTreeMap<&String, &Value>) =
+        variables.iter().partition(|(name, _)| lists.contains(*name));
+    if serde_json::to_string(&pasted).map_or(usize::MAX, |s| s.len()) > MAX_PATTERN_LIST_BYTES {
+        return refuse(
+            ApiError::validation(format!("pasted lists exceed {MAX_PATTERN_LIST_BYTES} bytes"))
+                .because("variables.too_large")
+                .param("bytes", MAX_PATTERN_LIST_BYTES),
+        );
+    }
+    if serde_json::to_string(&others).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
         return refuse(
             ApiError::validation(format!("variable values exceed {MAX_VARIABLES_BYTES} bytes"))
                 .because("variables.too_large")
@@ -238,7 +273,12 @@ async fn query(
     crate::datasources::check_item_steps(&req.queries)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    check_variables(&req.variables)?;
+    // List parameters of graph patterns take pasted lists, longer than other variables.
+    let lists: BTreeSet<String> =
+        req.queries.iter().flat_map(|i| crate::datasources::pattern::list_parameters(&i.query)).collect();
+    let max_list =
+        if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(&state).await? };
+    check_variables_with(&req.variables, &lists, max_list)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run. The caller's
     // rights on data sources are read once per request, however many sources the items query.
@@ -921,7 +961,11 @@ pub(crate) async fn stored_items(
     limit: Option<u32>,
     cursors: &BTreeMap<String, String>,
 ) -> ApiResult<PanelRun> {
-    check_variables(variables)?;
+    let lists: BTreeSet<String> =
+        panel.targets.iter().flat_map(|t| crate::datasources::pattern::list_parameters(&t.query)).collect();
+    let max_list =
+        if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(state).await? };
+    check_variables_with(variables, &lists, max_list)?;
     let (resolved, identifiers) = resolve_variables(model, variables)?;
     let filters = adhoc_filters(model, variables)?;
     let read = frames_read(&panel.transformations);

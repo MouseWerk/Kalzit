@@ -760,7 +760,12 @@ mod tests {
             variables: BTreeMap::new(),
             identifier_variables: None,
             cursor: None,
-            limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(bytes) },
+            limits: Limits {
+                timeout: Duration::from_secs(5),
+                max_rows,
+                budget: ResponseBudget::new(bytes),
+                pattern: Default::default(),
+            },
             filters: Vec::new(),
         }
     }

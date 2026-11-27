@@ -655,18 +655,16 @@ impl BoltConn {
         self.run_with(query, Vec::new(), extra).await
     }
 
-    /// RUN outside a transaction (auto-commit) with parameters, in `db` when set.
-    pub async fn run_auto_with(
+    /// RUN outside a transaction (auto-commit) with parameters, as a read (`mode: "r"`) with the
+    /// server's own timeout, in `db` when set (`read_extras`).
+    pub async fn run_auto_read(
         &mut self,
         query: &str,
         params: Vec<(String, Bv)>,
         db: Option<&str>,
+        timeout: Duration,
     ) -> Result<Vec<String>, BoltError> {
-        let extra = match db.filter(|d| !d.is_empty()) {
-            Some(db) => vec![("db".to_string(), Bv::String(db.into()))],
-            None => Vec::new(),
-        };
-        self.run_with(query, params, extra).await
+        self.run_with(query, params, read_extras(db, timeout)).await
     }
 
     async fn run_with(
@@ -774,6 +772,17 @@ impl BoltConn {
     }
 }
 
+/// The metadata of a read: read mode, the database when set, and the server-side timeout, the
+/// same as `BoltConn::begin` sends for a transaction.
+pub fn read_extras(db: Option<&str>, timeout: Duration) -> Vec<(String, Bv)> {
+    let mut extra = vec![("mode".to_string(), Bv::String("r".into()))];
+    if let Some(db) = db.filter(|d| !d.is_empty()) {
+        extra.push(("db".to_string(), Bv::String(db.into())));
+    }
+    extra.push(("tx_timeout".to_string(), Bv::Int(timeout.as_millis().clamp(1, i64::MAX as u128) as i64)));
+    extra
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum PullEnd {
     Done,
@@ -784,6 +793,20 @@ pub enum PullEnd {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_outside_a_transaction_send_the_mode_and_the_timeout() {
+        let extra = read_extras(Some("kunden"), Duration::from_millis(2500));
+        assert_eq!(
+            extra,
+            [
+                ("mode".to_string(), Bv::String("r".into())),
+                ("db".to_string(), Bv::String("kunden".into())),
+                ("tx_timeout".to_string(), Bv::Int(2500)),
+            ]
+        );
+        assert_eq!(read_extras(Some(""), Duration::ZERO)[1], ("tx_timeout".to_string(), Bv::Int(1)));
+    }
 
     fn round_trip(v: Bv) {
         let mut bytes = Vec::new();

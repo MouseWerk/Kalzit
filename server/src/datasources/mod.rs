@@ -545,6 +545,8 @@ pub struct Limits {
     pub timeout: Duration,
     pub max_rows: usize,
     pub budget: ResponseBudget,
+    /// What graph patterns may ask for (the server's settings and `max_rows`).
+    pub pattern: pattern::PatternLimits,
 }
 
 /// Kalzit's own database, so a PostgreSQL source pointing at it can be refused after connecting
@@ -1555,7 +1557,12 @@ impl DataSources {
         let own = |key: &str| ds.settings.get(key).and_then(Value::as_u64);
         let timeout = own("queryTimeoutSecs").map_or(server_timeout, |t| t.clamp(1, server_timeout));
         let rows = own("maxRows").map_or(server_rows, |r| r.clamp(1, server_rows));
-        Ok(Limits { timeout: Duration::from_secs(timeout), max_rows: rows as usize, budget })
+        let pattern = pattern::PatternLimits {
+            max_values: self.setting_u64(state, pattern::SETTING_MAX_VALUES).await? as usize,
+            max_hops: u32::try_from(self.setting_u64(state, pattern::SETTING_MAX_HOPS).await?).unwrap_or(u32::MAX),
+            max_limit: u32::try_from(rows).unwrap_or(u32::MAX),
+        };
+        Ok(Limits { timeout: Duration::from_secs(timeout), max_rows: rows as usize, budget, pattern })
     }
 
     async fn response_budget(&self, state: &AppState) -> ApiResult<ResponseBudget> {
@@ -3001,6 +3008,18 @@ pub async fn read_graph_schema(
     }
 }
 
+/// What graph patterns may ask for on `ds`: the server's settings and the source's row limit.
+pub async fn pattern_limits(state: &AppState, ds: &Datasource) -> ApiResult<pattern::PatternLimits> {
+    let registry = &state.datasources;
+    let budget = registry.response_budget(state).await?;
+    Ok(registry.limits(state, ds, budget).await?.pattern)
+}
+
+/// The largest list a pattern takes on this server (`datasources.pattern_max_values`).
+pub async fn pattern_max_values(state: &AppState) -> ApiResult<usize> {
+    Ok(state.datasources.setting_u64(state, pattern::SETTING_MAX_VALUES).await? as usize)
+}
+
 /// `EXPLAIN` or `PROFILE` of one query (`DataSourcePlugin::plan`), with the source's limits and
 /// timeout and a query slot, as running it. **The caller has already authorized it**
 /// (`datasources:query`: a plan is a free query, and `PROFILE` runs it).
@@ -3036,12 +3055,35 @@ pub async fn run_plan(
         let plan = kind.plugin.plan(&conn, req, mode).await;
         Ok::<_, SourceError>((conn, plan))
     };
-    match tokio::time::timeout(timeout, run).await {
+    let started = Instant::now();
+    let answer = match tokio::time::timeout(timeout, run).await {
         Err(_) => Err(api_error(SourceError::Timeout(timeout.as_secs()), None)),
         Ok(Err(e)) => Err(api_error(e, None)),
         Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
         Ok(Ok((_, Ok(plan)))) => Ok(plan),
+    };
+    // A plan is a query of the source in its usage, as a free query is; one refused before it
+    // ran is not (`usage::ran`).
+    let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let counted = match &answer {
+        Ok(plan) => Some(crate::usage::SourceQuery {
+            duration_ms,
+            rows: plan.root.as_ref().and_then(|r| r.rows).map_or(0, |r| i64::try_from(r).unwrap_or(i64::MAX)),
+            error: None,
+            cache: crate::usage::Cache::NotUsed,
+        }),
+        Err(e) if crate::usage::ran(e.code) => Some(crate::usage::SourceQuery {
+            duration_ms,
+            rows: 0,
+            error: Some(crate::usage::ErrorClass::of(e.code)),
+            cache: crate::usage::Cache::NotUsed,
+        }),
+        Err(_) => None,
+    };
+    if let Some(query) = counted {
+        crate::usage::record_query(state, &ds.org_id, &ds.id, query).await;
     }
+    answer
 }
 
 // ---- helpers shared by the built-in kinds ----

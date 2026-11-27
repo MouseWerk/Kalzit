@@ -1272,16 +1272,19 @@ impl DataSourcePlugin for TigerGraph {
         let mut q: TgQuery = req.parse()?;
         let c = client(conn).await?;
         // A pattern becomes an interpreted query whose values are its typed parameters.
+        let mut from_pattern = None;
         if let Some(pattern) = q.pattern.take() {
             if q.gsql.is_some() || q.installed.is_some() || !q.params.is_empty() {
                 return Err(SourceError::rejected("query.invalid_form", "a pattern stands alone in the query")
                     .with("detail", "pattern"));
             }
             let dialect = super::pattern::Dialect::TigerGraph;
-            let compiled = super::pattern::compile(&pattern, dialect, Some(&c.graph), &req.variables)
-                .map_err(SourceError::Rejected)?;
-            q.gsql = Some(compiled.text);
-            q.params = compiled.parameters.into_iter().collect();
+            let compiled =
+                super::pattern::compile(&pattern, dialect, Some(&c.graph), &req.variables, &req.limits.pattern)
+                    .map_err(SourceError::Rejected)?;
+            q.gsql = Some(compiled.text.clone());
+            q.params = compiled.parameters.clone().into_iter().collect();
+            from_pattern = Some((pattern, compiled));
         }
         let max_bytes = req.limits.budget.remaining();
         let timeout_ms = req.limits.timeout.as_millis().to_string();
@@ -1356,9 +1359,12 @@ impl DataSourcePlugin for TigerGraph {
         let mut body = c.ok_or_error(Answer { status, body })?;
         let results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
         drop(body);
-        let result = to_result(&results, &req, conn.settings(), executed);
+        let mut result = to_result(&results, &req, conn.settings(), executed);
         // The raw answer is gone; only the result's own charge remains.
         drop(charge);
+        if let Some((pattern, compiled)) = &from_pattern {
+            super::pattern::annotate(&mut result, pattern, compiled, None);
+        }
         Ok(result)
     }
 }

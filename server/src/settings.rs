@@ -181,6 +181,20 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Most suggested edges one link prediction step gives; 50 is also the step's default.",
     },
     SettingDef {
+        key: "datasources.pattern_max_values",
+        scope: Scope::Server,
+        default: || json!(10_000),
+        ui_editable: true,
+        description: "Most values in one list of a graph pattern, pasted ones included; repeats and empty entries are left out first.",
+    },
+    SettingDef {
+        key: "datasources.pattern_max_hops",
+        scope: Scope::Server,
+        default: || json!(6),
+        ui_editable: true,
+        description: "Longest path one edge of a graph pattern may stand for; a longer one is refused.",
+    },
+    SettingDef {
         key: "datasources.algorithm_timeout_secs",
         scope: Scope::Org,
         default: || json!(INHERIT),
@@ -1525,6 +1539,12 @@ fn rule(key: &str) -> Option<Rule> {
         "datasources.algorithm_max_length" => Rule::Int { min: 2, max: 100 },
         "datasources.algorithm_max_top_k" => Rule::Int { min: 1, max: crate::analysis::MAX_SIMILAR as i64 },
         "datasources.algorithm_max_suggestions" => Rule::Int { min: 1, max: crate::analysis::MAX_SUGGESTIONS as i64 },
+        "datasources.pattern_max_values" => {
+            Rule::Int { min: 1, max: crate::datasources::pattern::MAX_VALUES_CEILING as i64 }
+        }
+        "datasources.pattern_max_hops" => {
+            Rule::Int { min: 1, max: crate::datasources::pattern::MAX_HOPS_CEILING as i64 }
+        }
         "ai.enabled" | "ai.org_enabled" | "ai.allow_org_providers" => Rule::Bool,
         "ai.request_timeout_secs" => Rule::Int { min: 5, max: 900 },
         "ai.user_requests_per_day" => Rule::Int { min: 0, max: 10_000_000 },

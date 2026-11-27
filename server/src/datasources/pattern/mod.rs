@@ -29,13 +29,18 @@ pub const MAX_NODES: usize = 20;
 pub const MAX_EDGES: usize = 30;
 /// The most conditions on one node or edge.
 pub const MAX_CONDITIONS: usize = 20;
-/// The longest path an edge may stand for.
-pub const MAX_HOPS: u32 = 10;
-pub const DEFAULT_LIMIT: u32 = 100;
-pub const MAX_LIMIT: u32 = 10_000;
-/// The most values in one list (pasted ids included).
-pub const MAX_VALUES: usize = 1_000;
+/// The longest path any server setting may allow (`datasources.pattern_max_hops`, default 6).
+pub const MAX_HOPS_CEILING: u32 = 20;
+pub const DEFAULT_MAX_HOPS: u32 = 6;
+/// The limit of a pattern without one; the data source's row limit caps every limit.
+pub const DEFAULT_LIMIT: u32 = 500;
+pub const MAX_LIMIT: u32 = 10_000_000;
+/// The most values in one list (`datasources.pattern_max_values`, default 10,000).
+pub const DEFAULT_MAX_VALUES: usize = 10_000;
+pub const MAX_VALUES_CEILING: usize = 100_000;
 pub const MAX_PARAMETERS: usize = 20;
+/// The most values a "choice from values" offers.
+pub const MAX_CHOICES: usize = 200;
 /// The longest name (label, type, property) and text value.
 const MAX_NAME: usize = 256;
 const MAX_TEXT: usize = 10_000;
@@ -43,13 +48,158 @@ const MAX_TEXT: usize = 10_000;
 /// may not start with it.
 pub const RESERVED_PREFIX: &str = "kz_";
 
-/// Words neither language takes as a variable name.
+/// Words Cypher or GSQL do not take as a variable name.
 const KEYWORDS: &[&str] = &[
-    "accum", "all", "and", "any", "as", "asc", "by", "call", "case", "contains", "create", "delete", "desc",
-    "distinct", "else", "end", "ends", "exists", "false", "for", "from", "graph", "having", "if", "in", "is", "limit",
-    "match", "merge", "not", "null", "optional", "or", "order", "print", "query", "remove", "return", "select", "set",
-    "skip", "starts", "then", "to", "true", "union", "unwind", "where", "when", "with", "xor",
+    "accum",
+    "all",
+    "and",
+    "any",
+    "as",
+    "asc",
+    "avg",
+    "bag",
+    "between",
+    "bool",
+    "both",
+    "break",
+    "by",
+    "call",
+    "case",
+    "catch",
+    "commit",
+    "compress",
+    "contains",
+    "continue",
+    "count",
+    "create",
+    "datetime",
+    "delete",
+    "desc",
+    "distinct",
+    "do",
+    "double",
+    "edge",
+    "else",
+    "end",
+    "ends",
+    "escape",
+    "exception",
+    "exists",
+    "false",
+    "file",
+    "filter",
+    "float",
+    "for",
+    "foreach",
+    "from",
+    "global",
+    "graph",
+    "group",
+    "having",
+    "if",
+    "in",
+    "insert",
+    "int",
+    "interpret",
+    "intersect",
+    "into",
+    "is",
+    "isempty",
+    "jsonarray",
+    "jsonobject",
+    "like",
+    "limit",
+    "list",
+    "load",
+    "map",
+    "match",
+    "max",
+    "merge",
+    "min",
+    "minus",
+    "not",
+    "now",
+    "null",
+    "offset",
+    "optional",
+    "or",
+    "order",
+    "out",
+    "per",
+    "post",
+    "post_accum",
+    "print",
+    "query",
+    "raise",
+    "range",
+    "remove",
+    "return",
+    "returns",
+    "sample",
+    "select",
+    "set",
+    "skip",
+    "starts",
+    "string",
+    "sum",
+    "syntax",
+    "then",
+    "to",
+    "to_csv",
+    "true",
+    "try",
+    "tuple",
+    "typedef",
+    "uint",
+    "union",
+    "unwind",
+    "update",
+    "using",
+    "values",
+    "vertex",
+    "when",
+    "where",
+    "while",
+    "with",
+    "xor",
 ];
+
+/// The server settings of pattern limits (Einstellungen › Datenquellen).
+pub const SETTING_MAX_VALUES: &str = "datasources.pattern_max_values";
+pub const SETTING_MAX_HOPS: &str = "datasources.pattern_max_hops";
+
+/// What the server's settings and the data source allow a pattern (`Limits::pattern`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatternLimits {
+    /// Values in one list, pasted ones included.
+    pub max_values: usize,
+    /// The longest path one edge may stand for.
+    pub max_hops: u32,
+    /// The most matches: the data source's row limit.
+    pub max_limit: u32,
+}
+
+impl Default for PatternLimits {
+    fn default() -> Self {
+        Self { max_values: DEFAULT_MAX_VALUES, max_hops: DEFAULT_MAX_HOPS, max_limit: MAX_LIMIT }
+    }
+}
+
+/// Whether one or all of an element's conditions must hold.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum Match {
+    #[default]
+    All,
+    Any,
+}
+
+impl Match {
+    fn is_all(&self) -> bool {
+        *self == Match::All
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -67,6 +217,10 @@ pub struct Pattern {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<PatternParameter>>", optional))]
     pub parameters: Vec<PatternParameter>,
+    /// Counts the matches instead of returning them ("Treffer zählen"): a frame with `matches`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub count: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -75,13 +229,17 @@ pub struct Pattern {
 pub struct PatternNode {
     /// The node's name in the query (`a`): letters, digits and `_`.
     pub id: String,
-    /// All of these labels (Cypher); TigerGraph takes at most one vertex type.
+    /// One of these labels; TigerGraph takes at most one vertex type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
     pub conditions: Vec<Condition>,
+    /// All conditions (the default) or any one of them.
+    #[serde(default, skip_serializing_if = "Match::is_all")]
+    #[cfg_attr(test, ts(as = "Option<Match>", optional))]
+    pub matches: Match,
     /// Only these nodes, by the database's own id (Neo4j element id, Memgraph id, TigerGraph
     /// primary id): a list, or a parameter of type `idList` (pasted ids).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,7 +273,8 @@ pub struct PatternEdge {
     pub types: Vec<String>,
     #[serde(default)]
     pub direction: Direction,
-    /// The path length, 1 to `MAX_HOPS` steps; both 1 (the default) is one edge.
+    /// The path length, 1 to the server's longest path (`PatternLimits::max_hops`); both 1 (the
+    /// default) is one edge.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     #[cfg_attr(test, ts(as = "Option<u32>", optional))]
     pub min_hops: u32,
@@ -130,6 +289,9 @@ pub struct PatternEdge {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
     pub conditions: Vec<Condition>,
+    #[serde(default, skip_serializing_if = "Match::is_all")]
+    #[cfg_attr(test, ts(as = "Option<Match>", optional))]
+    pub matches: Match,
 }
 
 fn one() -> u32 {
@@ -194,6 +356,7 @@ pub enum Operand {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
 pub struct LiteralOperand {
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub value: Value,
 }
 
@@ -225,8 +388,7 @@ pub enum ParameterType {
     StringList,
     IntegerList,
     FloatList,
-    /// Database ids; text with one id per line (or separated by commas, semicolons, tabs or
-    /// spaces) is split into a list.
+    /// Database ids; pasted text is split at line breaks, commas, semicolons, tabs and spaces.
     IdList,
 }
 
@@ -269,8 +431,33 @@ pub struct PatternParameter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub label: Option<String>,
+    /// "Auswahl aus Werten": the template offers the values of this property, read with a fixed
+    /// query of the template (at most `MAX_CHOICES`, with a search), instead of a free field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub choices: Option<Choices>,
 }
 
+/// Where a template parameter's choices come from: the values of `property` on nodes of `label`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Choices {
+    pub label: String,
+    pub property: String,
+}
+
+impl Choices {
+    pub fn check(&self) -> Result<(), Detail> {
+        if !is_name(&self.label) {
+            return Err(bad_name("label", &self.label));
+        }
+        if !is_name(&self.property) {
+            return Err(bad_name("property", &self.property));
+        }
+        Ok(())
+    }
+}
 /// The query language a pattern compiles to, with the differences between the Cypher engines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialect {
@@ -287,7 +474,29 @@ pub struct Compiled {
     pub text: String,
     /// By parameter name: the literals (`kz_v0`, ...) and the template parameters that had a
     /// value. GSQL declares each with its type in the query's header.
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub parameters: BTreeMap<String, Value>,
+    /// The limit the text has: the pattern's, capped at the data source's row limit; none for a
+    /// count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub limit: Option<u32>,
+    /// Lists given as pasted text: how many values they hold after empty parts and repeats were
+    /// left out.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<ListReport>>", optional))]
+    pub lists: Vec<ListReport>,
+}
+
+/// What became of a pasted list ("13 Werte erkannt, 1 doppelt entfernt, 1 leere Zeile übergangen").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ListReport {
+    pub name: String,
+    pub values: usize,
+    pub duplicates: usize,
+    pub empty: usize,
 }
 
 fn invalid(reason: &'static str, message: impl Into<String>) -> Detail {
@@ -304,9 +513,9 @@ pub fn is_alias(s: &str) -> bool {
         && !KEYWORDS.contains(&s.to_ascii_lowercase().as_str())
 }
 
-/// A label, type or property name: any text without control characters.
+/// A label, type or property name: any text without control characters and backslashes.
 fn is_name(s: &str) -> bool {
-    !s.trim().is_empty() && s.len() <= MAX_NAME && !s.chars().any(char::is_control)
+    !s.trim().is_empty() && s.len() <= MAX_NAME && !s.chars().any(|c| c.is_control() || c == '\\')
 }
 
 /// A plain name, as GSQL needs it: letters, digits and `_`, not starting with a digit.
@@ -346,7 +555,7 @@ impl Pattern {
             .with("edges", MAX_EDGES));
         }
         let limit = self.limit();
-        if !(1..=MAX_LIMIT).contains(&limit) {
+        if !(1..=MAX_LIMIT).contains(&limit) && !self.count {
             return Err(
                 invalid("pattern.limit_invalid", format!("the limit must be 1 to {MAX_LIMIT}")).with("max", MAX_LIMIT)
             );
@@ -399,13 +608,8 @@ impl Pattern {
             if let Some(bad) = e.types.iter().find(|t| !is_name(t)) {
                 return Err(bad_name("type", bad));
             }
-            if !(1..=MAX_HOPS).contains(&e.min_hops) || !(e.min_hops..=MAX_HOPS).contains(&e.max_hops) {
-                return Err(invalid(
-                    "pattern.hops_invalid",
-                    format!("the path length of {} must be 1 to {MAX_HOPS} steps, the least first", e.id),
-                )
-                .with("edge", &e.id)
-                .with("max", MAX_HOPS));
+            if !(1..=MAX_HOPS_CEILING).contains(&e.min_hops) || !(e.min_hops..=MAX_HOPS_CEILING).contains(&e.max_hops) {
+                return Err(hops_invalid(&e.id, MAX_HOPS_CEILING));
             }
             if e.max_hops > 1 && !e.conditions.is_empty() {
                 return Err(invalid(
@@ -416,7 +620,28 @@ impl Pattern {
             }
             self.check_conditions(&e.id, &e.conditions)?;
         }
+        // A parameter named like a node or edge would read as both in GSQL.
+        if let Some(p) = self.parameters.iter().find(|p| names.contains(&p.name.to_ascii_lowercase())) {
+            return Err(invalid(
+                "pattern.duplicate_name",
+                format!("the parameter {} has the name of a node or edge", p.name),
+            )
+            .with("name", &p.name));
+        }
+        for p in &self.parameters {
+            if let Some(c) = &p.choices {
+                c.check()?;
+            }
+        }
         self.parts().map(|_| ())
+    }
+
+    /// The checks that depend on the server and the source: the longest path.
+    pub fn check_limits(&self, limits: &PatternLimits) -> Result<(), Detail> {
+        if let Some(e) = self.edges.iter().find(|e| e.max_hops > limits.max_hops) {
+            return Err(hops_invalid(&e.id, limits.max_hops));
+        }
+        Ok(())
     }
 
     fn check_conditions(&self, owner: &str, conditions: &[Condition]) -> Result<(), Detail> {
@@ -470,7 +695,7 @@ impl Pattern {
                 }
             }
             Operand::Value(v) => {
-                literal_kind(&v.value, list).map_err(|d| d.with("element", owner))?;
+                literal_kind(&v.value, list, MAX_VALUES_CEILING).map_err(|d| d.with("element", owner))?;
             }
         }
         Ok(())
@@ -541,6 +766,15 @@ impl Pattern {
     }
 }
 
+fn hops_invalid(edge: &str, max: u32) -> Detail {
+    invalid(
+        "pattern.hops_invalid",
+        format!("the path of {edge} may be 1 to {max} steps long here, the least first; search with a shorter path"),
+    )
+    .with("edge", edge)
+    .with("max", max)
+}
+
 struct Parts<'a> {
     nodes: Vec<&'a str>,
     edges: Vec<&'a PatternEdge>,
@@ -552,7 +786,7 @@ fn bad_name(what: &str, name: &str) -> Detail {
         "node" | "edge" | "parameter" => {
             "letters, digits and _, starting with a letter, at most 32 characters, not a keyword and not starting with kz_"
         }
-        _ => "not empty, without control characters, at most 256 characters",
+        _ => "not empty, without control characters or backslashes, at most 256 characters",
     };
     invalid("pattern.name_invalid", format!("{what} name {name:?} is not valid: {rule}"))
         .with("what", what)
@@ -587,21 +821,37 @@ fn scalar_kind(v: &Value) -> Option<ParameterType> {
     }
 }
 
-/// The kind of a literal: a scalar (text, number, true or false) or, where `list`, a list of
-/// scalars of one kind (whole numbers and numbers mix as numbers).
-fn literal_kind(v: &Value, list: bool) -> Result<Kind, Detail> {
+fn too_many(name: Option<&str>, max: usize) -> Detail {
+    let d = invalid(
+        "pattern.too_many_values",
+        format!(
+            "a list holds at most {max} values on this server; split the list or search by a property the group shares"
+        ),
+    )
+    .with("max", max);
+    match name {
+        Some(n) => d.with("name", n),
+        None => d,
+    }
+}
+
+/// The kind of a literal: a scalar (text, number, true or false) or, where `list`, a list of texts
+/// or numbers of one kind (whole numbers and numbers mix as numbers). Lists of true and false
+/// are refused: `in` over two values is a condition of its own.
+fn literal_kind(v: &Value, list: bool, max_values: usize) -> Result<Kind, Detail> {
     let wrong = |want: &str| invalid("pattern.value_invalid", format!("the value must be {want}")).with("want", want);
     if !list {
         return scalar_kind(v).map(Kind::Scalar).ok_or_else(|| wrong("text, a number, true or false"));
     }
     let Value::Array(items) = v else { return Err(wrong("a list")) };
-    if items.len() > MAX_VALUES {
-        return Err(invalid("pattern.too_many_values", format!("a list holds at most {MAX_VALUES} values"))
-            .with("max", MAX_VALUES));
+    if items.len() > max_values {
+        return Err(too_many(None, max_values));
     }
     let mut kind: Option<ParameterType> = None;
     for item in items {
-        let k = scalar_kind(item).ok_or_else(|| wrong("a list of texts, numbers or true and false"))?;
+        let k = scalar_kind(item)
+            .filter(|k| *k != ParameterType::Boolean)
+            .ok_or_else(|| wrong("a list of texts or numbers"))?;
         kind = Some(match (kind, k) {
             (None, k) => k,
             (Some(a), b) if a == b => a,
@@ -614,16 +864,35 @@ fn literal_kind(v: &Value, list: bool) -> Result<Kind, Detail> {
     Ok(Kind::List(kind.unwrap_or(ParameterType::String)))
 }
 
-/// Pasted ids: one per line, or separated by commas, semicolons, tabs or spaces; empty parts and
-/// repeats left out, in their order.
-pub fn split_ids(text: &str) -> Vec<String> {
+/// Pasted values: split at line breaks, commas, semicolons and tabs, and for ids also at spaces;
+/// empty parts and repeats left out, in their order. Answers the values and the report.
+pub fn split_values(name: &str, text: &str, ids: bool) -> (Vec<String>, ListReport) {
     let mut seen = BTreeSet::new();
-    text.split(['\n', '\r', ',', ';', '\t', ' '])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter(|s| seen.insert(s.to_string()))
-        .map(String::from)
-        .collect()
+    let (mut duplicates, mut empty, mut values) = (0, 0, Vec::new());
+    let lines: Vec<&str> = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+    let last = lines.len().saturating_sub(1);
+    for (i, line) in lines.iter().enumerate() {
+        // A line break at the very end makes no empty entry.
+        if i == last && line.trim().is_empty() {
+            continue;
+        }
+        for part in line.split([',', ';', '\t']) {
+            let words: Vec<&str> = if ids { part.split_whitespace().collect() } else { vec![part.trim()] };
+            if words.iter().all(|w| w.is_empty()) {
+                empty += 1;
+                continue;
+            }
+            for w in words {
+                if seen.insert(w.to_string()) {
+                    values.push(w.to_string());
+                } else {
+                    duplicates += 1;
+                }
+            }
+        }
+    }
+    let report = ListReport { name: name.to_string(), values: values.len(), duplicates, empty };
+    (values, report)
 }
 
 fn parameter_error(name: &str, ty: ParameterType) -> Detail {
@@ -665,54 +934,68 @@ fn coerce_scalar(name: &str, ty: ParameterType, v: &Value) -> Result<Value, Deta
 }
 
 /// A template parameter's value with the declared type: text that holds a number becomes the
-/// number, text given for a list is split like pasted ids (`split_ids`). Anything that does not
-/// fit is refused, never guessed.
-pub fn coerce(name: &str, ty: ParameterType, v: &Value) -> Result<Value, Detail> {
+/// number, text given for a list is split (`split_values`, reported). Anything that does not fit
+/// is refused, never guessed; a list longer than `max_values` too.
+pub fn coerce_reported(
+    name: &str,
+    ty: ParameterType,
+    v: &Value,
+    max_values: usize,
+) -> Result<(Value, Option<ListReport>), Detail> {
     if !ty.is_list() {
-        return coerce_scalar(name, ty, v);
+        return coerce_scalar(name, ty, v).map(|v| (v, None));
     }
-    let items: Vec<Value> = match v {
-        Value::Array(items) => items.clone(),
-        Value::String(s) => split_ids(s).into_iter().map(Value::String).collect(),
-        Value::Number(_) | Value::Bool(_) => vec![v.clone()],
+    let (items, report): (Vec<Value>, Option<ListReport>) = match v {
+        Value::Array(items) => (items.clone(), None),
+        Value::String(s) => {
+            let (values, report) = split_values(name, s, ty == ParameterType::IdList);
+            (values.into_iter().map(Value::String).collect(), Some(report))
+        }
+        Value::Number(_) => (vec![v.clone()], None),
         _ => return Err(parameter_error(name, ty)),
     };
-    if items.len() > MAX_VALUES {
-        return Err(invalid("pattern.too_many_values", format!("{name} holds more than {MAX_VALUES} values"))
-            .with("max", MAX_VALUES)
-            .with("name", name));
+    if items.len() > max_values {
+        return Err(too_many(Some(name), max_values));
     }
     let item = ty.item();
-    items
+    let list = items
         .iter()
         .map(|i| coerce_scalar(name, item, i).map_err(|_| parameter_error(name, ty)))
-        .collect::<Result<Vec<_>, _>>()
-        .map(Value::Array)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((Value::Array(list), report))
+}
+
+/// `coerce_reported` without the report.
+pub fn coerce(name: &str, ty: ParameterType, v: &Value, max_values: usize) -> Result<Value, Detail> {
+    coerce_reported(name, ty, v, max_values).map(|(v, _)| v)
 }
 
 /// Gives every value of a compiled pattern its parameter name, its value and type.
 struct Binder<'a> {
     pattern: &'a Pattern,
     variables: &'a BTreeMap<String, Value>,
+    limits: PatternLimits,
     /// Name to (value, type).
     bound: BTreeMap<String, (Value, ParameterType)>,
+    lists: Vec<ListReport>,
     next: usize,
 }
 
 impl<'a> Binder<'a> {
-    fn new(pattern: &'a Pattern, variables: &'a BTreeMap<String, Value>) -> Self {
-        Self { pattern, variables, bound: BTreeMap::new(), next: 0 }
+    fn new(pattern: &'a Pattern, variables: &'a BTreeMap<String, Value>, limits: PatternLimits) -> Self {
+        Self { pattern, variables, limits, bound: BTreeMap::new(), lists: Vec::new(), next: 0 }
     }
 
     /// The parameter name for `operand`: a new `kz_vN` for a literal, the template parameter's
     /// own name (bound once) for a parameter.
     fn bind(&mut self, operand: &Operand, list: bool) -> Result<String, Detail> {
+        let max = self.limits.max_values;
         match operand {
             Operand::Value(v) => {
-                let ty = literal_kind(&v.value, list)?.ty();
+                let ty = literal_kind(&v.value, list, max)?.ty();
                 let name = format!("{RESERVED_PREFIX}v{}", self.next);
                 self.next += 1;
-                let value = coerce(&name, ty, &v.value)?;
+                let value = coerce(&name, ty, &v.value, max)?;
                 self.bound.insert(name.clone(), (value, ty));
                 Ok(name)
             }
@@ -726,7 +1009,8 @@ impl<'a> Binder<'a> {
                         invalid("pattern.parameter_missing", format!("the search needs a value for {}", p.param))
                             .with("name", &p.param)
                     })?;
-                    let value = coerce(&p.param, declared.ty, given)?;
+                    let (value, report) = coerce_reported(&p.param, declared.ty, given, max)?;
+                    self.lists.extend(report);
                     self.bound.insert(p.param.clone(), (value, declared.ty));
                 }
                 Ok(p.param.clone())
@@ -734,25 +1018,219 @@ impl<'a> Binder<'a> {
         }
     }
 
-    fn finish(self, text: String) -> (Compiled, BTreeMap<String, ParameterType>) {
+    fn finish(self, text: String, limit: Option<u32>) -> (Compiled, BTreeMap<String, ParameterType>) {
         let types = self.bound.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
         let parameters = self.bound.into_iter().map(|(k, (v, _))| (k, v)).collect();
-        (Compiled { text, parameters }, types)
+        (Compiled { text, parameters, limit, lists: self.lists }, types)
     }
 }
 
-/// Compiles `pattern` for `dialect` with the template parameters' values from `variables`;
-/// `graph` names TigerGraph's graph.
+impl Pattern {
+    /// The limit the text gets: the pattern's, capped at the data source's row limit.
+    pub fn effective_limit(&self, limits: &PatternLimits) -> u32 {
+        self.limit().min(limits.max_limit.max(1))
+    }
+}
+
+/// Compiles `pattern` for `dialect` with the template parameters' values from `variables`, within
+/// `limits`; `graph` names TigerGraph's graph.
 pub fn compile(
     pattern: &Pattern,
     dialect: Dialect,
     graph: Option<&str>,
     variables: &BTreeMap<String, Value>,
+    limits: &PatternLimits,
 ) -> Result<Compiled, Detail> {
     pattern.check()?;
+    pattern.check_limits(limits)?;
     match dialect {
-        Dialect::Neo4j | Dialect::Memgraph => cypher::compile(pattern, dialect, variables),
-        Dialect::TigerGraph => gsql::compile(pattern, graph.unwrap_or_default(), variables),
+        Dialect::Neo4j | Dialect::Memgraph => cypher::compile(pattern, dialect, variables, limits),
+        Dialect::TigerGraph => gsql::compile(pattern, graph.unwrap_or_default(), variables, limits),
+    }
+}
+
+/// Text of a value for comparing list values with what a result holds (`"7"` and `7` alike).
+fn value_text(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        // A typed value of a graph result: `{"$type": "int64", "value": "..."}`.
+        Value::Object(o) => o.get("value").and_then(value_text),
+        _ => None,
+    }
+}
+
+/// Notices on a pattern's result: the limit reached without counting ("nicht gezählt") when
+/// `records` reached it, and for each list how many of its values the result holds ("9 von 12
+/// gefunden"), with what was left out of a pasted list.
+pub fn annotate(
+    result: &mut crate::shapes::QueryResult,
+    pattern: &Pattern,
+    compiled: &Compiled,
+    records: Option<usize>,
+) {
+    use crate::shapes::{NoticeSeverity, QueryResult};
+    if let (Some(limit), Some(records)) = (compiled.limit, records)
+        && records >= limit as usize
+    {
+        result.add_notice(
+            invalid(
+                "pattern.limit_reached",
+                format!("{limit} matches shown, the limit of the pattern; whether there are more was not counted"),
+            )
+            .with("limit", limit)
+            .notice(NoticeSeverity::Info),
+        );
+    }
+    let QueryResult::Graph { graph } = &*result else { return };
+    // Per list parameter: which values occur on the nodes it narrows.
+    let mut found: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    let mut seek = |param: &str, node: &PatternNode, property: Option<&str>| {
+        let Some(Value::Array(values)) = compiled.parameters.get(param) else { return };
+        let wanted: BTreeSet<String> = values.iter().filter_map(value_text).collect();
+        let hits = graph
+            .nodes
+            .iter()
+            .filter(|n| node.labels.is_empty() || n.labels.iter().any(|l| node.labels.contains(l)))
+            .filter_map(|n| match property {
+                None => Some(n.id.clone()),
+                Some(p) => n.properties.get(p).and_then(value_text),
+            })
+            .filter(|t| wanted.contains(t));
+        let entry = found.entry(param.to_string()).or_insert_with(|| (wanted.clone(), BTreeSet::new()));
+        entry.1.extend(hits);
+    };
+    for n in &pattern.nodes {
+        if let Some(op) = &n.ids {
+            seek(&operand_name(op, compiled), n, None);
+        }
+        for c in n.conditions.iter().filter(|c| c.op == Operator::In) {
+            if let Some(op) = &c.value {
+                seek(&operand_name(op, compiled), n, Some(&c.property));
+            }
+        }
+    }
+    let mut notices = Vec::new();
+    for (name, (wanted, hits)) in found {
+        // Literal lists keep their `kz_v` name, which no one typed: they are named as such.
+        let shown = if name.starts_with(RESERVED_PREFIX) { "list".to_string() } else { name.clone() };
+        let report = compiled.lists.iter().find(|r| r.name == name);
+        let mut d =
+            invalid("pattern.values_found", format!("{} of {} values of {shown} found", hits.len(), wanted.len()))
+                .with("name", &shown)
+                .with("found", hits.len())
+                .with("total", wanted.len());
+        if let Some(r) = report {
+            d = d.with("duplicates", r.duplicates).with("empty", r.empty);
+        }
+        notices.push(d.notice(NoticeSeverity::Info));
+    }
+    for n in notices {
+        result.add_notice(n);
+    }
+}
+
+/// The parameter name an operand was bound under: its own for a template parameter; for a literal
+/// the `kz_v` parameter holding the same value.
+fn operand_name(op: &Operand, compiled: &Compiled) -> String {
+    match op {
+        Operand::Param(p) => p.param.clone(),
+        Operand::Value(v) => compiled
+            .parameters
+            .iter()
+            .find(|(k, val)| k.starts_with(RESERVED_PREFIX) && val.as_array().is_some() && values_equal(val, &v.value))
+            .map(|(k, _)| k.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| value_text(a) == value_text(b))
+        }
+        _ => value_text(a) == value_text(b),
+    }
+}
+
+/// The names of the list parameters of a query that is a pattern (`{"pattern": {...}}`): their
+/// values may be as long as `PatternLimits::max_values` allows, longer than other variables.
+pub fn list_parameters(query: &Value) -> BTreeSet<String> {
+    let Some(Ok(p)) = query.get("pattern").map(|p| serde_json::from_value::<Pattern>(p.clone())) else {
+        return BTreeSet::new();
+    };
+    p.parameters.into_iter().filter(|p| p.ty.is_list()).map(|p| p.name).collect()
+}
+
+/// The pattern that counts the nodes of `label` or the edges of `edge_type` ("Zählen" in the
+/// schema, for sources without statistics).
+pub fn count_pattern(label: Option<&str>, edge_type: Option<&str>) -> Pattern {
+    let node = |id: &str, labels: Vec<String>| PatternNode {
+        id: id.into(),
+        labels,
+        conditions: Vec::new(),
+        matches: Match::All,
+        ids: None,
+    };
+    let (nodes, edges) = match edge_type {
+        Some(t) => (
+            vec![node("a", Vec::new()), node("b", Vec::new())],
+            vec![PatternEdge {
+                id: "e".into(),
+                from: "a".into(),
+                to: "b".into(),
+                types: vec![t.to_string()],
+                direction: Direction::Out,
+                min_hops: 1,
+                max_hops: 1,
+                optional: false,
+                conditions: Vec::new(),
+                matches: Match::All,
+            }],
+        ),
+        None => (vec![node("n", label.map(|l| vec![l.to_string()]).unwrap_or_default())], Vec::new()),
+    };
+    Pattern { nodes, edges, limit: None, parameters: Vec::new(), count: true }
+}
+
+/// The fixed query of a template parameter's choices (`Choices`): the distinct values of the
+/// property, as the source's own query form. Cypher filters by `$kz_search` (bound) and stops after
+/// `MAX_CHOICES + 1`; GSQL has no text search in a pattern, so its values are filtered by Kalzit.
+pub fn choices_query(dialect: Dialect, graph: Option<&str>, choices: &Choices) -> Result<Value, Detail> {
+    choices.check()?;
+    match dialect {
+        Dialect::Neo4j | Dialect::Memgraph => {
+            let quote = |s: &str| format!("`{}`", s.replace('`', "``"));
+            let (label, property) = (quote(&choices.label), quote(&choices.property));
+            Ok(serde_json::json!({ "cypher": format!(
+                "MATCH (n:{label}) WHERE n.{property} IS NOT NULL \
+                 AND toLower(toString(n.{property})) CONTAINS toLower($kz_search) \
+                 RETURN DISTINCT n.{property} AS value ORDER BY value LIMIT {}",
+                MAX_CHOICES + 1
+            ) }))
+        }
+        Dialect::TigerGraph => {
+            let plain = |what: &str, s: &str| {
+                if is_plain_name(s) {
+                    Ok(s.to_string())
+                } else {
+                    Err(invalid(
+                        "pattern.gsql_name",
+                        format!("TigerGraph needs plain names; the {what} {s:?} is not one"),
+                    )
+                    .with("what", what)
+                    .with("name", s))
+                }
+            };
+            let graph = plain("graph", graph.unwrap_or_default())?;
+            let (label, property) = (plain("vertex type", &choices.label)?, plain("property", &choices.property)?);
+            Ok(serde_json::json!({ "gsql": format!(
+                "INTERPRET QUERY () FOR GRAPH {graph} SYNTAX v2 {{\n  SetAccum<STRING> @@kz_values;\n  \
+                 kz_s = {{{label}.*}};\n  kz_r = SELECT s FROM kz_s:s ACCUM @@kz_values += to_string(s.{property});\n  \
+                 PRINT @@kz_values AS kz_values;\n}}"
+            ) }))
+        }
     }
 }
 
@@ -828,7 +1306,7 @@ fn declare_parameters(p: &mut Pattern, types: &BTreeMap<String, ParameterType>) 
         if !is_alias(name) {
             return Err(bad_name("parameter", name));
         }
-        p.parameters.push(PatternParameter { name: name.clone(), ty: *ty, label: None });
+        p.parameters.push(PatternParameter { name: name.clone(), ty: *ty, label: None, choices: None });
     }
     Ok(())
 }
@@ -881,7 +1359,7 @@ mod tests {
         p.edges[0].to = "c".into();
         assert_eq!(reason(&p), "pattern.unknown_node");
         let mut p = knows();
-        p.edges[0].max_hops = 11;
+        p.edges[0].max_hops = 21;
         assert_eq!(reason(&p), "pattern.hops_invalid");
         let mut p = knows();
         p.edges[0].min_hops = 3;
@@ -914,11 +1392,29 @@ mod tests {
         p.edges[0].conditions.push(Condition { property: "x".into(), op: Operator::IsNull, value: None });
         assert_eq!(reason(&p), "pattern.path_conditions");
         let mut p = knows();
-        p.nodes.push(PatternNode { id: "c".into(), labels: vec![], conditions: vec![], ids: None });
+        p.nodes.push(PatternNode {
+            id: "c".into(),
+            labels: vec![],
+            conditions: vec![],
+            matches: Match::All,
+            ids: None,
+        });
         assert_eq!(reason(&p), "pattern.not_connected");
         let mut p = knows();
-        p.nodes.push(PatternNode { id: "c".into(), labels: vec![], conditions: vec![], ids: None });
-        p.nodes.push(PatternNode { id: "d".into(), labels: vec![], conditions: vec![], ids: None });
+        p.nodes.push(PatternNode {
+            id: "c".into(),
+            labels: vec![],
+            conditions: vec![],
+            matches: Match::All,
+            ids: None,
+        });
+        p.nodes.push(PatternNode {
+            id: "d".into(),
+            labels: vec![],
+            conditions: vec![],
+            matches: Match::All,
+            ids: None,
+        });
         p.edges.push(PatternEdge {
             id: "f".into(),
             from: "c".into(),
@@ -929,6 +1425,7 @@ mod tests {
             max_hops: 1,
             optional: true,
             conditions: vec![],
+            matches: Match::All,
         });
         assert_eq!(reason(&p), "pattern.optional_unattached");
         let mut p = knows();
@@ -938,31 +1435,116 @@ mod tests {
 
     #[test]
     fn parameters_take_their_declared_type() {
-        assert_eq!(coerce("n", ParameterType::Integer, &json!("42")).unwrap(), json!(42));
-        assert_eq!(coerce("n", ParameterType::Integer, &json!(7)).unwrap(), json!(7));
-        assert_eq!(coerce("n", ParameterType::Integer, &json!("4.2")).unwrap_err().reason, "pattern.parameter_type");
-        assert_eq!(coerce("n", ParameterType::Float, &json!("2.5")).unwrap(), json!(2.5));
-        assert_eq!(coerce("n", ParameterType::Float, &json!("NaN")).unwrap_err().reason, "pattern.parameter_type");
-        assert_eq!(coerce("n", ParameterType::Boolean, &json!("true")).unwrap(), json!(true));
-        assert_eq!(coerce("n", ParameterType::String, &json!(12)).unwrap(), json!("12"));
-        assert_eq!(coerce("n", ParameterType::String, &json!(["a"])).unwrap_err().reason, "pattern.parameter_type");
+        let c = |name: &str, ty: ParameterType, v: Value| coerce(name, ty, &v, 10);
+        assert_eq!(c("n", ParameterType::Integer, json!("42")).unwrap(), json!(42));
+        assert_eq!(c("n", ParameterType::Integer, json!(7)).unwrap(), json!(7));
+        assert_eq!(c("n", ParameterType::Integer, json!("4.2")).unwrap_err().reason, "pattern.parameter_type");
+        assert_eq!(c("n", ParameterType::Float, json!("2.5")).unwrap(), json!(2.5));
+        assert_eq!(c("n", ParameterType::Float, json!("NaN")).unwrap_err().reason, "pattern.parameter_type");
+        assert_eq!(c("n", ParameterType::Boolean, json!("true")).unwrap(), json!(true));
+        assert_eq!(c("n", ParameterType::String, json!(12)).unwrap(), json!("12"));
+        assert_eq!(c("n", ParameterType::String, json!(["a"])).unwrap_err().reason, "pattern.parameter_type");
+        // Ids split at spaces too; other lists keep a space inside a value.
         assert_eq!(
-            coerce("ids", ParameterType::IdList, &json!("4:ab:1\n4:ab:2, 4:ab:3;4:ab:1\t4:ab:4  ")).unwrap(),
+            c(
+                "ids",
+                ParameterType::IdList,
+                json!(
+                    "4:ab:1
+4:ab:2, 4:ab:3;4:ab:1	4:ab:4  "
+                )
+            )
+            .unwrap(),
             json!(["4:ab:1", "4:ab:2", "4:ab:3", "4:ab:4"])
         );
-        assert_eq!(coerce("ids", ParameterType::IntegerList, &json!("1 2 3")).unwrap(), json!([1, 2, 3]));
-        assert_eq!(coerce("ids", ParameterType::IntegerList, &json!(["1", 2])).unwrap(), json!([1, 2]));
         assert_eq!(
-            coerce("ids", ParameterType::IntegerList, &json!("1 zwei")).unwrap_err().reason,
-            "pattern.parameter_type"
+            c(
+                "n",
+                ParameterType::StringList,
+                json!(
+                    "Nord GmbH
+Süd AG"
+                )
+            )
+            .unwrap(),
+            json!(["Nord GmbH", "Süd AG"])
         );
-        let many = (0..=MAX_VALUES).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
-        assert_eq!(coerce("ids", ParameterType::IdList, &json!(many)).unwrap_err().reason, "pattern.too_many_values");
+        assert_eq!(
+            c(
+                "n",
+                ParameterType::IntegerList,
+                json!(
+                    "1
+2;3"
+                )
+            )
+            .unwrap(),
+            json!([1, 2, 3])
+        );
+        assert_eq!(c("n", ParameterType::IntegerList, json!("1 2")).unwrap_err().reason, "pattern.parameter_type");
+        assert_eq!(c("n", ParameterType::IntegerList, json!(["1", 2])).unwrap(), json!([1, 2]));
+        assert_eq!(c("n", ParameterType::IntegerList, json!(true)).unwrap_err().reason, "pattern.parameter_type");
+        let many = (0..=10).map(|i| i.to_string()).collect::<Vec<_>>().join(
+            "
+",
+        );
+        let e = c("ids", ParameterType::IdList, json!(many)).unwrap_err();
+        assert_eq!((e.reason, e.params["max"].as_str()), ("pattern.too_many_values", "10"));
     }
 
     #[test]
-    fn pasted_ids_are_split_in_order_without_repeats() {
-        assert_eq!(split_ids(" a\r\nb,,c;a \t d e"), ["a", "b", "c", "d", "e"]);
-        assert!(split_ids(" \n ,; ").is_empty());
+    fn pasted_values_are_split_and_reported() {
+        let (values, r) = split_values(
+            "n",
+            "4711
+4712
+4712
+
+4720, 4731; 4733
+",
+            false,
+        );
+        assert_eq!(values, ["4711", "4712", "4720", "4731", "4733"]);
+        assert_eq!((r.values, r.duplicates, r.empty), (5, 1, 1));
+        let (values, r) = split_values("n", " a  b	c,,a", true);
+        assert_eq!(values, ["a", "b", "c"]);
+        assert_eq!((r.duplicates, r.empty), (1, 1));
+        let (values, r) = split_values("n", "", true);
+        assert!(values.is_empty() && r.empty == 0);
+    }
+
+    #[test]
+    fn boolean_lists_and_parameters_named_like_aliases_are_refused() {
+        let mut p = knows();
+        p.nodes[1].conditions.push(Condition {
+            property: "x".into(),
+            op: Operator::In,
+            value: Some(Operand::literal(json!([true, false]))),
+        });
+        assert_eq!(reason(&p), "pattern.value_invalid");
+        let mut p = knows();
+        p.parameters[0].name = "B".into();
+        p.nodes[0].conditions[0].value = Some(Operand::param("B"));
+        assert_eq!(reason(&p), "pattern.duplicate_name");
+        let mut p = knows();
+        p.nodes[0].id = "vertex".into();
+        p.edges[0].from = "vertex".into();
+        assert_eq!(reason(&p), "pattern.name_invalid");
+        let mut p = knows();
+        p.nodes[0].labels = vec!["Per\\son".into()];
+        assert_eq!(reason(&p), "pattern.name_invalid");
+    }
+
+    #[test]
+    fn the_server_limits_paths_and_the_source_limits_matches() {
+        let mut p = knows();
+        p.edges[0].max_hops = 7;
+        let limits = PatternLimits::default();
+        let e =
+            compile(&p, Dialect::Neo4j, None, &BTreeMap::from([("firma".into(), json!("x"))]), &limits).unwrap_err();
+        assert_eq!((e.reason, e.params["max"].as_str()), ("pattern.hops_invalid", "6"));
+        let p = knows();
+        assert_eq!(p.limit(), 500);
+        assert_eq!(p.effective_limit(&PatternLimits { max_limit: 50, ..limits }), 50);
     }
 }

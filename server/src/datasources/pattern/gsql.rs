@@ -8,32 +8,39 @@
 //!   SetAccum<EDGE> @@kz_edges;
 //!   kz_m = SELECT a FROM Person:a -(KENNT>:e)- Person:b
 //!     WHERE a.name == firma AND e.seit > kz_v0
-//!     ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e
-//!     LIMIT 100;
+//!     LIMIT 500;
+//!   kz_r = SELECT a FROM kz_m:a -(KENNT>:e)- Person:b
+//!     WHERE a.name == firma AND e.seit > kz_v0
+//!     ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e;
 //!   kz_n = {@@kz_nodes};
 //!   PRINT kz_n;
 //!   PRINT @@kz_edges;
 //! }
 //! ```
 //!
+//! The first `SELECT` picks the limited set of first nodes; only the matches that start there are
+//! collected, so the limit bounds the work and the answer (GSQL runs `ACCUM` before `LIMIT`).
+//! A count ("Treffer zählen") adds one per match to `@@kz_count` and prints it as `matches`.
+//!
 //! Every value is a query parameter, declared with its type in the header and sent as a typed
 //! REST parameter (`tigergraph.rs`). Ids are a `SET<VERTEX<Type>>` parameter seeding the node
-//! (`kz_s0 = {ids};`); a node without a type is seeded with `{ANY}`.
+//! (`kz_s0 = {ids};`); a node without a type is seeded with `{ANY}`. "Any of" conditions are one
+//! group joined by `OR`.
 //!
 //! What GSQL cannot say is refused with a reason: optional edges (`pattern.gsql_optional`), more
 //! than one type per node (`pattern.gsql_one_type`), names that are not plain
 //! (`pattern.gsql_name`), and the operators `contains`, `startsWith`, `endsWith`, `isNull` and
 //! `isNotNull` (`pattern.gsql_operator`; attributes always have a value in TigerGraph). Paths of
 //! more than one edge have no edge alias in GSQL, so their edges are not in the result, only the
-//! nodes. The limit caps the matches of the first node; the nodes and edges collected along them
-//! are cut by the source's node and edge limits.
+//! nodes.
 //!
 //! Read back: the form above, with any names; the accumulator declarations, `{@@...}` sets and
 //! `PRINT` statements are optional. One `SELECT` with paths separated by commas, `WHERE` with
-//! conditions joined by `AND` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `IN`), `ACCUM` only adding the
-//! aliases to accumulators, and `LIMIT` with a number. Seeds `X = {param};`, `X = {Type.*};` and
-//! `X = {ANY};`. Values are literals or declared parameters. Everything else is
-//! `pattern.not_representable`.
+//! conditions joined by `AND` (`==`, `!=`, `<`, `<=`, `>`, `>=`, `IN`) or one element's
+//! conditions in parentheses joined by `OR`, `ACCUM` only adding the aliases to accumulators, and
+//! `LIMIT` with a number; or a limited `SELECT` without `ACCUM` and a second, otherwise equal
+//! `SELECT` from its result. Seeds `X = {param};`, `X = {Type.*};` and `X = {ANY};`. Values are
+//! literals or declared parameters. Everything else is `pattern.not_representable`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,9 +48,9 @@ use serde_json::Value;
 
 use super::text::{Cursor, Tok, lex};
 use super::{
-    Binder, Compiled, Condition, Detail, Direction, Operand, Operator, ParameterType, Pattern, PatternEdge,
-    PatternNode, RESERVED_PREFIX, declare_parameters, invalid, is_alias, is_plain_name, not_representable,
-    operand_from_param,
+    Binder, Compiled, Condition, Detail, Direction, Match, Operand, Operator, ParameterType, Pattern, PatternEdge,
+    PatternLimits, PatternNode, RESERVED_PREFIX, declare_parameters, invalid, is_alias, is_plain_name,
+    not_representable, operand_from_param,
 };
 
 fn plain(what: &str, s: &str) -> Result<String, Detail> {
@@ -95,18 +102,34 @@ fn gsql_type(ty: ParameterType, vertex: Option<&str>) -> String {
     }
 }
 
-fn conditions(b: &mut Binder<'_>, owner: &str, list: &[Condition], out: &mut Vec<String>) -> Result<(), Detail> {
+fn conditions(
+    b: &mut Binder<'_>,
+    owner: &str,
+    list: &[Condition],
+    matches: Match,
+    out: &mut Vec<String>,
+) -> Result<(), Detail> {
+    let mut own = Vec::new();
     for c in list {
         let op = op_text(c.op)?;
         let property = plain("property", &c.property)?;
         let value = c.value.as_ref().expect("checked: the operator takes a value");
         let param = b.bind(value, c.op == Operator::In)?;
-        out.push(format!("{owner}.{property} {op} {param}"));
+        own.push(format!("{owner}.{property} {op} {param}"));
+    }
+    match matches {
+        Match::Any if own.len() > 1 => out.push(format!("({})", own.join(" OR "))),
+        _ => out.extend(own),
     }
     Ok(())
 }
 
-pub fn compile(p: &Pattern, graph: &str, variables: &BTreeMap<String, Value>) -> Result<Compiled, Detail> {
+pub fn compile(
+    p: &Pattern,
+    graph: &str,
+    variables: &BTreeMap<String, Value>,
+    limits: &PatternLimits,
+) -> Result<Compiled, Detail> {
     let graph = plain("graph", graph)?;
     let parts = p.parts()?;
     if let Some((e, _)) = parts.optional.first() {
@@ -116,7 +139,7 @@ pub fn compile(p: &Pattern, graph: &str, variables: &BTreeMap<String, Value>) ->
         )
         .with("edge", &e.id));
     }
-    let mut b = Binder::new(p, variables);
+    let mut b = Binder::new(p, variables, *limits);
     // The type each node is written with: its type, or a seed set.
     let mut seeds = Vec::new();
     let mut node_type: BTreeMap<&str, String> = BTreeMap::new();
@@ -160,9 +183,9 @@ pub fn compile(p: &Pattern, graph: &str, variables: &BTreeMap<String, Value>) ->
             }
         }
     }
-    let vertex = |id: &str| format!("{}:{id}", node_type[id]);
-    let mut paths = Vec::new();
+    let first = parts.edges.first().map_or(parts.nodes[0], |e| e.from.as_str());
     let mut accum: Vec<String> = Vec::new();
+    let mut edges = Vec::new();
     for e in &parts.edges {
         let types: Vec<String> = if e.types.is_empty() {
             vec!["_".to_string()]
@@ -185,43 +208,71 @@ pub fn compile(p: &Pattern, graph: &str, variables: &BTreeMap<String, Value>) ->
                 if alternatives.len() > 1 { format!("({})", alternatives.join("|")) } else { alternatives.join("") };
             format!("{group}*{}..{}", e.min_hops, e.max_hops)
         };
-        paths.push(format!("{} -({edge})- {}", vertex(&e.from), vertex(&e.to)));
+        edges.push((e, edge));
     }
-    if parts.edges.is_empty() {
-        paths.push(vertex(parts.nodes[0]));
-    }
+    // The paths, the first node written with `start` as its type.
+    let paths = |start: &str| -> String {
+        let vertex = |id: &str| if id == first { format!("{start}:{id}") } else { format!("{}:{id}", node_type[id]) };
+        if edges.is_empty() {
+            return vertex(first);
+        }
+        edges
+            .iter()
+            .map(|(e, edge)| format!("{} -({edge})- {}", vertex(&e.from), vertex(&e.to)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let mut conds = Vec::new();
     for n in &p.nodes {
-        conditions(&mut b, &n.id, &n.conditions, &mut conds)?;
+        conditions(&mut b, &n.id, &n.conditions, n.matches, &mut conds)?;
     }
     for e in &parts.edges {
-        conditions(&mut b, &e.id, &e.conditions, &mut conds)?;
+        conditions(&mut b, &e.id, &e.conditions, e.matches, &mut conds)?;
     }
-    let mut adds: Vec<String> = p.nodes.iter().map(|n| format!("@@{RESERVED_PREFIX}nodes += {}", n.id)).collect();
-    adds.extend(accum);
-    let first = parts.edges.first().map_or(parts.nodes[0], |e| e.from.as_str());
-    let mut select = format!("  {RESERVED_PREFIX}m = SELECT {first} FROM {}", paths.join(", "));
-    if !conds.is_empty() {
-        select.push_str(&format!("\n    WHERE {}", conds.join(" AND ")));
+    let filter = if conds.is_empty() { String::new() } else { format!("\n    WHERE {}", conds.join(" AND ")) };
+    let limit = (!p.count).then(|| p.effective_limit(limits));
+    let mut body = String::new();
+    if p.count {
+        body.push_str(&format!("  SumAccum<INT> @@{RESERVED_PREFIX}count;\n"));
+        for s in &seeds {
+            body.push_str(&format!("  {s}\n"));
+        }
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}m = SELECT {first} FROM {}{filter}\n    ACCUM @@{RESERVED_PREFIX}count += 1;\n  \
+             PRINT @@{RESERVED_PREFIX}count AS matches;\n",
+            paths(&node_type[first])
+        ));
+    } else {
+        // The limit picks the matches first; only those are collected, from the limited set.
+        let mut adds: Vec<String> = p.nodes.iter().map(|n| format!("@@{RESERVED_PREFIX}nodes += {}", n.id)).collect();
+        adds.extend(accum);
+        body.push_str(&format!(
+            "  SetAccum<VERTEX> @@{RESERVED_PREFIX}nodes;\n  SetAccum<EDGE> @@{RESERVED_PREFIX}edges;\n"
+        ));
+        for s in &seeds {
+            body.push_str(&format!("  {s}\n"));
+        }
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}m = SELECT {first} FROM {}{filter}\n    LIMIT {};\n",
+            paths(&node_type[first]),
+            limit.unwrap_or(1)
+        ));
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}r = SELECT {first} FROM {}{filter}\n    ACCUM {};\n",
+            paths(&format!("{RESERVED_PREFIX}m")),
+            adds.join(", ")
+        ));
+        body.push_str(&format!(
+            "  {RESERVED_PREFIX}n = {{@@{RESERVED_PREFIX}nodes}};\n  PRINT {RESERVED_PREFIX}n;\n  PRINT @@{RESERVED_PREFIX}edges;\n"
+        ));
     }
-    select.push_str(&format!("\n    ACCUM {}\n    LIMIT {};", adds.join(", "), p.limit()));
-    let (compiled, types) = b.finish(String::new());
+    let (compiled, types) = b.finish(String::new(), limit);
     let header: Vec<String> = types
         .iter()
         .map(|(name, ty)| format!("{} {name}", gsql_type(*ty, vertex_of.get(name).map(String::as_str))))
         .collect();
-    let mut text = format!("INTERPRET QUERY ({}) FOR GRAPH {graph} SYNTAX v2 {{\n", header.join(", "));
-    text.push_str(&format!(
-        "  SetAccum<VERTEX> @@{RESERVED_PREFIX}nodes;\n  SetAccum<EDGE> @@{RESERVED_PREFIX}edges;\n"
-    ));
-    for s in seeds {
-        text.push_str(&format!("  {s}\n"));
-    }
-    text.push_str(&select);
-    text.push_str(&format!(
-        "\n  {RESERVED_PREFIX}n = {{@@{RESERVED_PREFIX}nodes}};\n  PRINT {RESERVED_PREFIX}n;\n  PRINT @@{RESERVED_PREFIX}edges;\n}}"
-    ));
-    Ok(Compiled { text, parameters: compiled.parameters })
+    let text = format!("INTERPRET QUERY ({}) FOR GRAPH {graph} SYNTAX v2 {{\n{body}}}", header.join(", "));
+    Ok(Compiled { text, ..compiled })
 }
 
 // ---- the way back ----
@@ -230,6 +281,15 @@ enum Seed {
     Ids(String),
     Type(String),
     Any,
+    /// The result of the first `SELECT`: the node it selected, with its type and ids.
+    Like(Option<String>, Option<Operand>),
+}
+
+/// What a `SELECT` was: the alias it selects, its limit and whether it accumulates.
+struct Select {
+    out: String,
+    limit: Option<u32>,
+    accum: bool,
 }
 
 struct Reader<'v> {
@@ -242,6 +302,8 @@ struct Reader<'v> {
     nodes: Vec<PatternNode>,
     edges: Vec<PatternEdge>,
     taken: BTreeSet<String>,
+    /// `taken` before the first `SELECT`, to read the second one alike.
+    first_taken: Option<BTreeSet<String>>,
     generated: usize,
 }
 
@@ -312,6 +374,7 @@ impl Reader<'_> {
                 }
                 Some(Seed::Type(label)) => (Some(label.clone()), None),
                 Some(Seed::Any) => (None, None),
+                Some(Seed::Like(label, ids)) => (label.clone(), ids.clone()),
                 None => (Some(t), None),
             },
         };
@@ -329,6 +392,7 @@ impl Reader<'_> {
                     id: alias.clone(),
                     labels: label.into_iter().collect(),
                     conditions: vec![],
+                    matches: Match::All,
                     ids,
                 });
             }
@@ -409,6 +473,7 @@ impl Reader<'_> {
             max_hops: max,
             optional: false,
             conditions: vec![],
+            matches: Match::All,
         });
         Ok(())
     }
@@ -440,7 +505,7 @@ impl Reader<'_> {
         Ok(Operand::literal(v))
     }
 
-    fn condition(&mut self) -> Result<(), Detail> {
+    fn item(&mut self) -> Result<(String, Condition), Detail> {
         if self.c.word("NOT") || self.c.sym("(") {
             return Err(not_representable(self.c.here()));
         }
@@ -459,18 +524,42 @@ impl Reader<'_> {
             None => return Err(not_representable("a condition without an operator")),
         };
         let value = Some(self.operand(op == Operator::In)?);
-        let condition = Condition { property, op, value };
-        if let Some(n) = self.nodes.iter_mut().find(|n| n.id == alias) {
-            n.conditions.push(condition);
-        } else if let Some(e) = self.edges.iter_mut().find(|e| e.id == alias) {
-            e.conditions.push(condition);
-        } else {
-            return Err(not_representable(format!("{alias}, which the pattern does not name")));
+        Ok((alias, Condition { property, op, value }))
+    }
+
+    /// A condition, or in parentheses the conditions of one element joined by `OR` ("any of").
+    fn condition(&mut self) -> Result<(), Detail> {
+        let group = self.c.eat_sym("(");
+        let mut items = vec![self.item()?];
+        if group {
+            while self.c.eat_word("OR") {
+                items.push(self.item()?);
+            }
+            self.c.expect_sym(")")?;
+        }
+        let alias = items[0].0.clone();
+        if group && (items.len() < 2 || items.iter().any(|(a, _)| *a != alias)) {
+            return Err(not_representable("OR across elements, or parentheses around one condition"));
+        }
+        let element = match self.nodes.iter_mut().find(|n| n.id == alias) {
+            Some(n) => (&mut n.conditions, &mut n.matches),
+            None => match self.edges.iter_mut().find(|e| e.id == alias) {
+                Some(e) => (&mut e.conditions, &mut e.matches),
+                None => return Err(not_representable(format!("{alias}, which the pattern does not name"))),
+            },
+        };
+        let (conditions, matches) = element;
+        if *matches == Match::Any || group && !conditions.is_empty() {
+            return Err(not_representable(format!("conditions of {alias} joined by both AND and OR")));
+        }
+        conditions.extend(items.into_iter().map(|(_, c)| c));
+        if group {
+            *matches = Match::Any;
         }
         Ok(())
     }
 
-    fn select(&mut self) -> Result<Option<u32>, Detail> {
+    fn select(&mut self) -> Result<Select, Detail> {
         self.c.expect_word("SELECT")?;
         let out = self.c.name()?;
         self.c.expect_word("FROM")?;
@@ -495,7 +584,8 @@ impl Reader<'_> {
                 }
             }
         }
-        if self.c.eat_word("ACCUM") {
+        let accum = self.c.eat_word("ACCUM");
+        if accum {
             loop {
                 self.c.expect_sym("@@")?;
                 let acc = self.c.name()?;
@@ -521,7 +611,7 @@ impl Reader<'_> {
             }
         }
         self.c.expect_sym(";")?;
-        Ok(limit)
+        Ok(Select { out, limit, accum })
     }
 
     fn read(mut self) -> Result<Pattern, Detail> {
@@ -549,6 +639,7 @@ impl Reader<'_> {
         self.c.expect_sym("{")?;
         let mut limit = None;
         let mut selected = false;
+        let mut second = false;
         loop {
             if self.c.eat_sym("}") {
                 break;
@@ -580,11 +671,36 @@ impl Reader<'_> {
                 let name = self.c.name()?;
                 self.c.i += 1;
                 if self.c.word("SELECT") {
-                    if selected {
+                    if !selected {
+                        selected = true;
+                        self.first_taken = Some(self.taken.clone());
+                        let first = self.select()?;
+                        limit = first.limit;
+                        if !first.accum && first.limit.is_some() {
+                            // The limited matches, collected by a second SELECT from them.
+                            let node = self.nodes.iter().find(|n| n.id == first.out).expect("selected");
+                            self.seeds.insert(name, Seed::Like(node.labels.first().cloned(), node.ids.clone()));
+                        }
+                        continue;
+                    }
+                    if second || !self.seeds.values().any(|s| matches!(s, Seed::Like(..))) {
                         return Err(not_representable("a second SELECT"));
                     }
-                    selected = true;
-                    limit = self.select()?;
+                    second = true;
+                    let (nodes, edges) = (std::mem::take(&mut self.nodes), std::mem::take(&mut self.edges));
+                    // Names given to edges without an alias come out the same the second time.
+                    let (taken, generated) = (self.taken.clone(), self.generated);
+                    if let Some(first_taken) = self.first_taken.take() {
+                        self.taken = first_taken;
+                        self.generated = 0;
+                    }
+                    let again = self.select()?;
+                    (self.taken, self.generated) = (taken, generated);
+                    let same = again.limit.is_none() && self.nodes == nodes && self.edges == edges;
+                    (self.nodes, self.edges) = (nodes, edges);
+                    if !same {
+                        return Err(not_representable("a second SELECT that is not the same pattern"));
+                    }
                     continue;
                 }
                 self.c.expect_sym("{")?;
@@ -629,7 +745,7 @@ impl Reader<'_> {
             .filter(|(name, _)| !(name.starts_with(RESERVED_PREFIX) && self.values.contains_key(*name)))
             .map(|(name, (ty, _))| (name.clone(), *ty))
             .collect();
-        let mut p = Pattern { nodes: self.nodes, edges: self.edges, limit, parameters: Vec::new() };
+        let mut p = Pattern { nodes: self.nodes, edges: self.edges, limit, parameters: Vec::new(), count: false };
         declare_parameters(&mut p, &used)?;
         Ok(p)
     }
@@ -653,6 +769,7 @@ pub fn parse(text: &str, values: &BTreeMap<String, Value>) -> Result<Pattern, De
         nodes: Vec::new(),
         edges: Vec::new(),
         taken,
+        first_taken: None,
         generated: 0,
     }
     .read()
@@ -663,9 +780,18 @@ mod tests {
     use serde_json::json;
 
     use super::super::tests::knows;
-    use super::super::{Dialect, compile as compile_any, parse as parse_any};
+    use super::super::{Dialect, compile, parse as parse_any};
     use super::*;
     use crate::datasources::gsql::{Form, check_with};
+
+    fn compile_any(
+        p: &Pattern,
+        dialect: Dialect,
+        graph: Option<&str>,
+        variables: &BTreeMap<String, Value>,
+    ) -> Result<Compiled, Detail> {
+        compile(p, dialect, graph, variables, &PatternLimits::default())
+    }
 
     fn vars(v: Value) -> BTreeMap<String, Value> {
         serde_json::from_value(v).unwrap()
@@ -678,12 +804,20 @@ mod tests {
             c.text,
             "INTERPRET QUERY (STRING firma) FOR GRAPH social SYNTAX v2 {\n  SetAccum<VERTEX> @@kz_nodes;\n  \
              SetAccum<EDGE> @@kz_edges;\n  kz_m = SELECT a FROM Person:a -(KENNT>:e)- Person:b\n    \
-             WHERE a.name == firma\n    ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e\n    LIMIT 100;\n  \
+             WHERE a.name == firma\n    LIMIT 500;\n  kz_r = SELECT a FROM kz_m:a -(KENNT>:e)- Person:b\n    \
+             WHERE a.name == firma\n    ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_edges += e;\n  \
              kz_n = {@@kz_nodes};\n  PRINT kz_n;\n  PRINT @@kz_edges;\n}"
         );
         assert_eq!(c.parameters, vars(json!({ "firma": "Acme" })));
         let checked = check_with(&c.text, Form::Interpret, None).unwrap();
         assert_eq!(checked.graph.as_deref(), Some("social"));
+        // Counting: every match adds one, nothing is collected.
+        let mut counted = knows();
+        counted.count = true;
+        let n = compile_any(&counted, Dialect::TigerGraph, Some("social"), &vars(json!({ "firma": "Acme" }))).unwrap();
+        assert!(n.text.contains("ACCUM @@kz_count += 1;\n  PRINT @@kz_count AS matches;"), "{}", n.text);
+        assert!(!n.text.contains("LIMIT") && n.limit.is_none(), "{}", n.text);
+        check_with(&n.text, Form::Interpret, None).unwrap();
     }
 
     fn rich() -> Pattern {
@@ -692,7 +826,7 @@ mod tests {
                 { "id": "a", "labels": ["Person"], "ids": { "param": "ids" }, "conditions": [
                     { "property": "alter", "op": "ge", "value": { "value": 18 } }
                 ] },
-                { "id": "b", "labels": ["Firma"], "conditions": [
+                { "id": "b", "labels": ["Firma"], "matches": "any", "conditions": [
                     { "property": "land", "op": "in", "value": { "param": "laender" } },
                     { "property": "aktiv", "op": "eq", "value": { "value": true } }
                 ] },
@@ -726,9 +860,12 @@ mod tests {
         assert!(c.text.contains("  kz_s0 = {ids};\n  kz_s1 = {ANY};\n"), "{}", c.text);
         assert!(
             c.text.contains(
-                "SELECT a FROM kz_s0:a -(ARBEITET_BEI>|LEITET>:e)- Firma:b, kz_s1:c -((<A|<B)*2..4)- Firma:b\n    \
-                 WHERE a.alter >= kz_v0 AND b.land IN laender AND b.aktiv == kz_v1 AND e.seit < kz_v2\n    \
-                 ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_nodes += c, @@kz_edges += e\n    LIMIT 7;"
+                "kz_m = SELECT a FROM kz_s0:a -(ARBEITET_BEI>|LEITET>:e)- Firma:b, kz_s1:c -((<A|<B)*2..4)- Firma:b\n    \
+                 WHERE a.alter >= kz_v0 AND (b.land IN laender OR b.aktiv == kz_v1) AND e.seit < kz_v2\n    \
+                 LIMIT 7;\n  \
+                 kz_r = SELECT a FROM kz_m:a -(ARBEITET_BEI>|LEITET>:e)- Firma:b, kz_s1:c -((<A|<B)*2..4)- Firma:b\n    \
+                 WHERE a.alter >= kz_v0 AND (b.land IN laender OR b.aktiv == kz_v1) AND e.seit < kz_v2\n    \
+                 ACCUM @@kz_nodes += a, @@kz_nodes += b, @@kz_nodes += c, @@kz_edges += e;"
             ),
             "{}",
             c.text
@@ -738,7 +875,9 @@ mod tests {
         check_with(&c.text, Form::Interpret, None).unwrap();
         let parsed = parse_any(&c.text, Dialect::TigerGraph, &c.parameters);
         let back = parsed.pattern.clone().unwrap_or_else(|| panic!("{parsed:?}"));
-        assert_eq!(compile_any(&back, Dialect::TigerGraph, Some("g"), &c.parameters).unwrap(), c);
+        // The pasted list was reported the first time; read back it is a list.
+        let again = compile_any(&back, Dialect::TigerGraph, Some("g"), &c.parameters).unwrap();
+        assert_eq!(again, Compiled { lists: Vec::new(), ..c.clone() });
         let mut expected = p;
         // A path in GSQL has no alias; reading it back names it.
         expected.edges[1].id = back.edges[1].id.clone();
@@ -797,6 +936,8 @@ mod tests {
         for q in [
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s WHERE s.a == 1 OR s.b == 2; PRINT R; }",
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s; R2 = SELECT s FROM Person:s; }",
+            "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s LIMIT 5; R2 = SELECT s FROM R:s -(K>)- Person:t; }",
+            "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s -(K>)- Person:t WHERE (s.a == 1 OR t.b == 2); }",
             "INTERPRET QUERY () FOR GRAPH g { SumAccum<INT> @@n; R = SELECT s FROM Person:s ACCUM @@n += 1; }",
             "INTERPRET QUERY () FOR GRAPH g { R = SELECT s FROM Person:s POST-ACCUM s.x = 1; }",
             "INTERPRET QUERY (INT k = 3) FOR GRAPH g { R = SELECT s FROM Person:s; }",

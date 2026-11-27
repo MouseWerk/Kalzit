@@ -6,8 +6,10 @@
 //! Each kind reads it its own way and says how (`GraphSchemaSource`): Neo4j through its
 //! read-only `db.schema.*` procedures and the count store, Memgraph through `SHOW SCHEMA INFO`
 //! when the server runs with `--schema-info-enabled`, else from a sample of the graph, and
-//! TigerGraph from its catalog (no counts). The answer is kept with the source's connection for
-//! `TTL` (`Connection::graph_schema`), so it is rebuilt when the source's settings change.
+//! TigerGraph from its catalog (no counts; "Zählen" counts one label on request). Labels, types
+//! and links come largest first; past `MAX_ENTRIES` the smallest are left out. The answer is kept
+//! with the source's connection for `TTL` (`Connection::graph_schema`), so it is rebuilt when the
+//! source's settings change.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -194,7 +196,10 @@ impl Builder {
         let mut truncated = false;
         let mut elements = |map: BTreeMap<String, Element>| -> Vec<ElementSchema> {
             truncated |= map.len() > MAX_ENTRIES;
-            map.into_iter()
+            // The largest first, so a cut leaves out the smallest; without counts by name.
+            let mut all: Vec<(String, Element)> = map.into_iter().collect();
+            all.sort_by(|(an, a), (bn, b)| b.count.cmp(&a.count).then_with(|| an.cmp(bn)));
+            all.into_iter()
                 .take(MAX_ENTRIES)
                 .map(|(name, e)| ElementSchema {
                     name,
@@ -214,12 +219,13 @@ impl Builder {
         let labels = elements(self.labels);
         let edge_types = elements(self.types);
         truncated |= self.links.len() > MAX_ENTRIES;
-        let links = self
+        let mut links: Vec<SchemaLink> = self
             .links
             .into_iter()
-            .take(MAX_ENTRIES)
             .map(|((from, edge_type, to), count)| SchemaLink { from, edge_type, to, count })
             .collect();
+        links.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.cmp(b)));
+        links.truncate(MAX_ENTRIES);
         GraphSourceSchema { source, sample_size, labels, edge_types, links, truncated, read_at }
     }
 }
@@ -436,8 +442,13 @@ mod tests {
         for i in 0..=MAX_ENTRIES {
             b.label(&format!("L{i}"), Some(1));
         }
+        b.label("Groß", Some(5));
+        b.label("Klein", Some(0));
         let s = b.finish(GraphSchemaSource::Sample, Some(SAMPLE), 0);
         assert!(s.truncated);
         assert_eq!(s.labels.len(), MAX_ENTRIES);
+        // The largest first: the cut leaves out the smallest.
+        assert_eq!(s.labels[0].name, "Groß");
+        assert!(!s.labels.iter().any(|l| l.name == "Klein"));
     }
 }

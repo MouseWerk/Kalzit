@@ -731,13 +731,23 @@ written as JSON in the API and in provisioning files (docs/api/datasources.md, "
 ```
 
 Customers of one company. Values in a pattern never become query text: each is sent to the
-database as a typed parameter, so a value cannot change what the query does. To look for many
-nodes at once, give a node `ids` (the database's own ids) or use an `in` condition, and paste the
-ids into a list parameter: one per line, or separated by commas, semicolons, tabs or spaces.
+database as a typed parameter, so a value cannot change what the query does. Several labels on a
+node mean one of them; a node's conditions can all have to hold or any one of them. To look for
+many nodes at once, give a node `ids` (the database's own ids) or use an `in` condition, and
+paste the values into a list parameter: one per line, or separated by commas, semicolons or tabs
+(ids also by spaces). Repeats and empty entries are left out and named, and after the run Kalzit
+says how many of the values it found ("9 of 12 found"). A list holds up to 10,000 values; an
+administrator sets this in Settings › Data sources, next to the longest path a pattern may ask
+for (6 steps unless changed).
+
+A pattern shows at most 500 matches unless you change it, and never more than the data source's
+row limit. When it reaches the limit, Kalzit says so without counting; counting the matches is a
+second query you start yourself.
 
 **Search templates:** save an analysis whose query has parameters, such as "Kunden von $firma".
 Everyone who may read the analysis, viewers too, can run it with their own value for `firma`;
-they run the saved query only, never a query of their own.
+they run the saved query only, never a query of their own. An input can also offer a choice of
+the values of one property (at most 200, with a search).
 
 **Back from Cypher or GSQL:** a query in the simple form a pattern produces (one `MATCH` with
 `WHERE` conditions joined by `AND`, `OPTIONAL MATCH`, `RETURN`, `LIMIT`; in GSQL one `SELECT`)
@@ -745,8 +755,9 @@ can be read back into a pattern. Anything more (such as `OR`, `WITH`, functions 
 answers "not representable as a pattern" instead of a pattern that leaves part of it out.
 
 **Schema and plans:** for a graph source Kalzit reads the labels and edge types with their counts
-and properties as a graph of which label connects to which. Memgraph gives exact counts when it
-runs with `--schema-info-enabled`, otherwise Kalzit reads a sample of 10,000 nodes and edges.
+and properties as a graph of which label connects to which, the largest first. Memgraph gives
+exact counts when it runs with `--schema-info-enabled`, otherwise Kalzit reads a sample of 10,000
+nodes and edges; where there is no count, one label can be counted on request.
 `EXPLAIN` and `PROFILE` of a Cypher query come back as a tree of operators with rows and database
 hits; `PROFILE` runs the query (read-only, within the source's time limit). TigerGraph gives no
 plan for GSQL queries, and Kalzit says so.

@@ -1012,6 +1012,32 @@ async fn graph_patterns_schema_plans(t: &T, id: &str, kind: &str) {
     let pasted = if kind == "memgraph" { format!("{}\n99999999", ana["id"].as_str().unwrap()) } else { pasted };
     let r = t.query_with(id, json!({ "pattern": by_id }), json!({ "ids": pasted })).await;
     assert_eq!(r["result"]["graph"]["nodes"].as_array().map(Vec::len), Some(1), "{r}");
+    // "1 von 2 gefunden": how many of the pasted values the result holds.
+    let notice = |r: &Value, code: &str| {
+        r["result"]["graph"]["notices"].as_array().and_then(|n| n.iter().find(|n| n["code"] == code).cloned())
+    };
+    let found = notice(&r, "pattern.values_found").unwrap_or_else(|| panic!("{r}"));
+    assert_eq!((found["params"]["found"].clone(), found["params"]["total"].clone()), (json!("1"), json!("2")), "{r}");
+    // The limit reached is said, not counted; counting is a query of its own.
+    let all = json!({ "nodes": [{ "id": "n", "labels": ["KalzitTest"] }], "limit": 1 });
+    let r = t.query_with(id, json!({ "pattern": all }), json!({})).await;
+    assert!(notice(&r, "pattern.limit_reached").is_some(), "{r}");
+    let mut counted = all.clone();
+    counted["count"] = json!(true);
+    let r = t.query_with(id, json!({ "pattern": counted }), json!({})).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"][0].to_string().trim_matches('"'), "2", "{r}");
+    let body = json!({ "label": "KalzitTest" });
+    let (status, c) = t.send(Method::POST, &format!("/datasources/{id}/graph-schema/count"), Some(body)).await;
+    assert_eq!((status, c["count"].clone()), (StatusCode::OK, json!(2)), "{c}");
+    // A path longer than the server allows is refused in plain words.
+    let long = json!({ "nodes": [{ "id": "a" }, { "id": "b" }],
+                       "edges": [{ "id": "e", "from": "a", "to": "b", "minHops": 1, "maxHops": 7 }] });
+    let r = t.query_with(id, json!({ "pattern": long }), json!({})).await;
+    assert_eq!(
+        (r["error"]["reason"].clone(), r["error"]["params"]["max"].clone()),
+        (json!("pattern.hops_invalid"), json!("6")),
+        "{r}"
+    );
     // A plan of a pattern is the plan of its Cypher.
     let body = json!({ "query": { "pattern": pattern }, "mode": "explain", "variables": { "wer": "Ana" } });
     let (status, p) = t.send(Method::POST, &format!("/datasources/{id}/plan"), Some(body)).await;
@@ -1052,6 +1078,27 @@ async fn graph_patterns_schema_plans(t: &T, id: &str, kind: &str) {
     let (status, r) = t.send(Method::POST, &format!("/analyses/{}/query", a["id"].as_str().unwrap()), Some(body)).await;
     assert_eq!(status, StatusCode::OK, "{r}");
     assert_eq!(r["results"]["A"]["result"]["graph"]["nodes"].as_array().map(Vec::len), Some(2), "{r}");
+    // "Auswahl aus Werten": the template offers the values of one property, searched.
+    let mut with_choices = pattern.clone();
+    with_choices["parameters"][0]["choices"] = json!({ "label": "KalzitTest", "property": "name" });
+    let model = json!({
+        "schemaVersion": 1, "title": "Bekannte von $wer",
+        "targets": [{ "refId": "A", "datasourceId": id, "query": { "pattern": with_choices } }],
+        "visualization": { "type": "table" }
+    });
+    let (status, a) = t.send(Method::POST, "/analyses", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{a}");
+    let path = format!("/analyses/{}/parameters/wer/choices", a["id"].as_str().unwrap());
+    let (status, c) = t.send(Method::POST, &path, Some(json!({}))).await;
+    assert_eq!(
+        (status, c["values"].clone(), c["more"].clone()),
+        (StatusCode::OK, json!(["Ana", "Bo"]), json!(false)),
+        "{c}"
+    );
+    let (_, c) = t.send(Method::POST, &path, Some(json!({ "search": "b' OR 1=1 //" }))).await;
+    assert_eq!(c["values"], json!([]), "{c}");
+    let (_, c) = t.send(Method::POST, &path, Some(json!({ "search": "B" }))).await;
+    assert_eq!(c["values"], json!(["Bo"]), "{c}");
 
     let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
     assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
