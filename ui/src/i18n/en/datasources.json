@@ -1577,8 +1577,8 @@
   "datasources.reason.tigergraph.explore_no_reverse_edge": "{types} cannot be followed against their direction: they have no reverse edge type.",
   "datasources.reason.tigergraph.install_unsupported": "Kalzit installs its algorithm queries on TigerGraph 4.x only.",
   "datasources.reason.tigergraph.install_credential_missing": "The data source has no install access: turn on the switch and set the install user and password.",
-  "datasources.reason.tigergraph.install_user_unverifiable": "Kalzit cannot read the install access’s rights, so it does not use it.",
-  "datasources.reason.tigergraph.install_user_too_much": "The install access may do too much ({privileges}). Give it a role that may only read and install queries.",
+  "datasources.reason.tigergraph.install_user_unverifiable": "Kalzit cannot read the install access’s rights, or they lack CREATE_QUERY and INSTALL_QUERY, so it does not use it.",
+  "datasources.reason.tigergraph.install_user_too_much": "The install access may do too much ({privileges}). Give it a role with only READ_SCHEMA, READ_QUERY, CREATE_QUERY, DROP_QUERY and INSTALL_QUERY.",
   "datasources.reason.tigergraph.install_script_changed": "The GSQL changed since you confirmed it. Nothing ran; check it again.",
   "datasources.reason.tigergraph.install_name_taken": "The graph already has a query {name} that Kalzit did not install. Nothing was installed.",
   "datasources.reason.tigergraph.install_failed": "TigerGraph did not install every query as shipped: {detail}",
@@ -1586,5 +1586,6 @@
   "datasources.reason.algorithm.not_installed": "Computed on the server: Kalzit’s algorithm query {name} is not installed as expected.",
   "datasources.reason.algorithm.not_verified": "Computed on the server: {name} cannot be shown to only read ({detail}).",
   "datasources.reason.algorithm.changed_in_database": "Computed on the server: {name} was changed in the database. An admin installs it again.",
-  "datasources.reason.algorithm.subgraph_differs": "Computed on the server: the database has other edges between these nodes than the result."
+  "datasources.reason.algorithm.subgraph_differs": "Computed on the server: the database has other edges between these nodes than the result.",
+  "datasources.reason.tigergraph.install_changed_query": "{name} was changed in the database since Kalzit installed it. Confirm replacing it to install."
 }

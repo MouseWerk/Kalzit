@@ -10,7 +10,7 @@
 //! holds; otherwise the database has other edges between those vertices and the server computes
 //! the step, so both ways answer the same.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Map, Value, json};
 
@@ -48,6 +48,9 @@ pub fn checksum(text: &str, graph: &str) -> String {
     hex::encode(sha2::Sha256::digest(normal.as_bytes()))
 }
 
+/// The printed set and accumulator of every vertex's edge ends.
+const ENDS: &str = "kalzit_ends";
+
 /// The SHA-256 (hex) of an install or removal script, the confirmation its request carries.
 pub fn script_checksum(script: &str) -> String {
     use sha2::Digest;
@@ -66,31 +69,52 @@ pub fn state_of(
     installed: Option<&str>,
     recorded: bool,
 ) -> crate::shapes::TigerGraphAlgorithmState {
+    state_with(name, graph, installed, recorded, OLDER)
+}
+
+/// `state_of` with the checksums of earlier versions given.
+fn state_with(
+    name: &str,
+    graph: &str,
+    installed: Option<&str>,
+    recorded: bool,
+    older: &[(&str, u32, &str)],
+) -> crate::shapes::TigerGraphAlgorithmState {
     use crate::shapes::TigerGraphAlgorithmState as St;
     let Some(text) = installed else { return St::Missing };
     let sum = checksum(text, graph);
     let current = shipped(graph).into_iter().find(|(n, _)| *n == name).map(|(_, t)| checksum(&t, graph));
     if current.as_deref() == Some(sum.as_str()) {
         St::Current
-    } else if OLDER.iter().any(|(n, _, c)| *n == name && *c == sum) {
-        St::Older
-    } else if recorded {
-        St::Changed
-    } else {
+    } else if !recorded {
+        // Not installed by Kalzit, whatever its text: never replaced, removed or run by Kalzit.
         St::Foreign
+    } else if older.iter().any(|(n, _, c)| *n == name && *c == sum) {
+        St::Older
+    } else {
+        St::Changed
     }
 }
 
 /// The GSQL commands that bring the variants named in `replace` (Kalzit's own, older or changed:
 /// dropped first) and `create` (missing) to the shipped texts on `graph`. The UI shows exactly
 /// this text before the install, and the install request must send it back unchanged.
-pub fn install_script(graph: &str, replace: &[&str], create: &[&str]) -> Option<String> {
+/// `changed` (part of `replace`) are queries changed in the database after Kalzit installed them;
+/// the script says so in its first line, so the confirmation shows it.
+pub fn install_script(graph: &str, replace: &[&str], create: &[&str], changed: &[&str]) -> Option<String> {
     let texts = shipped(graph);
     let all: Vec<&str> = q::ALL.iter().copied().filter(|n| replace.contains(n) || create.contains(n)).collect();
     if all.is_empty() {
         return None;
     }
-    let mut out = format!("USE GRAPH {graph}\n");
+    let mut out = String::new();
+    if !changed.is_empty() {
+        out.push_str(&format!(
+            "// Replaces queries changed in the database since Kalzit installed them: {}\n",
+            changed.join(", ")
+        ));
+    }
+    out.push_str(&format!("USE GRAPH {graph}\n"));
     let dropped: Vec<&str> = q::ALL.iter().copied().filter(|n| replace.contains(n)).collect();
     if !dropped.is_empty() {
         out.push_str(&format!("DROP QUERY {}\n", dropped.join(", ")));
@@ -226,28 +250,57 @@ pub fn answers(job: &Job, results: &Value) -> Result<Vec<Vec<Vec<Value>>>, Sourc
         .with("database", edges)
         .with("result", job.edges));
     }
-    let vertices: Vec<&Map<String, Value>> = items
-        .iter()
-        .filter_map(Value::as_object)
-        .flat_map(|m| m.values())
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter_map(Value::as_object)
-        .filter(|v| v.contains_key("v_id") && v.contains_key("v_type"))
-        .collect();
+    // The printed vertex sets: `kalzit_ends` with every vertex's edge ends, the other with the answer.
+    let printed = |ends: bool| -> Vec<&Map<String, Value>> {
+        items
+            .iter()
+            .filter_map(Value::as_object)
+            .flat_map(|m| m.iter())
+            .filter(|(k, _)| (k.as_str() == ENDS) == ends)
+            .filter_map(|(_, v)| v.as_array())
+            .flatten()
+            .filter_map(Value::as_object)
+            .filter(|v| v.contains_key("v_id") && v.contains_key("v_type"))
+            .collect()
+    };
+    let id_of = |v: &Map<String, Value>| {
+        format!(
+            "{}:{}",
+            v["v_type"].as_str().unwrap_or(""),
+            match &v["v_id"] {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }
+        )
+    };
+    let mut ends: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+    for v in printed(true) {
+        let Some(Value::Object(map)) =
+            v.get("attributes").and_then(Value::as_object).and_then(|a| accumulator(a, ENDS))
+        else {
+            return Err(unreadable("its edge ends"));
+        };
+        let counts: BTreeMap<String, u64> =
+            map.iter().filter_map(|(k, n)| n.as_u64().filter(|n| *n > 0).map(|n| (k.clone(), n))).collect();
+        if !counts.is_empty() {
+            ends.insert(id_of(v), counts);
+        }
+    }
+    if ends != job.ends {
+        return Err(SourceError::rejected(
+            reason::SUBGRAPH_DIFFERS,
+            format!("{name} computed on other edges than the result holds (their ends differ)"),
+        )
+        .with("database", edges)
+        .with("result", job.edges));
+    }
+    let vertices = printed(false);
     let mut out = Vec::with_capacity(job.outputs.len());
     for output in &job.outputs {
         let mut labels: HashMap<String, usize> = HashMap::new();
         let mut rows = Vec::with_capacity(vertices.len());
         for v in &vertices {
-            let id = format!(
-                "{}:{}",
-                v["v_type"].as_str().unwrap_or(""),
-                match &v["v_id"] {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                }
-            );
+            let id = id_of(v);
             let Some(value) = v.get("attributes").and_then(Value::as_object).and_then(|a| accumulator(a, output))
             else {
                 return Err(unreadable(output));
@@ -311,18 +364,18 @@ mod tests {
             assert_ne!(checksum(&text.replace("version 1.", "version 0."), "social"), sum);
         }
         let others: Vec<&str> = q::ALL.iter().copied().filter(|n| *n != q::WCC).collect();
-        let script = install_script("social", &[q::WCC, "nachbarn"], &others).unwrap();
+        let script = install_script("social", &[q::WCC, "nachbarn"], &others, &[]).unwrap();
         assert!(
             script.starts_with("USE GRAPH social\nDROP QUERY kalzit_wcc\nCREATE QUERY kalzit_pagerank("),
             "{script}"
         );
         assert!(script.ends_with(&format!("INSTALL QUERY {}\n", q::ALL.join(", "))), "{script}");
         assert!(!script.contains("nachbarn"), "never another query");
-        let only = install_script("social", &[], &[q::K_CORE]).unwrap();
+        let only = install_script("social", &[], &[q::K_CORE], &[]).unwrap();
         assert!(
             !only.contains("DROP") && !only.contains("kalzit_wcc") && only.ends_with("INSTALL QUERY kalzit_kcore\n")
         );
-        assert_eq!(install_script("social", &[], &[]), None, "all current: nothing to do");
+        assert_eq!(install_script("social", &[], &[], &[]), None, "all current: nothing to do");
         assert_eq!(remove_script("social", &["nachbarn"]), None, "never another query");
         assert_eq!(
             remove_script("social", &[q::K_CORE, q::WCC]).unwrap(),
@@ -342,6 +395,12 @@ mod tests {
         let edited = text.replace("WHILE TRUE DO", "WHILE TRUE LIMIT 3 DO");
         assert_eq!(state_of(q::WCC, "social", Some(&edited), true), St::Changed);
         assert_eq!(state_of(q::WCC, "social", Some(&edited), false), St::Foreign);
+        // An older version only when Kalzit installed it; else someone else's query.
+        let old = text.replace("version 1.", "version 0.");
+        let sum = checksum(&old, "social");
+        let older = [(q::WCC, 0, sum.as_str())];
+        assert_eq!(state_with(q::WCC, "social", Some(&old), true, &older), St::Older);
+        assert_eq!(state_with(q::WCC, "social", Some(&old), false, &older), St::Foreign);
         assert!(OLDER.iter().all(|(n, v, c)| q::ALL.contains(n) && *v < VERSION && c.len() == 64));
     }
 

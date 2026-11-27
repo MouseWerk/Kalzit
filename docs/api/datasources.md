@@ -1607,41 +1607,58 @@ Kalzit can install its algorithm queries itself, through a second access of the 
 default: the switch `installAlgorithms` and `installUser` (settings, admin level like a target) and
 the secret `installPassword` (in Kalzit's encrypted secret store; setting it needs the admin level
 too, `datasource.target_change_forbidden`). The install access must be another user than the query
-access (`settings.install_user_same`) and may hold no more than reading and the query privileges
-(`READ_SCHEMA`, `READ_DATA`, `READ_QUERY`, `CREATE_QUERY`, `UPDATE_QUERY`, `DROP_QUERY`,
-`INSTALL_QUERY`, `EXECUTE_QUERY`, 3.x's `WRITE_QUERY`, and `APP_ACCESS_DATA`, `READ_POLICY`,
-`READ_LOADINGJOB`): Kalzit reads its privileges (`GET /gsql/v1/users/{installUser}`) before every
-use (again after a minute) and refuses one that may write data, the schema, loading jobs, users or
-roles (`tigergraph.install_user_too_much`) or whose privileges it cannot read
-(`tigergraph.install_user_unverifiable`). It is used for nothing else than installing, updating
-and removing Kalzit's queries and reading their texts; the query access stays a reader and never
-installs.
+access (`settings.install_user_same`) and may hold exactly the privileges installing needs:
+`READ_SCHEMA` (compiling), `READ_QUERY` (the checksums), `CREATE_QUERY`, `DROP_QUERY` and
+`INSTALL_QUERY` (TigerGraph 4.x). It never runs a query, so `EXECUTE_QUERY` is refused, as is any
+data privilege, and since Kalzit replaces a query by dropping and creating it, `UPDATE_QUERY` is
+not needed. Kalzit reads its user record (`GET /gsql/v1/users/{installUser}`) before every use
+(again after a minute; always afresh before an install, update or removal) and fails closed: it
+refuses superuser (also when the record does not say), the built-in roles `superuser`,
+`globaldesigner`, `admin`, `globaladmin`, `designer` and `architect`, and any privilege beyond the
+five, wherever it stands under `privileges` (`tigergraph.install_user_too_much`), and an
+unreadable record or one whose privileges lack `CREATE_QUERY` or `INSTALL_QUERY`
+(`tigergraph.install_user_unverifiable`). It is used for nothing else than installing, updating and
+removing Kalzit's queries and reading their texts; the query access stays a reader, never
+installs, and runs them.
 
 `GET /api/orgs/{orgId}/datasources/{id}/tigergraph/algorithms` (`datasources:read` on the source)
-answers `TigerGraphAlgorithms`: `installCredential`, `version`, per query its `name`, `state` and
-Kalzit's `gsql` for this graph, and with the install access the exact script an install (`install`,
-`installChecksum`) or a removal (`remove`, `removeChecksum`) would run. States: `missing` (not
-installed), `current` (installed and unchanged, byte for byte the current text), `older` (an older
-version of Kalzit's text: not run until an administrator confirms the update), `changed` (installed
-by Kalzit, then changed in the database: not run), `foreign` (a query of that name Kalzit did not
-install: never run, replaced or removed by Kalzit), and without the install access `present`
-(installed by an administrator, checked at each use as above).
+answers `TigerGraphAlgorithms`: `installCredential` (whether the switch and the install access are
+set), `version`, per query its `name`, `state` and Kalzit's `gsql` for this graph. Only for who may
+install (`datasources:write` for the organization or an `admin` grant on the source) does it use
+the install access and add the exact script an install (`install`, `installChecksum`) or a removal
+(`remove`, `removeChecksum`) would run; for everyone else installed queries show as `present` and
+there are no scripts. States: `missing` (not installed), `current` (installed and unchanged, byte
+for byte the current text), `older` (an older version of the text Kalzit installed: not run until
+an administrator confirms the update), `changed` (installed by Kalzit, then changed in the
+database: not run), `foreign` (a query of that name with another text that Kalzit did not install,
+an older version of Kalzit's text included: never run, replaced or removed by Kalzit), and
+`present` (as said). A `changed` query blocks the install like a `foreign` one, unless the status is
+asked with `?replaceChanged=true`: then the script also replaces it, says so in its first line, and
+`replaceChanged` is `true`.
 
-`POST .../tigergraph/algorithms` with `{"checksum": "<installChecksum>"}` installs or updates:
-missing queries are created, Kalzit's own older or changed ones dropped and created again, current
-ones left alone, then all are installed. `DELETE .../tigergraph/algorithms` with
+`POST .../tigergraph/algorithms` with `{"checksum": "<installChecksum>"}` (and
+`"replaceChanged": true` for the script that replaces changed queries) installs or updates: missing
+queries are created, Kalzit's own older ones (and changed ones when asked) dropped and created
+again, current ones left alone, then they are installed. `DELETE .../tigergraph/algorithms` with
 `{"checksum": "<removeChecksum>"}` drops the queries Kalzit installed itself, never another query.
 Both need `datasources:write` for the organization or an `admin` grant on the source
 (`datasource.install_forbidden`) and run only the script whose checksum the request carries
 (`tigergraph.install_script_changed` otherwise); nothing is installed while a `foreign` query has
-one of the names (`tigergraph.install_name_taken`). After an install every query must be `current`
-(`tigergraph.install_failed` otherwise). Kalzit stores name, version and checksum of each query it
-installed in its own database. A Kalzit update with a new version of the texts replaces nothing on
-its own: the older queries stop running in the database (`older`) until an administrator confirms
-the update. Audit actions: `datasource.algorithms_installed`, `datasource.algorithms_updated`,
-`datasource.algorithms_removed` (also when they fail, with the reason; never the GSQL),
-`datasource.install_access_stored` (user and whether a password was stored, never the password),
-`datasource.install_switch_on` and `datasource.install_switch_off`.
+one of the names (`tigergraph.install_name_taken`) or, without `replaceChanged`, while one is
+`changed` (`tigergraph.install_changed_query`). After an install every query must be `current`
+(`tigergraph.install_failed` otherwise). One status, install or removal runs per source at a time
+on a server, and no algorithm step of the source runs in the database meanwhile (it runs on the
+Kalzit server). Kalzit stores name, version and checksum of each query it installed in its own
+database. A Kalzit update with a new version of the texts replaces nothing on its own: the older
+queries stop running in the database (`older`) until an administrator confirms the update. With the
+install access, only a query with Kalzit's exact current text runs: one Kalzit installed against the
+stored checksum, any other only when its text is the current one. The install access cannot be set
+through provisioning files: `installPassword` there must refer to the stored value
+(`store: true`). Audit actions: `datasource.algorithms_installed`,
+`datasource.algorithms_updated`, `datasource.algorithms_removed` (also when they fail, with the
+reason; never the GSQL), `datasource.install_access_stored` (user and whether a password was
+stored, never the password) and `datasource.install_switch_on` / `datasource.install_switch_off`,
+also when a source is created or changed through provisioning.
 
 ### TigerGraph: GSQL completion
 
@@ -2816,8 +2833,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.explore_no_reverse_edge` | `types` | notice: these directed edge types have no reverse edge type, so the explorer cannot follow them against their direction |
 | `tigergraph.install_unsupported` | | Kalzit installs its algorithm queries on TigerGraph 4.x only |
 | `tigergraph.install_credential_missing` | | the source has no install access: the switch `installAlgorithms` is off, or `installUser` or `installPassword` is missing |
-| `tigergraph.install_user_unverifiable` | | the install access's privileges cannot be read, so Kalzit cannot check that it may do no more than install queries; it is not used |
-| `tigergraph.install_user_too_much` | `privileges` | the install access may do more than read and create, drop and install queries (write data, the schema, users, ...); it is not used |
+| `tigergraph.install_user_unverifiable` | | the install access's privileges cannot be read or lack `CREATE_QUERY` or `INSTALL_QUERY`; it is not used |
+| `tigergraph.install_user_too_much` | `privileges` | the install access holds more than `READ_SCHEMA`, `READ_QUERY`, `CREATE_QUERY`, `DROP_QUERY` and `INSTALL_QUERY`, a broad built-in role or superuser; it is not used |
+| `tigergraph.install_changed_query` | `name` | a query Kalzit installed was changed in the database; an install replaces it only with `replaceChanged` |
 | `tigergraph.install_script_changed` | | the confirmed checksum is not the one of the GSQL Kalzit would run now; nothing ran; read the status again and confirm that |
 | `tigergraph.install_name_taken` | `name` | the graph has a query of that name that Kalzit did not install; nothing was installed |
 | `tigergraph.install_failed` | `detail` | TigerGraph did not install every query as shipped (its output in `detail`) |

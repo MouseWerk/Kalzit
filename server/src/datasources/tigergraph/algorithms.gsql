@@ -10,9 +10,11 @@
 // query's result (`nodes`) and the edges of the given types between them, keep everything in
 // accumulators of their own run, and only PRINT. No attribute is written, no file either.
 //
-// Every query prints `edges`, the number of edges it computed on (each edge once), and a vertex
-// set whose vertices carry the answer in the accumulator @kalzit_value (and @kalzit_clustering for
-// the triangles). Kalzit compares `edges` with its own result: when they differ, the database
+// Every query prints `edges`, the number of edges it computed on (each edge once), `kalzit_ends`
+// with every vertex's edge ends per edge type (`T>` where a directed edge of type T starts, `T<`
+// where it ends, `T` at both ends of an undirected one), and a vertex set whose vertices carry the
+// answer in the accumulator @kalzit_value (and @kalzit_clustering for
+// the triangles). Kalzit compares `edges` and `kalzit_ends` with its own result: when they differ, the database
 // holds edges between those vertices that the result left out, and Kalzit computes the step on
 // its own server instead, so both ways answer the same.
 //
@@ -27,6 +29,7 @@ CREATE QUERY kalzit_pagerank(SET<VERTEX> nodes, SET<STRING> edge_types, STRING d
   SumAccum<DOUBLE> @kalzit_value;
   SumAccum<DOUBLE> @kalzit_next;
   SumAccum<INT> @@kalzit_edges;
+  MapAccum<STRING, SumAccum<INT>> @kalzit_ends;
   SumAccum<DOUBLE> @@kalzit_dangling;
   MaxAccum<DOUBLE> @@kalzit_change;
   INT kalzit_n = 0;
@@ -37,6 +40,8 @@ CREATE QUERY kalzit_pagerank(SET<VERTEX> nodes, SET<STRING> edge_types, STRING d
   kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
       WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
       ACCUM @@kalzit_edges += 1,
+            IF e.isDirected() THEN s.@kalzit_ends += (e.type + ">" -> 1), t.@kalzit_ends += (e.type + "<" -> 1)
+            ELSE s.@kalzit_ends += (e.type -> 1), t.@kalzit_ends += (e.type -> 1) END,
             IF direction != "in" THEN s.@kalzit_degree += 1 END,
             IF direction != "out" THEN t.@kalzit_degree += 1 END;
   kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_value = 1.0 / kalzit_n;
@@ -58,6 +63,7 @@ CREATE QUERY kalzit_pagerank(SET<VERTEX> nodes, SET<STRING> edge_types, STRING d
     IF @@kalzit_change < tolerance THEN BREAK; END;
   END;
   PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_ends] AS kalzit_ends;
   PRINT kalzit_all[kalzit_all.@kalzit_value];
 }
 
@@ -67,13 +73,16 @@ CREATE QUERY kalzit_wcc(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH MyG
   MinAccum<INT> @kalzit_value;
   MinAccum<INT> @kalzit_last;
   SumAccum<INT> @@kalzit_edges;
+  MapAccum<STRING, SumAccum<INT>> @kalzit_ends;
   OrAccum @@kalzit_changed;
   kalzit_all = {nodes};
   kalzit_all = SELECT v FROM kalzit_all:v
       POST-ACCUM v.@kalzit_in = TRUE, v.@kalzit_value = getvid(v), v.@kalzit_last = getvid(v);
   kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
       WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
-      ACCUM @@kalzit_edges += 1;
+      ACCUM @@kalzit_edges += 1,
+            IF e.isDirected() THEN s.@kalzit_ends += (e.type + ">" -> 1), t.@kalzit_ends += (e.type + "<" -> 1)
+            ELSE s.@kalzit_ends += (e.type -> 1), t.@kalzit_ends += (e.type -> 1) END;
   WHILE TRUE DO
     @@kalzit_changed = FALSE;
     kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t WHERE t.@kalzit_in
@@ -84,6 +93,7 @@ CREATE QUERY kalzit_wcc(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH MyG
     IF NOT @@kalzit_changed THEN BREAK; END;
   END;
   PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_ends] AS kalzit_ends;
   PRINT kalzit_all[kalzit_all.@kalzit_value];
 }
 
@@ -95,12 +105,15 @@ CREATE QUERY kalzit_kcore(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH M
   SetAccum<VERTEX> @kalzit_gone;
   SumAccum<INT> @kalzit_value;
   SumAccum<INT> @@kalzit_edges;
+  MapAccum<STRING, SumAccum<INT>> @kalzit_ends;
   INT kalzit_k = 0;
   kalzit_all = {nodes};
   kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
   kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
       WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
       ACCUM @@kalzit_edges += 1,
+            IF e.isDirected() THEN s.@kalzit_ends += (e.type + ">" -> 1), t.@kalzit_ends += (e.type + "<" -> 1)
+            ELSE s.@kalzit_ends += (e.type -> 1), t.@kalzit_ends += (e.type -> 1) END,
             IF s != t THEN s.@kalzit_near += t, t.@kalzit_near += s END;
   kalzit_left = kalzit_all;
   WHILE kalzit_left.size() > 0 DO
@@ -117,6 +130,7 @@ CREATE QUERY kalzit_kcore(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH M
               IF s.@kalzit_done THEN t.@kalzit_gone += s END;
   END;
   PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_ends] AS kalzit_ends;
   PRINT kalzit_all[kalzit_all.@kalzit_value];
 }
 
@@ -128,11 +142,14 @@ CREATE QUERY kalzit_triangles(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRA
   SumAccum<INT> @kalzit_value;
   SumAccum<DOUBLE> @kalzit_clustering;
   SumAccum<INT> @@kalzit_edges;
+  MapAccum<STRING, SumAccum<INT>> @kalzit_ends;
   kalzit_all = {nodes};
   kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
   kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
       WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
       ACCUM @@kalzit_edges += 1,
+            IF e.isDirected() THEN s.@kalzit_ends += (e.type + ">" -> 1), t.@kalzit_ends += (e.type + "<" -> 1)
+            ELSE s.@kalzit_ends += (e.type -> 1), t.@kalzit_ends += (e.type -> 1) END,
             IF s != t THEN s.@kalzit_near += t, t.@kalzit_near += s END;
   // Per neighbour, the neighbours both have; summed over a vertex's neighbours, every triangle
   // through it counts twice.
@@ -152,6 +169,7 @@ CREATE QUERY kalzit_triangles(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRA
                    v.@kalzit_clustering = kalzit_twice * 1.0 / (v.@kalzit_near.size() * (v.@kalzit_near.size() - 1))
                  END;
   PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_ends] AS kalzit_ends;
   PRINT kalzit_all[kalzit_all.@kalzit_value, kalzit_all.@kalzit_clustering];
 }
 
@@ -164,12 +182,15 @@ CREATE QUERY kalzit_reachable(SET<VERTEX> nodes, SET<STRING> edge_types, STRING 
   OrAccum @kalzit_next;
   MinAccum<INT> @kalzit_value;
   SumAccum<INT> @@kalzit_edges;
+  MapAccum<STRING, SumAccum<INT>> @kalzit_ends;
   INT kalzit_hop = 0;
   kalzit_all = {nodes};
   kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
   kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
       WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
-      ACCUM @@kalzit_edges += 1;
+      ACCUM @@kalzit_edges += 1,
+            IF e.isDirected() THEN s.@kalzit_ends += (e.type + ">" -> 1), t.@kalzit_ends += (e.type + "<" -> 1)
+            ELSE s.@kalzit_ends += (e.type -> 1), t.@kalzit_ends += (e.type -> 1) END;
   kalzit_front = {starts};
   kalzit_front = SELECT v FROM kalzit_front:v WHERE v.@kalzit_in
       POST-ACCUM v.@kalzit_seen = TRUE, v.@kalzit_front = TRUE, v.@kalzit_value = 0;
@@ -186,5 +207,6 @@ CREATE QUERY kalzit_reachable(SET<VERTEX> nodes, SET<STRING> edge_types, STRING 
   END;
   kalzit_reached = SELECT v FROM kalzit_all:v WHERE v.@kalzit_seen;
   PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_ends] AS kalzit_ends;
   PRINT kalzit_reached[kalzit_reached.@kalzit_value];
 }

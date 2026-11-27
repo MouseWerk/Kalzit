@@ -77,6 +77,9 @@ pub struct Job {
     pub edges: usize,
     /// TigerGraph: the vertex accumulators the query prints the answer in, one answer each.
     pub outputs: Vec<&'static str>,
+    /// TigerGraph: every vertex's edge ends per edge type in the result (`edge_ends`), which the
+    /// query must report the same.
+    pub ends: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>,
 }
 
 impl Job {
@@ -302,7 +305,18 @@ pub fn route(
     let size = n + topo.m();
     let max_rows = size + 16;
     let job = |project: Option<String>, runs: Vec<String>, params: Vec<(String, Param)>, max_rows: usize| {
-        Ok(Ok(Job { library, project, runs, params, numeric, max_rows, size, edges: topo.m(), outputs: Vec::new() }))
+        Ok(Ok(Job {
+            library,
+            project,
+            runs,
+            params,
+            numeric,
+            max_rows,
+            size,
+            edges: topo.m(),
+            outputs: Vec::new(),
+            ends: Default::default(),
+        }))
     };
     match library {
         Library::Gds => {
@@ -687,10 +701,30 @@ pub mod tigergraph_queries {
 
 /// Whether an edge of a TigerGraph result is undirected: its id is `Type:a--b` (either order,
 /// with `#n` for a second edge between the same ends; `datasources/tigergraph.rs`).
-fn undirected(e: &crate::shapes::Edge) -> bool {
+pub fn undirected(e: &crate::shapes::Edge) -> bool {
     let id = e.id.split('#').next().unwrap_or(&e.id);
     let form = |a: &str, b: &str| format!("{}:{a}--{b}", e.edge_type);
     id == form(&e.from, &e.to) || id == form(&e.to, &e.from)
+}
+
+/// Every vertex's edge ends per edge type, as Kalzit's TigerGraph queries report them: `T>` where a
+/// directed edge of type T starts, `T<` where it ends, `T` at both ends of an undirected one. Two
+/// edge sets with the same ends at every vertex almost always are the same edges; with the edge
+/// count, a database that holds other edges between the vertices than the result is found.
+pub fn edge_ends<'a>(
+    edges: impl Iterator<Item = &'a crate::shapes::Edge>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
+    for e in edges {
+        let (from, to) = if undirected(e) {
+            (e.edge_type.clone(), e.edge_type.clone())
+        } else {
+            (format!("{}>", e.edge_type), format!("{}<", e.edge_type))
+        };
+        *out.entry(e.from.clone()).or_default().entry(from).or_default() += 1;
+        *out.entry(e.to.clone()).or_default().entry(to).or_default() += 1;
+    }
+    out
 }
 
 /// The TigerGraph job of a step: the variant's name, the result's vertices (`Type:id`), the edge
@@ -763,6 +797,7 @@ fn tigergraph(kind: &StepKind, graph: &GraphSet, topo: &Topo) -> Result<Job, &'s
         size,
         edges: topo.m(),
         outputs,
+        ends: edge_ends(read.iter().copied()),
     })
 }
 

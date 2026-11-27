@@ -42,6 +42,8 @@ struct Fake {
     extra_edge: bool,
     /// The JSON bodies of the variants' REST++ calls.
     algorithm_calls: Mutex<Vec<(String, Value)>>,
+    /// The database holds the same number of edges between the vertices, but one ends elsewhere.
+    other_edge: bool,
     /// The GSQL scripts the install access ran.
     scripts: Mutex<Vec<String>>,
 }
@@ -132,7 +134,7 @@ async fn user(Path(name): Path<String>) -> Response {
         "installer_viel" => json_reply(
             200,
             json!({ "error": false, "results": { "name": "installer_viel", "isSuperUser": false,
-                "roles": { "social": ["designer"] },
+                "roles": { "social": ["kalzit_viel"] },
                 "privileges": { "social": { "privileges": ["READ_SCHEMA", "CREATE_QUERY", "INSTALL_QUERY",
                     "CREATE_DATA", "WRITE_SCHEMA"] } } } }),
         ),
@@ -980,7 +982,26 @@ async fn restpp_algorithm(
             json!({ "v_id": id, "v_type": ty, "attributes": attrs })
         })
         .collect();
-    json_reply(200, json!({ "error": false, "results": [{ "edges": edges }, { "kalzit_all": vertices }] }))
+    let mut seen = sub.edges.clone();
+    if s.other_edge
+        && let (Some(first), Some(last)) = (seen.first().cloned(), sub.nodes.last())
+    {
+        seen[0].to = if first.to == last.id { first.from.clone() } else { last.id.clone() };
+    }
+    let ends = crate::analysis::algo::library::edge_ends(seen.iter());
+    let ends: Vec<Value> = sub
+        .nodes
+        .iter()
+        .map(|n| {
+            let (ty, id) = n.id.split_once(':').unwrap();
+            let counts = ends.get(&n.id).cloned().unwrap_or_default();
+            json!({ "v_id": id, "v_type": ty, "attributes": { "kalzit_all.@kalzit_ends": counts } })
+        })
+        .collect();
+    json_reply(
+        200,
+        json!({ "error": false, "results": [{ "edges": edges }, { "kalzit_ends": ends }, { "kalzit_all": vertices }] }),
+    )
 }
 
 /// Runs one step after a TigerGraph result as a query does, with the source's library.
@@ -1073,6 +1094,14 @@ async fn a_variant_on_other_edges_or_not_installed_leaves_the_step_to_the_server
     let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
     assert_eq!(place.ran_in, crate::shapes::RanIn::Server);
     assert_eq!(place.reason.as_deref(), Some(reason::SUBGRAPH_DIFFERS));
+    // As many edges, but one with other ends.
+    let installed: BTreeMap<String, String> =
+        algorithms::shipped("social").into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+    let (addr, other) = fake_with(Fake { installed: Mutex::new(installed), other_edge: true, ..Fake::default() }).await;
+    *other.algo_graph.lock().unwrap() = Some(graph.clone());
+    let conn = connection(addr, "leser", approved.clone()).await;
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::SUBGRAPH_DIFFERS), "{place:?}");
     // Not installed: said, and not asked again for a while.
     let (addr, fake) = fake(false).await;
     let conn = connection(addr, "leser", approved).await;
@@ -1095,6 +1124,7 @@ async fn a_variant_on_other_edges_or_not_installed_leaves_the_step_to_the_server
 /// has the stored checksum.
 #[tokio::test]
 async fn the_install_access_installs_kalzits_queries_only_when_confirmed() {
+    const ADMIN: AlgorithmsView = AlgorithmsView { installer: true, replace_changed: false };
     use crate::analysis::algo::library::reason;
     use crate::shapes::TigerGraphAlgorithmState as St;
     let cases: Value = serde_json::from_str(include_str!("../../analysis/conformance.json")).unwrap();
@@ -1109,23 +1139,24 @@ async fn the_install_access_installs_kalzits_queries_only_when_confirmed() {
     };
     // The switch off: no install access, as before.
     let off = install_conn(with("installer", false)).await;
-    let s = algorithms_status(&off, &[]).await.unwrap();
+    let s = algorithms_status(&off, &[], ADMIN).await.unwrap();
     assert!(!s.install_credential && s.install.is_none());
     assert!(s.queries.iter().all(|q| q.state == St::Missing));
     // An install access that may write data is refused.
     let much = install_conn(with("installer_viel", true)).await;
-    let e = algorithms_status(&much, &[]).await.unwrap_err();
+    let e = algorithms_status(&much, &[], ADMIN).await.unwrap_err();
     assert_eq!(e.detail().reason, "tigergraph.install_user_too_much");
     assert!(e.detail().params["privileges"].contains("CREATE_DATA"));
     // The install needs the checksum of exactly the shown GSQL.
     let conn = install_conn(with("installer", true)).await;
-    let s = algorithms_status(&conn, &[]).await.unwrap();
+    let s = algorithms_status(&conn, &[], ADMIN).await.unwrap();
     let script = s.install.clone().unwrap();
     assert!(!script.contains("DROP"), "nothing to replace: {script}");
-    let e = install_algorithms(&conn, &[], "0000").await.unwrap_err();
+    let e = install_algorithms(&conn, &[], "0000", false).await.unwrap_err();
     assert_eq!(e.detail().reason, "tigergraph.install_script_changed");
     assert!(fake.scripts.lock().unwrap().is_empty(), "nothing ran");
-    let (after, installed) = install_algorithms(&conn, &[], s.install_checksum.as_deref().unwrap()).await.unwrap();
+    let (after, installed) =
+        install_algorithms(&conn, &[], s.install_checksum.as_deref().unwrap(), false).await.unwrap();
     assert_eq!(fake.scripts.lock().unwrap().as_slice(), [script]);
     assert!(after.queries.iter().all(|q| q.state == St::Current));
     assert_eq!(installed.len(), algorithms::shipped("social").len());
@@ -1154,21 +1185,71 @@ async fn the_install_access_installs_kalzits_queries_only_when_confirmed() {
     let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
     assert_eq!(place.reason.as_deref(), Some(reason::CHANGED_IN_DATABASE), "{place:?}");
     let recorded: Vec<String> = installed.iter().map(|(n, _)| n.clone()).collect();
-    let s = algorithms_status(&conn, &recorded).await.unwrap();
+    let s = algorithms_status(&conn, &recorded, ADMIN).await.unwrap();
     assert_eq!(s.queries.iter().find(|q| q.name == "kalzit_kcore").unwrap().state, St::Changed);
-    assert!(s.install.as_deref().unwrap().contains("DROP QUERY kalzit_kcore\n"), "an update replaces it");
-    // Someone else's query of the same name: shown, and no install.
-    let s = algorithms_status(&conn, &[]).await.unwrap();
+    assert!(s.install.is_none(), "a changed query blocks the install unless replacing it is asked for");
+    let e = install_algorithms(&conn, &recorded, "x", false).await.unwrap_err();
+    assert_eq!(e.detail().reason, "tigergraph.install_changed_query");
+    let view = AlgorithmsView { installer: true, replace_changed: true };
+    let s = algorithms_status(&conn, &recorded, view).await.unwrap();
+    let script = s.install.as_deref().unwrap();
+    assert!(s.replace_changed);
+    assert!(
+        script.starts_with("// Replaces queries changed in the database since Kalzit installed them: kalzit_kcore\n")
+    );
+    assert!(script.contains("DROP QUERY kalzit_kcore\n"), "{script}");
+    // A reader sees the states Kalzit can tell without the install access, and no scripts.
+    let s = algorithms_status(&conn, &recorded, AlgorithmsView::default()).await.unwrap();
+    assert!(s.queries.iter().all(|q| q.state == St::Present) && s.install.is_none() && s.remove.is_none());
+    // Someone else's query of the same name: shown, no install, and never run.
+    let other = install_conn(with("installer", true)).await;
+    let (_, place) = step_after(&other, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::NOT_VERIFIED), "{place:?}");
+    let s = algorithms_status(&conn, &[], ADMIN).await.unwrap();
     assert_eq!(s.queries.iter().find(|q| q.name == "kalzit_kcore").unwrap().state, St::Foreign);
     assert!(s.install.is_none() && s.remove.is_none(), "never touches another's query: {s:?}");
-    let e = install_algorithms(&conn, &[], "x").await.unwrap_err();
+    let e = install_algorithms(&conn, &[], "x", false).await.unwrap_err();
     assert_eq!(e.detail().reason, "tigergraph.install_name_taken");
     // Removal: only what Kalzit installed, with the confirmed checksum.
-    let s = algorithms_status(&conn, &recorded).await.unwrap();
+    let s = algorithms_status(&conn, &recorded, ADMIN).await.unwrap();
     let (after, removed) = remove_algorithms(&conn, &recorded, s.remove_checksum.as_deref().unwrap()).await.unwrap();
     assert_eq!(removed.len(), recorded.len());
     assert!(after.queries.iter().all(|q| q.state == St::Missing));
     assert!(fake.installed.lock().unwrap().is_empty());
+}
+
+#[test]
+fn the_install_access_fails_closed() {
+    let user = |privileges: Value, roles: Value, superuser: Value| {
+        json!({ "error": false, "results": { "name": "i", "isSuperUser": superuser, "roles": { "social": roles },
+                "privileges": { "social": { "privileges": privileges } } } })
+    };
+    let ok = json!(["READ_SCHEMA", "READ_QUERY", "CREATE_QUERY", "DROP_QUERY", "INSTALL_QUERY"]);
+    assert_eq!(install_problem(&user(ok.clone(), json!(["kalzit_installer"]), json!(false)), "i"), None);
+    let reason = |body: Value| install_problem(&body, "i");
+    assert_eq!(reason(user(json!([]), json!(["r"]), json!(false))).unwrap().0, "tigergraph.install_user_unverifiable");
+    assert_eq!(
+        reason(user(json!(["READ_SCHEMA", "CREATE_QUERY"]), json!(["r"]), json!(false))).unwrap().0,
+        "tigergraph.install_user_unverifiable",
+        "without INSTALL_QUERY it cannot install"
+    );
+    let much = reason(user(
+        json!(["CREATE_QUERY", "INSTALL_QUERY", "EXECUTE_QUERY", "READ_DATA"]),
+        json!(["r"]),
+        json!(false),
+    ));
+    assert_eq!(much, Some(("tigergraph.install_user_too_much", "EXECUTE_QUERY, READ_DATA".to_string())));
+    for role in ["designer", "globaldesigner", "admin", "architect", "superuser"] {
+        let r = reason(user(ok.clone(), json!([role]), json!(false))).unwrap();
+        assert_eq!(r, ("tigergraph.install_user_too_much", role.to_string()));
+    }
+    assert_eq!(reason(user(ok.clone(), json!(["r"]), json!(true))).unwrap().1, "superuser");
+    assert_eq!(reason(user(ok.clone(), json!(["r"]), Value::Null)).unwrap().1, "superuser", "unknown is not no");
+    // Privileges anywhere under privileges count, also below a query.
+    let nested = json!({ "results": { "name": "i", "isSuperUser": false, "roles": { "social": ["r"] },
+        "privileges": { "social": { "privileges": ok, "childPermissions": { "q": { "privileges": ["DELETE_DATA"] } } } } } });
+    assert_eq!(reason(nested).unwrap().1, "DELETE_DATA");
+    assert_eq!(reason(json!({ "results": { "name": "other" } })).unwrap().0, "tigergraph.install_user_unverifiable");
 }
 
 #[test]

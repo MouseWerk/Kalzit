@@ -337,9 +337,10 @@ There are two ways to install them:
   Since a `queryreader` cannot read query texts, add the five names to **Approved installed
   queries**; TigerGraph must report that they do not change data.
 
-The install access must be another user with a role that may only read and create, drop and
-install queries; Kalzit checks its privileges before every use and refuses one that may write data,
-the schema, loading jobs, users or roles. On TigerGraph 4.x, for the graph `social`:
+The install access must be another user with a role that holds only `READ_SCHEMA`, `READ_QUERY`,
+`CREATE_QUERY`, `DROP_QUERY` and `INSTALL_QUERY`; Kalzit checks its privileges before every use and
+refuses one that holds anything more (running queries and reading data included), a built-in role
+such as `designer` or `admin`, or superuser. On TigerGraph 4.x, for the graph `social`:
 
 ```
 CREATE ROLE kalzit_installer

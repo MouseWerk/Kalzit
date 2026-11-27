@@ -165,7 +165,13 @@ installCredential: boolean,
 /**
  * The version of Kalzit's query texts.
  */
-version: number, queries: Array<TigerGraphAlgorithm>, 
+version: number, 
+/**
+ * Whether `install` replaces queries changed in the database since Kalzit installed them
+ * (asked for with `replaceChanged`; its first line names them). Without it, such a query
+ * blocks the install like another's query of the same name.
+ */
+replaceChanged: boolean, queries: Array<TigerGraphAlgorithm>, 
 /**
  * The GSQL an install runs, with the install access; absent without one (or on 3.x).
  */

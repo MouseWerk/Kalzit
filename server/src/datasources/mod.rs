@@ -2965,10 +2965,19 @@ pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> Ap
 
 /// What the TigerGraph algorithm route does (`tigergraph::algorithms_status` and friends).
 pub enum TigerGraphAlgorithmsAction {
-    Status,
+    Status(tigergraph::AlgorithmsView),
     /// With the checksum of the GSQL the person confirmed.
-    Install(String),
+    Install(String, bool),
     Remove(String),
+}
+
+/// The lock of one TigerGraph source's algorithm queries (`tigergraph_algorithms`).
+fn tigergraph_lock(id: &str) -> Arc<tokio::sync::RwLock<()>> {
+    static LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut locks = LOCKS.lock_or_recover();
+    locks.retain(|_, l| Arc::strong_count(l) > 1);
+    locks.entry(id.to_string()).or_default().clone()
 }
 
 /// How long installing TigerGraph queries may take (TigerGraph compiles them).
@@ -2986,6 +2995,10 @@ pub async fn tigergraph_algorithms(
         return Err(ApiError::not_found());
     }
     let registry = &state.datasources;
+    // One status, install or removal per source at a time on this server, from reading what Kalzit
+    // installed to recording what changed, so two of them never act on a stale record.
+    let lock = tigergraph_lock(&ds.id);
+    let _held = lock.write().await;
     let recorded: Vec<String> =
         sqlx::query_scalar("SELECT name FROM tigergraph_installed_queries WHERE datasource_id = $1 ORDER BY name")
             .bind(&ds.id)
@@ -2995,11 +3008,13 @@ pub async fn tigergraph_algorithms(
         let _slots = registry.slots(state, user_id).await?;
         let conn = registry.connection(state, ds).await?;
         let out = match action {
-            TigerGraphAlgorithmsAction::Status => {
-                tigergraph::algorithms_status(&conn, &recorded).await.map(|s| (s, Vec::new(), Vec::new()))
+            TigerGraphAlgorithmsAction::Status(view) => {
+                tigergraph::algorithms_status(&conn, &recorded, view).await.map(|s| (s, Vec::new(), Vec::new()))
             }
-            TigerGraphAlgorithmsAction::Install(sum) => {
-                tigergraph::install_algorithms(&conn, &recorded, &sum).await.map(|(s, i)| (s, i, Vec::new()))
+            TigerGraphAlgorithmsAction::Install(sum, replace_changed) => {
+                tigergraph::install_algorithms(&conn, &recorded, &sum, replace_changed)
+                    .await
+                    .map(|(s, i)| (s, i, Vec::new()))
             }
             TigerGraphAlgorithmsAction::Remove(sum) => {
                 tigergraph::remove_algorithms(&conn, &recorded, &sum).await.map(|(s, r)| (s, Vec::new(), r))

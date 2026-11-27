@@ -1577,8 +1577,8 @@
   "datasources.reason.tigergraph.explore_no_reverse_edge": "{types} kann nicht gegen die Richtung gefolgt werden: Es gibt keinen Rückwärts-Kantentyp.",
   "datasources.reason.tigergraph.install_unsupported": "Kalzit installiert seine Algorithmus-Abfragen nur auf TigerGraph 4.x.",
   "datasources.reason.tigergraph.install_credential_missing": "Die Datenquelle hat keinen Installations-Zugang: Schalte den Schalter ein und setze Installations-Benutzer und -Passwort.",
-  "datasources.reason.tigergraph.install_user_unverifiable": "Kalzit kann die Rechte des Installations-Zugangs nicht lesen und nutzt ihn deshalb nicht.",
-  "datasources.reason.tigergraph.install_user_too_much": "Zugang darf zu viel ({privileges}). Gib ihm eine Rolle, die nur lesen und Abfragen installieren darf.",
+  "datasources.reason.tigergraph.install_user_unverifiable": "Kalzit kann die Rechte des Installations-Zugangs nicht lesen, oder ihm fehlen CREATE_QUERY und INSTALL_QUERY; deshalb nutzt Kalzit ihn nicht.",
+  "datasources.reason.tigergraph.install_user_too_much": "Zugang darf zu viel ({privileges}). Gib ihm eine Rolle nur mit READ_SCHEMA, READ_QUERY, CREATE_QUERY, DROP_QUERY und INSTALL_QUERY.",
   "datasources.reason.tigergraph.install_script_changed": "Das GSQL hat sich geändert, seit du es bestätigt hast. Nichts wurde ausgeführt; prüfe es erneut.",
   "datasources.reason.tigergraph.install_name_taken": "Der Graph hat schon eine Abfrage {name}, die Kalzit nicht installiert hat. Nichts wurde installiert.",
   "datasources.reason.tigergraph.install_failed": "TigerGraph hat nicht jede Abfrage wie ausgeliefert installiert: {detail}",
@@ -1586,5 +1586,6 @@
   "datasources.reason.algorithm.not_installed": "Rechnet im Server: Kalzits Algorithmus-Abfrage {name} ist nicht wie erwartet installiert.",
   "datasources.reason.algorithm.not_verified": "Rechnet im Server: Für {name} lässt sich nicht zeigen, dass sie nur liest ({detail}).",
   "datasources.reason.algorithm.changed_in_database": "Rechnet im Server: {name} wurde in der Datenbank geändert. Ein Admin installiert sie neu.",
-  "datasources.reason.algorithm.subgraph_differs": "Rechnet im Server: Die Datenbank hat zwischen diesen Knoten andere Kanten als das Ergebnis."
+  "datasources.reason.algorithm.subgraph_differs": "Rechnet im Server: Die Datenbank hat zwischen diesen Knoten andere Kanten als das Ergebnis.",
+  "datasources.reason.tigergraph.install_changed_query": "{name} wurde in der Datenbank geändert, seit Kalzit sie installiert hat. Bestätige das Ersetzen, um zu installieren."
 }

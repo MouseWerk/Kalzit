@@ -117,23 +117,62 @@ const READ_PRIVILEGES: &[&str] = &[
     "EXECUTE_QUERY",
 ];
 
-/// Privileges the install access may hold: reading, and creating, changing, dropping and
-/// installing queries (4.x query privileges; `WRITE_QUERY` is 3.x's single one). Nothing that
-/// writes data, the schema, loading jobs, users, roles or graphs.
-const INSTALL_PRIVILEGES: &[&str] = &[
-    "READ_SCHEMA",
-    "READ_DATA",
-    "APP_ACCESS_DATA",
-    "READ_POLICY",
-    "READ_LOADINGJOB",
-    "READ_QUERY",
-    "CREATE_QUERY",
-    "UPDATE_QUERY",
-    "DROP_QUERY",
-    "INSTALL_QUERY",
-    "EXECUTE_QUERY",
-    "WRITE_QUERY",
-];
+/// Privileges the install access may hold: reading the schema (to compile), reading query texts
+/// (the checksum), creating, dropping and installing queries (TigerGraph 4.x). Nothing else: it
+/// never runs a query (no `EXECUTE_QUERY`), never reads or writes data, and Kalzit replaces a
+/// query by dropping and creating it, so `UPDATE_QUERY` is not needed either.
+const INSTALL_PRIVILEGES: &[&str] = &["READ_SCHEMA", "READ_QUERY", "CREATE_QUERY", "DROP_QUERY", "INSTALL_QUERY"];
+
+/// Privileges the install access must hold; without them it cannot install.
+const INSTALL_NEEDS: &[&str] = &["CREATE_QUERY", "INSTALL_QUERY"];
+
+/// Built-in roles that grant far more than installing queries; an install access holding one is
+/// refused whatever its privileges read.
+const BROAD_ROLES: &[&str] = &["superuser", "globaldesigner", "admin", "globaladmin", "designer", "architect"];
+
+/// Why an install access may not be used, from its user record (`GET /gsql/v1/users/{name}`),
+/// failing closed: privileges are every string anywhere under `privileges` (both of
+/// `rights_from_json`'s readings at once), and an empty or unreadable list, a missing needed
+/// privilege, a broad built-in role, superuser or any privilege outside `INSTALL_PRIVILEGES` is
+/// a refusal: the reason and the privileges or roles at fault.
+fn install_problem(body: &Value, user: &str) -> Option<(&'static str, String)> {
+    let unverifiable = || Some(("tigergraph.install_user_unverifiable", String::new()));
+    let candidates: Vec<&Value> = match body.get("results") {
+        Some(Value::Array(a)) => a.iter().collect(),
+        Some(v @ Value::Object(_)) => vec![v],
+        _ => vec![body],
+    };
+    let Some(u) = candidates.into_iter().find(|c| c.get("name").and_then(Value::as_str).is_none_or(|n| n == user))
+    else {
+        return unverifiable();
+    };
+    if u.get("isSuperUser").and_then(Value::as_bool) != Some(false) {
+        // Missing counts as unknown, not as "no".
+        return Some(("tigergraph.install_user_too_much", "superuser".into()));
+    }
+    let mut roles = Vec::new();
+    if let Some(r) = u.get("roles") {
+        strings_under(r, "roles", &mut roles, true);
+    }
+    let broad: Vec<String> =
+        roles.iter().filter(|r| BROAD_ROLES.iter().any(|b| r.eq_ignore_ascii_case(b))).cloned().collect();
+    if !broad.is_empty() {
+        return Some(("tigergraph.install_user_too_much", broad.join(", ")));
+    }
+    let mut privileges = Vec::new();
+    match u.get("privileges") {
+        Some(p) => strings_under(p, "privileges", &mut privileges, true),
+        None => return unverifiable(),
+    }
+    let upper: Vec<String> = privileges.iter().map(|p| p.to_ascii_uppercase()).collect();
+    if upper.is_empty() || INSTALL_NEEDS.iter().any(|n| !upper.iter().any(|p| p == n)) {
+        return unverifiable();
+    }
+    let mut excess: Vec<String> = upper.into_iter().filter(|p| !INSTALL_PRIVILEGES.contains(&p.as_str())).collect();
+    excess.sort();
+    excess.dedup();
+    (!excess.is_empty()).then(|| ("tigergraph.install_user_too_much", excess.join(", ")))
+}
 
 pub fn kind() -> Kind {
     Kind {
@@ -608,9 +647,9 @@ impl Client {
     /// The install access after checking that it may do no more than read and install queries
     /// (`INSTALL_PRIVILEGES`): one that may write data or the schema, or whose privileges cannot
     /// be read, is refused. Checked again after a minute.
-    async fn checked_install(&self) -> Result<HeaderValue, SourceError> {
+    async fn checked_install(&self, fresh: bool) -> Result<HeaderValue, SourceError> {
         let login = self.install_login()?;
-        if self.install_checked.lock_or_recover().is_some_and(|at| at.elapsed() < TEXT_CACHE) {
+        if !fresh && self.install_checked.lock_or_recover().is_some_and(|at| at.elapsed() < TEXT_CACHE) {
             return Ok(login);
         }
         let user = self.install_user.clone().unwrap_or_default();
@@ -622,29 +661,31 @@ impl Client {
         let (status, bytes) =
             self.call(Method::GET, url, Some(login.clone()), None, &[], MAX_SMALL_RESPONSE, None).await?;
         let body = self.parse(status, &bytes).unwrap_or(Value::Null);
-        let rights = (status.is_success() && body.get("error").and_then(Value::as_bool) != Some(true))
-            .then(|| rights_from_json(&body, &user))
-            .flatten();
-        let excess = match &rights {
-            Some(r @ Rights { privileges: Some(_), .. }) => r.excess_for(INSTALL_PRIVILEGES),
-            _ => {
+        let readable = status.is_success() && body.get("error").and_then(Value::as_bool) != Some(true);
+        let problem = if readable {
+            install_problem(&body, &user)
+        } else {
+            Some(("tigergraph.install_user_unverifiable", String::new()))
+        };
+        match problem {
+            None => {}
+            Some(("tigergraph.install_user_too_much", list)) => {
+                return Err(SourceError::rejected(
+                    "tigergraph.install_user_too_much",
+                    format!(
+                        "the install access may do too much ({list}); give it a role with only READ_SCHEMA, \
+                         READ_QUERY, CREATE_QUERY, DROP_QUERY and INSTALL_QUERY (docs/guide/data-sources.md)"
+                    ),
+                )
+                .with("privileges", list));
+            }
+            Some(_) => {
                 return Err(SourceError::rejected(
                     "tigergraph.install_user_unverifiable",
-                    "cannot read the install access's privileges, so Kalzit cannot check that it may do no more than \
-                     install queries",
+                    "cannot read the install access's privileges, or they lack CREATE_QUERY and INSTALL_QUERY, so \
+                     Kalzit does not use it",
                 ));
             }
-        };
-        if !excess.is_empty() {
-            let list = excess.join(", ");
-            return Err(SourceError::rejected(
-                "tigergraph.install_user_too_much",
-                format!(
-                    "the install access may do too much ({list}); give it a role with only the query privileges \
-                     (docs/guide/data-sources.md)"
-                ),
-            )
-            .with("privileges", list));
         }
         *self.install_checked.lock_or_recover() = Some(Instant::now());
         Ok(login)
@@ -662,7 +703,7 @@ impl Client {
     /// The installed text of `name`, read with the install access; `None` when the graph has no
     /// such query.
     async fn installed_text(&self, name: &str) -> Result<Option<String>, SourceError> {
-        let login = self.checked_install().await?;
+        let login = self.checked_install(false).await?;
         let mut url = self
             .gsql
             .join(&format!("gsql/v1/queries/{name}"))
@@ -681,7 +722,7 @@ impl Client {
     /// their output. Only `install_algorithms` and `remove_algorithms` call it, with Kalzit's own
     /// fixed scripts.
     async fn install_command(&self, script: &str) -> Result<String, SourceError> {
-        let login = self.checked_install().await?;
+        let login = self.checked_install(true).await?;
         let url = self.gsql.join("gsql/v1/statements").map_err(|e| SourceError::failed("internal", e.to_string()))?;
         let body = Some((script.as_bytes().to_vec(), "text/plain"));
         let (status, bytes) = self.call(Method::POST, url, Some(login), body, &[], MAX_SMALL_RESPONSE, None).await?;
@@ -887,23 +928,6 @@ struct Rights {
 }
 
 impl Rights {
-    /// Privileges beyond `allowed` (superuser always); only for rights with known privileges.
-    fn excess_for(&self, allowed: &[&str]) -> Vec<String> {
-        if self.superuser {
-            return vec!["superuser".into()];
-        }
-        let mut out: Vec<String> = self
-            .privileges
-            .iter()
-            .flatten()
-            .filter(|p| !allowed.contains(&p.to_ascii_uppercase().as_str()))
-            .cloned()
-            .collect();
-        out.sort();
-        out.dedup();
-        out
-    }
-
     /// What the user may do beyond reading: privileges outside `READ_PRIVILEGES`, or, when only
     /// roles are known, roles other than `queryreader`.
     fn excess(&self) -> Vec<String> {
@@ -1371,6 +1395,12 @@ impl DataSourcePlugin for TigerGraph {
         // A query Kalzit installed itself: the installed text, read with the install access (the
         // query access may not read texts), must have the checksum Kalzit stored at the install,
         // and that must be the current version's. Admin-installed ones are checked as before.
+        // While Kalzit installs, updates or removes the queries of this source, none of them runs.
+        let lock = super::tigergraph_lock(conn.datasource_id());
+        let _held = match lock.try_read() {
+            Ok(held) => held,
+            Err(_) => return Err(algorithms::not_verified(&name, "Kalzit is installing or removing the queries")),
+        };
         let stored: Option<String> = if c.install.is_some() {
             sqlx::query_scalar(
                 "SELECT checksum FROM tigergraph_installed_queries WHERE datasource_id = $1 AND name = $2",
@@ -1383,7 +1413,21 @@ impl DataSourcePlugin for TigerGraph {
         } else {
             None
         };
-        let declared = if let Some(stored) = stored {
+        // With the install access, only Kalzit's exact current text runs: one Kalzit installed
+        // against the checksum it stored, any other (someone else's) against the shipped one.
+        let recorded = stored.is_some();
+        let expected = match (c.install.is_some(), stored) {
+            (true, Some(sum)) => Some(sum),
+            (true, None) => Some(
+                algorithms::shipped(&c.graph)
+                    .into_iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, t)| algorithms::checksum(&t, &c.graph))
+                    .unwrap_or_default(),
+            ),
+            (false, _) => None,
+        };
+        let declared = if let Some(stored) = expected {
             let shipped = algorithms::shipped(&c.graph).into_iter().find(|(n, _)| *n == name).map(|(_, t)| t);
             let shipped = shipped.ok_or_else(|| algorithms::not_installed(&name, "no such Kalzit query"))?;
             if stored != algorithms::checksum(&shipped, &c.graph) {
@@ -1401,8 +1445,12 @@ impl DataSourcePlugin for TigerGraph {
                 match text {
                     None => return Err(algorithms::not_installed(&name, "the graph has no query of this name")),
                     Some(t) if algorithms::checksum(&t, &c.graph) == stored => c.mark_verified(&name),
+                    Some(_) if recorded => return Err(algorithms::changed(&name)),
                     Some(_) => {
-                        return Err(algorithms::changed(&name));
+                        return Err(algorithms::not_verified(
+                            &name,
+                            "it is not Kalzit's text and Kalzit did not install it",
+                        ));
                     }
                 }
             }
@@ -1731,17 +1779,22 @@ impl DataSourcePlugin for TigerGraph {
 
 /// Which of Kalzit's algorithm queries the graph has, and the GSQL an install or removal runs.
 /// `recorded` names the queries Kalzit installed on this source itself (Kalzit's own database).
+/// `view.installer` false (a reader of the source): no call with the install access, no scripts;
+/// installed queries show as `present`. `view.replace_changed`: the install script also replaces
+/// queries changed in the database (and says so in its first line); without it they block it.
 pub async fn algorithms_status(
     conn: &Connection,
     recorded: &[String],
+    view: AlgorithmsView,
 ) -> Result<crate::shapes::TigerGraphAlgorithms, SourceError> {
     use crate::shapes::{TigerGraphAlgorithm, TigerGraphAlgorithmState as St, TigerGraphAlgorithms};
     let c = client(conn).await?;
     let names = c.query_names().await.unwrap_or_default();
-    let login = c.install_login().is_ok();
+    let configured = c.install_login().is_ok();
+    let login = configured && view.installer;
     if login {
         // An install access that may do too much is refused before anything else.
-        c.checked_install().await?;
+        c.checked_install(false).await?;
     }
     let mut queries = Vec::new();
     for (name, text) in algorithms::shipped(&c.graph) {
@@ -1758,15 +1811,22 @@ pub async fn algorithms_status(
     let named = |states: &[St]| -> Vec<&str> {
         queries.iter().filter(|q| states.contains(&q.state)).map(|q| q.name.as_str()).collect()
     };
-    // Nothing is installed while a query of the same name is someone else's.
-    let install = (login && named(&[St::Foreign]).is_empty())
-        .then(|| algorithms::install_script(&c.graph, &named(&[St::Older, St::Changed]), &named(&[St::Missing])))
+    // Nothing is installed while a query of the same name is someone else's, nor, without the
+    // explicit choice to replace them, while one Kalzit installed was changed in the database.
+    let changed = named(&[St::Changed]);
+    let blocked = !named(&[St::Foreign]).is_empty() || (!changed.is_empty() && !view.replace_changed);
+    let install = (login && !blocked)
+        .then(|| {
+            let replace = named(&[St::Older, St::Changed]);
+            algorithms::install_script(&c.graph, &replace, &named(&[St::Missing]), &changed)
+        })
         .flatten();
     let ours: Vec<&str> =
         named(&[St::Current, St::Older, St::Changed]).into_iter().filter(|n| recorded.iter().any(|r| r == n)).collect();
     let remove = if login { algorithms::remove_script(&c.graph, &ours) } else { None };
     Ok(TigerGraphAlgorithms {
-        install_credential: login,
+        install_credential: configured,
+        replace_changed: view.replace_changed && !changed.is_empty(),
         version: algorithms::VERSION,
         install_checksum: install.as_deref().map(algorithms::script_checksum),
         install,
@@ -1774,6 +1834,15 @@ pub async fn algorithms_status(
         remove,
         queries,
     })
+}
+
+/// Who looks at the algorithm queries, and what an install would replace (`algorithms_status`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AlgorithmsView {
+    /// May install and remove (the admin level of the source): the install access is used.
+    pub installer: bool,
+    /// Replace queries Kalzit installed that were changed in the database.
+    pub replace_changed: bool,
 }
 
 /// Installs Kalzit's algorithm queries with the install access and answers the state after it with
@@ -1784,9 +1853,11 @@ pub async fn install_algorithms(
     conn: &Connection,
     recorded: &[String],
     confirmed: &str,
+    replace_changed: bool,
 ) -> Result<(crate::shapes::TigerGraphAlgorithms, Vec<(String, String)>), SourceError> {
     use crate::shapes::TigerGraphAlgorithmState as St;
-    let before = algorithms_status(conn, recorded).await?;
+    let view = AlgorithmsView { installer: true, replace_changed };
+    let before = algorithms_status(conn, recorded, view).await?;
     if !before.install_credential {
         return Err(client_error_no_login());
     }
@@ -1796,6 +1867,16 @@ pub async fn install_algorithms(
             format!("the graph has a query {} that Kalzit did not install; nothing was installed", foreign.name),
         )
         .with("name", &foreign.name));
+    }
+    if !replace_changed && let Some(changed) = before.queries.iter().find(|q| q.state == St::Changed) {
+        return Err(SourceError::rejected(
+            "tigergraph.install_changed_query",
+            format!(
+                "{} was changed in the database since Kalzit installed it; confirm replacing it to install",
+                changed.name
+            ),
+        )
+        .with("name", &changed.name));
     }
     let Some(script) = before.install.clone() else { return Ok((before, Vec::new())) };
     if !confirmed.eq_ignore_ascii_case(&algorithms::script_checksum(&script)) {
@@ -1807,7 +1888,7 @@ pub async fn install_algorithms(
         before.queries.iter().filter(|q| q.state != St::Current).map(|q| q.name.clone()).collect();
     let mut now_recorded = recorded.to_vec();
     now_recorded.extend(changed.iter().cloned());
-    let after = algorithms_status(conn, &now_recorded).await?;
+    let after = algorithms_status(conn, &now_recorded, view).await?;
     if after.queries.iter().any(|q| q.state != St::Current) {
         let tail: String = output.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
         return Err(SourceError::failed(
@@ -1833,7 +1914,7 @@ pub async fn remove_algorithms(
     confirmed: &str,
 ) -> Result<(crate::shapes::TigerGraphAlgorithms, Vec<String>), SourceError> {
     use crate::shapes::TigerGraphAlgorithmState as St;
-    let before = algorithms_status(conn, recorded).await?;
+    let before = algorithms_status(conn, recorded, AlgorithmsView { installer: true, replace_changed: false }).await?;
     if !before.install_credential {
         return Err(client_error_no_login());
     }
@@ -1843,7 +1924,7 @@ pub async fn remove_algorithms(
     }
     let c = client(conn).await?;
     c.install_command(&script).await?;
-    let after = algorithms_status(conn, recorded).await?;
+    let after = algorithms_status(conn, recorded, AlgorithmsView { installer: true, replace_changed: false }).await?;
     let removed = after.queries.iter().filter(|q| q.state == St::Missing).map(|q| q.name.clone()).collect();
     Ok((after, removed))
 }

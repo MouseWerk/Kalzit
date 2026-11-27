@@ -186,6 +186,24 @@ fn access(ctx: &OrgCtx, held: Option<BTreeSet<Permission>>) -> DatasourceAccess 
 /// Whether the caller may change where a source connects: they may change the source at all
 /// (write on it), and where it connects is decided by those who administer it: the org-wide
 /// right, or an admin grant on this source. An edit grant changes names, limits and secrets only.
+/// The audit entries of a TigerGraph install access (D16) for a change whose changed fields are
+/// `changed` (`settings.<name>`, `secrets.<name>`), with the settings after it: storing the
+/// access (user, and whether a password was stored, never the password) and the switch.
+pub(crate) fn install_audit(changed: &[String], settings: &Value, password: bool) -> Vec<(&'static str, Value)> {
+    let mut out = Vec::new();
+    if changed.iter().any(|c| c == "settings.installUser" || c == "secrets.installPassword") {
+        out.push((
+            "datasource.install_access_stored",
+            json!({ "user": settings.get("installUser"), "password": password }),
+        ));
+    }
+    if changed.iter().any(|c| c == "settings.installAlgorithms") {
+        let on = settings.get("installAlgorithms").and_then(Value::as_bool).unwrap_or(false);
+        out.push((if on { "datasource.install_switch_on" } else { "datasource.install_switch_off" }, json!({})));
+    }
+    out
+}
+
 fn may_change_target(ctx: &OrgCtx, held: &BTreeSet<Permission>) -> bool {
     held.contains(&Permission::DatasourcesWrite)
         && (ctx.permissions.contains(&Permission::DatasourcesWrite)
@@ -569,6 +587,19 @@ async fn create(
         "secrets": secrets.keys().collect::<Vec<_>>(),
     });
     record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
+    let mut created: Vec<String> = settings
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| !v.is_null() && **v != Value::Bool(false))
+                .map(|(k, _)| format!("settings.{k}"))
+                .collect()
+        })
+        .unwrap_or_default();
+    created.extend(secrets.keys().map(|k| format!("secrets.{k}")));
+    for (action, summary) in install_audit(&created, &settings, secrets.contains_key("installPassword")) {
+        record(&mut tx, &event(&ctx, &info, action, &id, summary, now)).await?;
+    }
     let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
     let answer = view_in(&mut tx, &ctx, ds).await?;
     crate::db::commit(tx).await?;
@@ -854,15 +885,8 @@ async fn update(
     }
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
     // A TigerGraph install access and its switch get entries of their own (D16).
-    if changed.iter().any(|c| c == "settings.installUser" || c == "secrets.installPassword") {
-        let summary =
-            json!({ "user": settings.get("installUser"), "password": body.secrets.contains_key("installPassword") });
-        record(&mut tx, &event(&ctx, &info, "datasource.install_access_stored", &ds.id, summary, now)).await?;
-    }
-    if changed.iter().any(|c| c == "settings.installAlgorithms") {
-        let on = settings.get("installAlgorithms").and_then(Value::as_bool).unwrap_or(false);
-        let action = if on { "datasource.install_switch_on" } else { "datasource.install_switch_off" };
-        record(&mut tx, &event(&ctx, &info, action, &ds.id, json!({}), now)).await?;
+    for (action, summary) in install_audit(&changed, &settings, body.secrets.contains_key("installPassword")) {
+        record(&mut tx, &event(&ctx, &info, action, &ds.id, summary, now)).await?;
     }
     let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, &ctx, saved).await?;
@@ -1643,18 +1667,37 @@ async fn tigergraph_algorithms(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path(path): Path<DsPath>,
+    Query(params): Query<StatusParams>,
 ) -> ApiResult<Json<crate::shapes::TigerGraphAlgorithms>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
-    let action = datasources::TigerGraphAlgorithmsAction::Status;
+    // Only who may install sees the install side: the install access is not used for readers.
+    let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+    let installer = held.contains(&Permission::DatasourcesWrite) && may_change_target(&ctx, &held);
+    let view = crate::datasources::tigergraph::AlgorithmsView {
+        installer,
+        replace_changed: installer && params.replace_changed.as_deref() == Some("true"),
+    };
+    let action = datasources::TigerGraphAlgorithmsAction::Status(view);
     Ok(Json(datasources::tigergraph_algorithms(&state, &ctx.user.id, &ds, action).await?.0))
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ConfirmBody {
     /// The SHA-256 of the GSQL the person confirmed (`installChecksum` or `removeChecksum` of the
     /// status), so nothing runs that was not shown.
     checksum: String,
+    /// Install: also replace queries changed in the database since Kalzit installed them (the
+    /// status asked with `replaceChanged=true` shows that script).
+    #[serde(default)]
+    replace_changed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct StatusParams {
+    replace_changed: Option<String>,
 }
 
 /// Installing, updating or removing queries writes to the graph with the install access: it takes
@@ -1702,7 +1745,7 @@ async fn tigergraph_install(
     JsonBody(body): JsonBody<ConfirmBody>,
 ) -> ApiResult<Json<crate::shapes::TigerGraphAlgorithms>> {
     let ds = installer(&state, &ctx, &path.datasource_id).await?;
-    let action = datasources::TigerGraphAlgorithmsAction::Install(body.checksum);
+    let action = datasources::TigerGraphAlgorithmsAction::Install(body.checksum, body.replace_changed);
     let outcome = datasources::tigergraph_algorithms(&state, &ctx.user.id, &ds, action).await;
     let name = match &outcome {
         Ok((_, true)) => "datasource.algorithms_updated",

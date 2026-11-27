@@ -352,10 +352,10 @@ Es gibt zwei Wege, sie zu installieren:
   Weil ein `queryreader` Abfragetexte nicht lesen kann, trage die fünf Namen unter **Freigegebene
   installierte Abfragen** ein; TigerGraph muss melden, dass sie keine Daten ändern.
 
-Der Installations-Zugang muss ein anderer Benutzer sein, mit einer Rolle, die nur lesen und
-Abfragen anlegen, entfernen und installieren darf; Kalzit prüft seine Rechte vor jeder Nutzung und
-lehnt einen ab, der Daten, das Schema, Ladejobs, Benutzer oder Rollen schreiben darf
-(„Zugang darf zu viel“). Mit TigerGraph 4.x, für den Graphen `social`:
+Der Installations-Zugang muss ein anderer Benutzer sein, mit einer Rolle, die nur `READ_SCHEMA`,
+`READ_QUERY`, `CREATE_QUERY`, `DROP_QUERY` und `INSTALL_QUERY` hat; Kalzit prüft seine Rechte vor
+jeder Nutzung und lehnt einen ab, der mehr hat (auch Abfragen ausführen oder Daten lesen), eine
+eingebaute Rolle wie `designer` oder `admin` oder Superuser ist („Zugang darf zu viel“). Mit TigerGraph 4.x, für den Graphen `social`:
 
 ```
 CREATE ROLE kalzit_installer
