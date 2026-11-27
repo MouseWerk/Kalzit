@@ -5,14 +5,11 @@ import type { ElkSettings } from "./options";
 /**
  * The optional ELK layout of the hierarchy panel. elkjs loads on the first layout that asks for
  * it (`import()` of elkRunner.ts, a chunk of its own); Kalzit's own layered layout stays the
- * default. In a worker ELK takes graphs up to the hierarchy's limit; without workers it runs on
- * the page, so only small graphs, and larger ones keep Kalzit's layout with a notice.
+ * default. ELK runs only in a worker, on graphs up to the hierarchy's limit; a browser without
+ * workers keeps Kalzit's layout with a notice, so ELK ships once (elkRunner.ts).
  */
 
-/** Without a worker, ELK lays out at most this many nodes on the page. */
-export const MAIN_THREAD_ELK_LIMIT = 300;
-
-export type ElkRunner = Pick<typeof import("./elkRunner"), "layoutInWorker" | "layoutOnMainThread">;
+export type ElkRunner = Pick<typeof import("./elkRunner"), "layoutInWorker">;
 
 const defaultLoader = (): Promise<ElkRunner> => import("./elkRunner");
 let loadRunner: () => Promise<ElkRunner> = defaultLoader;
@@ -27,8 +24,8 @@ export function setElkLoader(loader: () => Promise<ElkRunner>): () => void {
 
 /** Why ELK gave no layout; the panel then shows Kalzit's own and says so. */
 export class ElkUnavailable extends Error {
-  constructor(readonly reason: "failed" | "tooLarge") {
-    super(reason === "tooLarge" ? "Too many nodes for ELK without a worker" : "ELK failed");
+  constructor(readonly reason: "failed" | "noWorker") {
+    super(reason === "noWorker" ? "ELK needs a web worker" : "ELK failed");
   }
 }
 
@@ -43,8 +40,8 @@ export async function elkLayout(
   signal: AbortSignal,
   worker: boolean,
 ): Promise<{ positions: Float32Array; reversed: number }> {
-  if (!worker && graph.count > MAIN_THREAD_ELK_LIMIT) {
-    throw new ElkUnavailable("tooLarge");
+  if (!worker) {
+    throw new ElkUnavailable("noWorker");
   }
   const input = elkInput(graph, settings);
   const sizes = graph.sizes.slice();
@@ -60,9 +57,7 @@ export async function elkLayout(
   try {
     const runner = await loadRunner();
     signal.throwIfAborted();
-    const result = worker
-      ? await runner.layoutInWorker(input, signal)
-      : await runner.layoutOnMainThread(input);
+    const result = await runner.layoutInWorker(input, signal);
     signal.throwIfAborted();
     return elkPositions(result, shape, settings.direction);
   } catch (error) {
