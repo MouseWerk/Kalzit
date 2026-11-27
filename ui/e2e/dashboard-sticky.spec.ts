@@ -6,6 +6,8 @@ import { startEditing } from "./support/ui";
 
 /** The sticky parts of a dashboard, by their place in the window. */
 interface Sample {
+  /** What scrolled: the main area next to the sidebar, or the document on a phone. */
+  scroller: "main" | "document";
   scrollY: number;
   bar: number;
   toolbar: number;
@@ -31,8 +33,9 @@ async function longDashboard(sourceId: string): Promise<string> {
 }
 
 /**
- * Scrolls the page in small steps from the top to its end, as a wheel does, and records where
- * the top bar, the toolbar, the rail and the open pane are after each step has been painted.
+ * Scrolls the page's scroll container (the main area next to the sidebar) in small steps from
+ * the top to its end, as a wheel does, and records where the top bar, the toolbar, the rail and
+ * the open pane are after each step has been painted.
  */
 function scrollInSteps(page: Page): Promise<Sample[]> {
   return page.evaluate(async () => {
@@ -43,14 +46,20 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
     };
     const painted = () =>
       new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
-    const end = document.documentElement.scrollHeight - window.innerHeight;
+    const main = document.querySelector<HTMLElement>(".shell__main");
+    const scroller =
+      main !== null && getComputedStyle(main).overflowY === "auto"
+        ? main
+        : (document.scrollingElement ?? document.documentElement);
+    const end = scroller.scrollHeight - scroller.clientHeight;
     const steps = [...Array.from({ length: 41 }, (_, i) => i * 3), 200, 400, end];
     const samples: Sample[] = [];
     for (const y of steps) {
-      window.scrollTo(0, y);
+      scroller.scrollTo(0, y);
       await painted();
       samples.push({
-        scrollY: window.scrollY,
+        scroller: scroller === main ? "main" : "document",
+        scrollY: scroller.scrollTop,
         bar: box(".top-bar").top,
         toolbar: box(".dash-toolbar").top,
         rail: box(".dash-rail__column").top,
@@ -63,15 +72,18 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
 }
 
 /**
- * Every sample within half a pixel of the first: the toolbar, rail and pane rest where they
- * stick. (A notice between the toolbar and the canvas, such as the trash's, scrolls away first
+ * Next to the sidebar (every window here is wider than a phone) the main area scrolls, and the
+ * top bar stays at the window's top. Every sample within half a pixel of the first: the toolbar,
+ * rail and pane rest where they stick. (A notice between the toolbar and the canvas, such as the trash's, scrolls away first
  * and the rail follows it until it is gone; that slide is by design and not checked here.)
  */
 function expectNoMovement(samples: Sample[]): void {
   const [rest] = samples;
   if (rest === undefined) throw new Error("no samples");
+  expect(Math.abs(rest.bar), "top bar at the window's top").toBeLessThanOrEqual(0.5);
   for (const sample of samples) {
     const at = `at scrollY ${sample.scrollY}`;
+    expect(sample.scroller, `what scrolled ${at}`).toBe("main");
     expect(sample.bar, `top bar ${at}`).toBeCloseTo(rest.bar, 0);
     // Right below the top bar from the start, not first a few pixels lower.
     expect(Math.abs(sample.toolbar - rest.toolbar), `toolbar ${at}`).toBeLessThanOrEqual(0.5);
