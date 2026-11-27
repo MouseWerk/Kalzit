@@ -134,7 +134,7 @@ describe("graph steps that stay a graph", () => {
     expect(within(step).getByText("1 nodes, 0 edges")).toBeTruthy();
 
     // A graph is left, so graph steps are still offered: the degree as a property.
-    await addStep(user, "Calculate degree");
+    await addStep(user, "Degree");
     expect(seen.steps[1]).toMatchObject({ type: "degree", frame: "A" });
     const run = runSteps(seen.steps, INPUTS);
     expect(run.graphs[0]?.graph.nodes[0]?.properties).toEqual({ name: "Anna", degree: 0 });

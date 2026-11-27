@@ -38,8 +38,18 @@ export type GraphStepKind =
       limit: number;
       name?: string;
     }
-  /** "Grad berechnen": every node gets its degree as the property `name` (`degree`). */
-  | { type: "degree"; frame: string; direction?: Direction; name?: string }
+  /**
+   * "Grad": every node gets its degree as the property `name` (`degree`), over the edges of
+   * `edgeTypes` (all when absent); with `weight`, the sum of that edge property instead.
+   */
+  | {
+      type: "degree";
+      frame: string;
+      direction?: Direction;
+      name?: string;
+      edgeTypes?: string[];
+      weight?: string;
+    }
   /** "Teilgraph filtern": nodes with one of `labels` passing `property`, edges of `edgeTypes`. */
   | {
       type: "filterGraph";
@@ -130,7 +140,15 @@ export function applyGraphStep(
     case "topDegree":
       return { graph: topDegree(graph, step.n, step.label, step.direction ?? "both") };
     case "degree":
-      return { graph: withDegree(graph, step.direction ?? "both", step.name ?? "degree") };
+      return {
+        graph: withDegree(
+          graph,
+          step.direction ?? "both",
+          step.name ?? "degree",
+          step.edgeTypes ?? [],
+          step.weight,
+        ),
+      };
     case "filterGraph":
       return {
         graph: filterGraph(graph, step.labels ?? [], step.edgeTypes ?? [], step.property),
@@ -375,9 +393,56 @@ function sharedNeighbours(
   ]);
 }
 
+/**
+ * The degree of every node over the edges of `types` (all when empty), each counting its weight
+ * property `weight` (1 where it is not set); a weight that is no number of 0 or more is refused.
+ */
+function weightedDegrees(
+  graph: GraphSet,
+  direction: Direction,
+  types: readonly string[],
+  weight: string | undefined,
+): number[] {
+  const index = new Map(graph.nodes.map((n, i) => [n.id, i]));
+  const out = new Array<number>(graph.nodes.length).fill(0);
+  for (const e of graph.edges) {
+    if (types.length > 0 && !types.includes(e.type)) continue;
+    const from = index.get(e.from);
+    const to = index.get(e.to);
+    if (from === undefined || to === undefined) continue;
+    let w = 1;
+    if (
+      weight !== undefined &&
+      e.properties[weight] !== undefined &&
+      e.properties[weight] !== null
+    ) {
+      const n = numberOf(e.properties[weight]);
+      if (n === null || n < 0) {
+        throw detail("steps.weight_invalid", `the weight ${weight} of edge ${e.id} is no number`, {
+          edge: e.id,
+          key: weight,
+        });
+      }
+      w = n;
+    }
+    if (direction !== "in") out[from] = (out[from] ?? 0) + w;
+    if (direction !== "out") out[to] = (out[to] ?? 0) + w;
+  }
+  return out;
+}
+
 /** The graph with every node's degree as the property `name` (replacing one of that name). */
-function withDegree(graph: GraphSet, direction: Direction, name: string): GraphSet {
-  const deg = degrees(graph, direction);
+function withDegree(
+  graph: GraphSet,
+  direction: Direction,
+  name: string,
+  types: readonly string[] = [],
+  weight?: string,
+): GraphSet {
+  const deg =
+    types.length === 0 && weight === undefined
+      ? degrees(graph, direction)
+      : weightedDegrees(graph, direction, types, weight);
   const nodes = graph.nodes.map((n, i) => ({
     ...n,
     properties: { ...n.properties, [name]: deg[i] ?? 0 },

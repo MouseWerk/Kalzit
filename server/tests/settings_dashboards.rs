@@ -314,6 +314,7 @@ on_both_databases! {
     logo_changes_can_be_undone: |_| {};
     server_routes_refuse_organization_admins_and_org_writes_refuse_viewers: |_| {};
     graph_algorithm_limits_follow_the_server_and_organizations_only_lower: |_| {};
+    graph_quick_actions_compute_for_members_within_the_limits: |_| {};
     a_reset_in_a_batch_brings_the_default_back: |_| {};
     // As if kalzit.toml set the lifetime, which then stays out of the export.
     settings_export_and_import_through_a_preview_and_one_batch: |c| {
@@ -2550,6 +2551,50 @@ async fn graph_algorithm_limits_follow_the_server_and_organizations_only_lower(t
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
     assert_eq!(load(Some(t.org.clone())).await.max_nodes, 1_000);
     assert_eq!(load(None).await.max_nodes, 50_000);
+}
+
+/// The quick actions of the graph canvas (board Graph082, frames 8 to 10) compute on the graph
+/// the caller sends, for every member, viewers too, within the organization's algorithm limits;
+/// other organizations and strangers are refused, and only paths, centrality and degree run.
+async fn graph_quick_actions_compute_for_members_within_the_limits(t: TestApp) {
+    let node = |id: &str| json!({ "id": id, "labels": ["Kunde"], "properties": { "name": id.to_uppercase() } });
+    let edge = |id: &str, from: &str, to: &str| {
+        json!({ "id": id, "type": "KENNT", "from": from, "to": to, "properties": { "aufwand": 2 } })
+    };
+    let graph = json!({
+        "nodes": [node("a"), node("b"), node("c"), node("d")],
+        "edges": [edge("1", "a", "b"), edge("2", "b", "c"), edge("3", "c", "d")],
+        "schema": { "labels": ["Kunde"], "edgeTypes": ["KENNT"], "propertyKeys": { "Kunde": ["name"] } },
+    });
+    let body = json!({ "graph": graph, "steps": [
+        { "id": "p", "type": "paths", "frame": "A", "mode": "shortest", "from": "a", "to": "d", "direction": "both" },
+        { "id": "w", "type": "paths", "frame": "A", "mode": "weighted", "weight": "aufwand", "from": "a", "to": "c" },
+        { "id": "r", "type": "centrality", "frame": "A", "measure": "pageRank", "name": "score" },
+    ]});
+    let viewer = t.member("Vera", "viewer").await;
+    let r = t.post("~/graph/actions", body.clone(), &viewer).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let results = r.body["results"].as_array().unwrap();
+    assert_eq!(results[0]["id"], "p");
+    assert_eq!(results[0]["ranIn"], "server");
+    assert_eq!(results[0]["paths"][0]["nodes"], json!(["a", "b", "c", "d"]));
+    assert_eq!(results[0]["summary"]["key"], "analysis.summary.paths");
+    assert_eq!(results[1]["summary"]["values"]["cost"].as_f64(), Some(4.0), "{}", r.body);
+    assert_eq!(results[2]["values"].as_object().unwrap().len(), 4);
+    // Other steps are no quick action.
+    let other = json!({ "graph": body["graph"], "steps": [{ "id": "c", "type": "communities", "frame": "A", "algorithm": "louvain" }] });
+    assert_eq!(t.post("~/graph/actions", other, &viewer).await.code(), "validation");
+    // The organization's lower limit holds: the step says so in plain words.
+    let r = t.patch("~/settings/datasources.algorithm_max_nodes", json!({ "value": 2, "version": 0 }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.post("~/graph/actions", body.clone(), &viewer).await;
+    assert_eq!(r.body["results"][2]["error"]["reason"], "steps.algorithm_too_large", "{}", r.body);
+    // Members of another organization, and strangers, are refused.
+    let foreign_org = uuid::Uuid::now_v7().to_string();
+    let r = t.post(&format!("/orgs/{foreign_org}/graph/actions"), body.clone(), &viewer).await;
+    assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{}", r.body);
+    let r = t.send(Method::POST, &t.path("~/graph/actions"), Some(body), None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
 }
 
 async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {

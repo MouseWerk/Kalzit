@@ -43,7 +43,7 @@ function setup(compact = false) {
 }
 
 const entry = (type: string, label: string, about: string, keywords: string[] = []) =>
-  ({ type, label, about, keywords, from: "frame", to: "frame" }) as CatalogEntry;
+  ({ key: type, type, label, about, keywords, from: "frame", to: "frame" }) as CatalogEntry;
 
 describe("catalog search", () => {
   const entries = [

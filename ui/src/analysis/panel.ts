@@ -3,9 +3,11 @@ import type { TargetOutcome } from "../features/dashboards/results";
 import { useI18n } from "../i18n/i18n";
 import type { TimeSettings } from "../lib/timeSettings";
 import { nameFrame } from "../panels/frame";
+import { algoStepComplete } from "./algoSteps";
 import type { Calendar } from "./expr";
 import {
   asSteps,
+  isAlgoStep,
   isTraceStep,
   type NamedInput,
   runSteps,
@@ -60,7 +62,12 @@ export function serverRan(outcomes: readonly TargetOutcome[]): Map<string, Serve
   for (const o of outcomes) {
     if (!("result" in o)) continue;
     for (const place of o.steps ?? []) {
-      ran.set(place.id, { ranIn: place.ranIn, error: place.error });
+      ran.set(place.id, {
+        ranIn: place.ranIn,
+        error: place.error,
+        summary: place.summary,
+        reason: place.reason,
+      });
     }
   }
   return ran;
@@ -89,6 +96,7 @@ export function graphStepsByQuery(steps: readonly Step[]): Map<string, Step[]> {
 /** Whether a graph step passes the server's checks of its form (server/src/analysis/mod.rs). */
 function complete(step: Step): boolean {
   if (isTraceStep(step)) return traceStepComplete(step);
+  if (isAlgoStep(step)) return algoStepComplete(step);
   switch (step.type) {
     case "sharedNeighbours":
       return step.label !== "" && step.via !== "" && step.label !== step.via;

@@ -7,8 +7,10 @@ import type {
   FrameMeta,
   GraphSet,
   RanIn,
+  StepSummary,
   TraceSet,
 } from "../api/generated/shapes";
+import { ALGO_STEP_TYPES, type AlgoStepKind, isAlgoType } from "./algoSteps";
 import {
   AGGS,
   type Agg,
@@ -208,6 +210,8 @@ export type StepKind =
     }
   /** Graph steps (graphSteps.ts): they read a graph and make a frame or a smaller graph. */
   | GraphStepKind
+  /** Graph algorithm steps (algoSteps.ts): the server runs them with the query. */
+  | AlgoStepKind
   /** Trace steps (traceSteps.ts): they read a trace; the server runs them with the query. */
   | TraceStepKind;
 
@@ -229,6 +233,7 @@ export const GRAPH_STEP_TYPES = [
   "sharedNeighbours",
   "degree",
   "filterGraph",
+  ...ALGO_STEP_TYPES,
 ] as const satisfies readonly StepType[];
 
 /**
@@ -237,6 +242,7 @@ export const GRAPH_STEP_TYPES = [
  */
 export type GraphStepOf =
   | GraphStepKind
+  | AlgoStepKind
   | (Extract<StepKind, { type: "toFrame" }> & { rows: GraphRows });
 
 export function isGraphStep(step: StepKind): step is GraphStepOf {
@@ -249,6 +255,10 @@ export function isGraphStep(step: StepKind): step is GraphStepOf {
 export type TraceStepOf = Extract<StepKind, TraceStepKind>;
 
 /** Whether the step reads a trace (docs/guide/traces.md). */
+export function isAlgoStep(step: StepKind): step is AlgoStepKind {
+  return isAlgoType(step.type);
+}
+
 export function isTraceStep(step: StepKind): step is TraceStepOf {
   return (TRACE_STEP_TYPES as readonly string[]).includes(step.type);
 }
@@ -348,6 +358,10 @@ export type NamedInput =
 export interface ServerStep {
   ranIn: RanIn;
   error?: ErrorBody | undefined;
+  /** What a graph algorithm step found, as a key of the UI's texts and its values. */
+  summary?: StepSummary | undefined;
+  /** Why a graph algorithm step ran on the server (`algorithm.*`). */
+  reason?: string | undefined;
 }
 
 /**
@@ -406,6 +420,10 @@ export interface StepOutcome {
   waiting?: boolean;
   /** Where a graph step ran on the server's side; absent: in the browser, as a preview. */
   ranIn?: RanIn;
+  /** What a graph algorithm step found (the server's summary). */
+  summary?: StepSummary;
+  /** Why a graph algorithm step ran on the server. */
+  reason?: string;
   error?: Detail;
   /** Disabled, or after a failed step. */
   skipped: boolean;
@@ -493,9 +511,11 @@ export function runSteps(
         } else if (
           result !== undefined &&
           isGraphStep(step) &&
+          !isAlgoStep(step) &&
           graphs.some((g) => g.name === target)
         ) {
-          // A step before the last one the server ran: a preview of it on the graph here.
+          // A step before the last one the server ran: a preview of it on the graph here. An
+          // algorithm has no engine in the browser; the graph passes on as it is.
           ({ current, graphs } = graphStep(step, current, graphs, order, budget));
         }
         if (ran.error !== undefined) {
@@ -505,6 +525,14 @@ export function runSteps(
             message: ran.error.message,
           });
         }
+      } else if (isAlgoStep(step)) {
+        // Only the server runs algorithm steps. Until it answered, the step shows nothing of its
+        // own and the graph passes on unchanged.
+        if (!graphs.some((g) => g.name === target)) {
+          throw detail("steps.not_graph", `the result ${target} is no graph`, { frame: target });
+        }
+        outcomes.push({ id: step.id, skipped: false, waiting: true });
+        return;
       } else if (isGraphStep(step)) {
         ({ current, graphs } = graphStep(step, current, graphs, order, budget));
       } else if (isTraceStep(step)) {
@@ -526,7 +554,7 @@ export function runSteps(
         graphs,
         traces,
         skipped: false,
-        ...(ran === undefined ? {} : { ranIn: ran.ranIn }),
+        ...placeOf(ran),
       });
     } catch (e) {
       const error =
@@ -538,13 +566,23 @@ export function runSteps(
         id: step.id,
         error,
         skipped: false,
-        ...(ran === undefined ? {} : { ranIn: ran.ranIn }),
+        ...placeOf(ran),
       });
     }
   });
   return failed === undefined
     ? { frames: current, graphs, documents, traces, steps: outcomes }
     : { frames: current, graphs, documents, traces, steps: outcomes, failed };
+}
+
+/** Where the server ran a step, and what it said about it, for the step's outcome. */
+function placeOf(ran: ServerStep | undefined): Pick<StepOutcome, "ranIn" | "summary" | "reason"> {
+  if (ran === undefined) return {};
+  return {
+    ranIn: ran.ranIn,
+    ...(ran.summary === undefined ? {} : { summary: ran.summary }),
+    ...(ran.reason === undefined ? {} : { reason: ran.reason }),
+  };
 }
 
 /** `frames` with `added` in the place of its query, so the order stays the queries' order. */
