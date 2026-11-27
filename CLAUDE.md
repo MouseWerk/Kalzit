@@ -283,7 +283,8 @@ skip or weaken a test.
   reruns once only to diagnose: the status stays failure, and "failed, then passed on rerun" goes
   to `C:/Users/klein/kz-ci/flaky.log` for a root-cause fix; no quarantine, no retries into a
   pass. `tools/local-ci/gh-run.sh [--gate]` runs the same test on GitHub's runners (owner
-  decision 2026-11-23: such a pass counts; green work may merge overnight). GitHub Actions CI
+  decision 2026-11-23: such a pass counts; green work may merge overnight); it refuses batches
+  that change `.github/` or `tools/local-ci` (those run locally). GitHub Actions CI
   otherwise runs only by hand.
 - Working rules (owner decision 2026-11-24; they follow the AICodeGuidelines
   `workflow/02-git.md`, `03-agents.md`, `05-ci.md`):

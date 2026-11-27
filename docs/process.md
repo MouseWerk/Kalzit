@@ -60,9 +60,12 @@ flowchart TD
    quarantined to get green.
 7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
    both statuses passed the fast gate (or the full suite) for exactly the content the merge
-   makes (the merged tree; otherwise it runs the gate first). Several pull requests can be
-   tested and merged as one batch, and `tools/local-ci/gh-run.sh` runs the same test on
-   GitHub's runners, for example overnight. `main` takes no direct or force pushes.
+   makes (the merged tree; otherwise it runs the gate first). Merges are tested and predicted
+   as squash merges, one pull request after another, the way GitHub makes them. Several pull
+   requests can be tested and merged as one batch, and `tools/local-ci/gh-run.sh` runs the same
+   test on GitHub's runners, for example overnight; a batch that changes `.github/` or
+   `tools/local-ci` runs locally, since on GitHub it would be judged by its own `ci.yml`. `main`
+   takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
    folders. The full suite runs on `main` after each merge batch, or within the hour when `main`
    changed (`tools/local-ci/main-watch.sh`). When it fails, it bisects the batch and opens a
@@ -142,7 +145,10 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
   knows, runs everything of the stage.
 - **Statuses.** Each leg posts one status to the PR's head commit, naming the tested tree and
   the `main` commit it ran on (`passed gate tree ...` or `passed tree ...`). `merge.sh` merges
-  only when a merge would make exactly that tree.
+  only when a merge would make exactly that tree. A `--ref` run names its tree last
+  (`passed at <commit> as it is, [gate ]tree ...`) and never counts as a pull request's pass;
+  a GitHub run without a result (cancelled, timed out, not finished after 8 hours) posts
+  `error`, and `merge.sh` runs the CI again.
 - **Not covered locally.** `packages (arm64)`; the release workflow still builds and checks
   arm64. The Windows installer test (`--msi`) installs a service on the machine and runs only
   when asked, for example before a release.
