@@ -923,11 +923,6 @@
     width: var(--size-drawer);
   }
 
-  /* Nor does a taller pane: the page's scrollbar keeps its room while editing. */
-  html:has(.dash-rail--editing) {
-    scrollbar-gutter: stable;
-  }
-
   .dash-pane__outline {
     display: grid;
     align-content: start;

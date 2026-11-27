@@ -717,7 +717,6 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
-    scrollbar-width: thin;
   }
 
   /* minmax(0, 1fr): a long label shrinks with the column instead of pushing it wider. */
@@ -982,6 +981,35 @@
    */
   .shell__content {
     min-width: 0;
+  }
+
+  /*
+   * Next to the sidebar column the main area is the page's scroll container, not the document:
+   * the sidebar, the top bar and the dashboard toolbar stay put, and the stable gutter keeps
+   * the content from shifting sideways when it grows past the window. Anchor jumps land below
+   * the sticky bars (scroll-padding). On a phone, where the sidebar is a bar on top, and in
+   * print the document scrolls as before.
+   */
+  @media screen and (width > 48rem) {
+    .shell {
+      grid-template-rows: minmax(0, 1fr);
+      height: 100dvh;
+    }
+
+    /*
+     * A sticky box holds at its scroll container's padding edge: the room above the top bar is
+     * the bar's own padding here (shellUx.css), so the bar sticks at the window's top.
+     */
+    .shell__main {
+      overflow: auto;
+      padding-block-start: 0;
+      scrollbar-gutter: stable;
+      scroll-padding-block-start: calc(
+        var(--top-bar-height, 0px) +
+        var(--dash-toolbar-height, 0px) +
+        var(--space-2)
+      );
+    }
   }
 
   @media (max-width: 48rem) {
