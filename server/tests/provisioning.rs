@@ -621,7 +621,9 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!(r.source_version, Some(39));
     assert_eq!(status_of(r, "panel 1 \"Bestand\""), ItemStatus::Converted);
     assert_eq!(status_of(r, "panel 2 \"Verlauf\""), ItemStatus::Approximated);
-    assert_eq!(status_of(r, "panel 3 \"Standorte\""), ItemStatus::Skipped);
+    // A geomap becomes a map on the bundled outlines; its base map is reported.
+    assert_eq!(status_of(r, "panel 3 \"Standorte\""), ItemStatus::Approximated);
+    assert_eq!(notes_of(r, "panel 3 \"Standorte\""), ["geomap_basemap"]);
     assert_eq!(status_of(r, "panel 4 \"Ohne Zuordnung\""), ItemStatus::Skipped);
     // Its value mapping is taken over.
     assert_eq!(status_of(r, "panel 6 \"Alle Werte\""), ItemStatus::Converted);
@@ -643,17 +645,18 @@ fn grafana_fixtures_convert_with_their_report() {
     let m = &c.model;
     // Skipped panels are not kept as placeholders.
     let ids: Vec<&str> = m["panels"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["p1", "p2", "p6", "p7"]);
+    assert_eq!(ids, ["p1", "p2", "p3", "p6", "p7"]);
     assert_eq!(m["panels"][1]["type"], "timeseries");
+    assert_eq!((m["panels"][2]["type"].clone(), m["panels"][2]["options"].clone()), (json!("map"), json!({})));
     assert_eq!(
         m["panels"][1]["targets"][0]["query"]["sql"],
         "SELECT t, v FROM m WHERE $__timeFilter(t) AND t < $__timeTo"
     );
     assert_eq!(m["panels"][0]["options"]["reducer"], "last");
     assert_eq!(m["panels"][0]["fieldConfig"]["defaults"]["thresholds"]["steps"][1]["tone"], "critical");
-    assert_eq!((m["panels"][2]["rowId"].clone(), m["panels"][2]["grid"]["y"].clone()), (json!("row-5"), json!(0)));
+    assert_eq!((m["panels"][3]["rowId"].clone(), m["panels"][3]["grid"]["y"].clone()), (json!("row-5"), json!(0)));
     assert_eq!(m["rows"][0]["collapsed"], true);
-    assert_eq!(m["panels"][3]["options"]["mode"], "plain");
+    assert_eq!(m["panels"][4]["options"]["mode"], "plain");
     assert_eq!(m["timeRange"], json!({ "from": "now-24h", "to": "now" }));
     assert_eq!((m["refreshSeconds"].clone(), m["timeZone"].clone()), (json!(60), json!("Europe/Berlin")));
     assert_eq!(m["refreshIntervals"], json!([10, 60, 300]));
@@ -673,7 +676,7 @@ fn grafana_fixtures_convert_with_their_report() {
         (json!("caseInsensitive"), json!("timeRange"))
     );
     assert_eq!(
-        m["panels"][2]["fieldConfig"]["defaults"]["mappings"],
+        m["panels"][3]["fieldConfig"]["defaults"]["mappings"],
         json!([{ "type": "value", "value": "1", "text": "an" }])
     );
     assert_eq!(m["panels"][0]["fieldConfig"]["defaults"]["unit"], "short");
@@ -910,10 +913,10 @@ async fn grafana_import_saves_the_dashboard_with_its_report() {
         |dry: bool| json!({ "dashboard": fixture("modern.json"), "datasources": { "${DS_LAGER}": ds }, "dryRun": dry });
     let dry = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body(true))).await;
     assert!(dry["dashboard"].is_null());
-    assert_eq!(dry["report"]["counts"]["skipped"], 9, "{}", dry["report"]);
+    assert_eq!(dry["report"]["counts"]["skipped"], 8, "{}", dry["report"]);
     let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body(false))).await;
     let id = saved["dashboard"]["id"].as_str().unwrap().to_string();
-    assert_eq!(saved["dashboard"]["model"]["panels"].as_array().unwrap().len(), 4);
+    assert_eq!(saved["dashboard"]["model"]["panels"].as_array().unwrap().len(), 5);
     let report = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/{id}/import-report"), None).await;
     assert_eq!(report["source"], "grafana");
     assert_eq!(report["report"], saved["report"]);
