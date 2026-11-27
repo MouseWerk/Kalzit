@@ -85,6 +85,9 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     defaultPreloadStaleTime: 0,
     defaultPendingComponent: PendingPage,
     scrollRestoration: true,
+    // Next to the sidebar the page scrolls in the main area, not the window: a new page starts
+    // at its top there too, and Back restores where it was (AppShell names it for that).
+    scrollToTopSelectors: ["#main"],
   });
   // Another page may put the same charts into other scroll boxes: tooltips look up again what
   // clips them (lib/tooltipPlace.ts caches it between pointer moves).

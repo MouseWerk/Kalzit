@@ -418,7 +418,8 @@
     gap: var(--space-4);
   }
 
-  @container settings-main (width < 44rem) {
+  /* Two columns at 1280 px next to the sidebar and the scrollbar gutter (settings.css). */
+  @container settings-main (width < 43rem) {
     .sso-local {
       grid-template-columns: minmax(0, 1fr);
     }
