@@ -178,7 +178,9 @@ describe("algorithm steps in the steps editor", () => {
     expect(within(dialog).getByText("Link prediction · 3")).toBeTruthy();
     // The place shows next to the name; link prediction always runs on the server.
     expect(within(catalogOption(dialog, "PageRank")).getByText("Neo4j")).toBeTruthy();
-    expect(within(catalogOption(dialog, "Adamic-Adar")).getByText("Runs on the server")).toBeTruthy();
+    expect(
+      within(catalogOption(dialog, "Adamic-Adar")).getByText("Runs on the server"),
+    ).toBeTruthy();
     await user.keyboard("{Escape}");
     await addStep(user, "PageRank");
     expect(stored()[0]).toMatchObject({ type: "centrality", measure: "pageRank", frame: "A" });

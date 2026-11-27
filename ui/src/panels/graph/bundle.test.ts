@@ -18,6 +18,8 @@ const ALLOWED = new Set([
   "panels/graph/adapter.ts",
   // The stored form of the style rules, which the options of graph and table panels parse.
   "panels/graph/style/schema.ts",
+  // A rule from a step's result, which the panel editor adds to those options (Graph082).
+  "panels/graph/style/fromResult.ts",
   "panels/network/index.tsx",
   "panels/hierarchy/index.tsx",
   "panels/path/index.tsx",
