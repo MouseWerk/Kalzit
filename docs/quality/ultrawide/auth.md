@@ -6,8 +6,8 @@ commit. Widths, themes and method are in [README.md](README.md).
 
 | Id | Severity | Status |
 |---|---|---|
-| UW-A1 | major | open |
-| UW-A2 | minor | open; owner decision 2026-11-24: background full width, form column unchanged |
+| UW-A1 | major | fixed (COMMIT) |
+| UW-A2 | minor | fixed (COMMIT); owner decision 2026-11-24: background full width, form column unchanged |
 | UW-A3 | minor | open |
 | UW-A4 | polish | open |
 
@@ -46,6 +46,9 @@ page with one sentence. No horizontal scroll at any width.
   h1's pixels in a screenshot and finds the text colour (`--text`) unchanged, with reduced motion
   so the light stands still; `elementsFromPoint` cannot see the backdrop (it has
   `pointer-events: none`).
+- **Status:** fixed in COMMIT (PR #PRNUM): `.access-bd` has `z-index: var(--z-below)`, and the
+  split layout's panel isolates, so the backdrop lies on its surface there and behind the page
+  everywhere else. Test: `ui/e2e/sign-in-wide.spec.ts` ("keeps the backdrop behind the heading").
 
 ## UW-A2 Sign-in: the sheet stops at 1536 px and the backdrop panel ends with a hard edge
 
@@ -79,6 +82,13 @@ page with one sentence. No horizontal scroll at any width.
   stops growing at 1536 px") to match.
 - **Test:** screenshot assertions at 1920, 3440 and 5120 in light and dark: the backdrop's right
   edge is the window edge, and the form column's width is unchanged from today.
+- **Status:** fixed in COMMIT (PR #PRNUM): `.access--split` spans the window with a gutter column
+  on each side of the 1536 px sheet; the panel runs from its place in the sheet to the right
+  window edge at every width (no frame or corners on that side), the form column, the mark, the
+  fine print and the top-bar tools keep their place in the sheet. Checked at 1920, 2560, 3440,
+  3840 x 1600, 5120 x 1440 and 1920 x 1080 at DPR 2 (4K at 200 %), light and dark:
+  `ui/e2e/sign-in-wide.spec.ts` ("runs the sign-in background to the window's edge"). The
+  blueprint README and the Access board now say the panel runs on to the window's edge.
 
 ## UW-A3 Help pages: the top bar spans the window while the text is a centred column
 

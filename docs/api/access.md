@@ -801,6 +801,10 @@ new secrets key.
 A browser that is not the user's own need not become a known device. `POST /auth/login` takes
 `"forgetBrowser": true` next to `email` and `password` (the sign-in page's "Shared or borrowed
 computer"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
+Such a sign-in (with a password, its second step, or a passkey alone) also gets a shorter
+session: its cookie has no `Max-Age`, so the browser drops it when it closes, and the server ends
+the session after at most 12 hours (`sessions.lifetime_hours` when that is shorter); the idle
+limit applies as usual.
 `POST /auth/logout` keeps the device cookie by default, so the owner's own browser stays known;
 `POST /auth/logout?forgetBrowser=true` (or `=1`; the account menu's "Sign out and forget this
 browser") removes it too. The query is read leniently: other parameters or values never make
@@ -1016,6 +1020,44 @@ can leave an organization ("Leaving an organization"). A method turned off
 keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
 must have a second factor and has none sets one up at the next sign-in, before a session opens.
 The break-glass administrator signs in through the same steps; nothing bypasses the policy.
+
+### Passkey sign-in
+
+A passkey alone signs in (the sign-in page's "Mit Passkey anmelden" and the passkeys the browser
+suggests in the address field, `autocomplete="username webauthn"`). The dialog starts without an
+account (a discoverable credential) and the answer names the account by the passkey's user
+handle. User verification is required, and a verified passkey counts as both factors: the answer
+is the session, with `passkey` as its method and its second factor, and the session counts as
+freshly confirmed.
+
+| Method and path | Answer |
+|---|---|
+| `POST /auth/passkey/options` | `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` and the cookie `kalzit_passkey` |
+| `POST /auth/passkey` | `200 Me` and the session cookie |
+
+Both are `Public`. `GET /auth/providers` says whether they work here (`passkeySignIn`): passkeys
+are among `security.two_factor_methods`, Kalzit is opened by a host name, and password sign-in is
+not off on the server; otherwise both answer `403 forbidden` with `reason`
+`passkey_sign_in.off`. The options carry no mediation; the page asks for the dialog
+(`mediation` absent) or the suggestion (`"conditional"`). `kalzit_passkey`
+(`__Host-kalzit_passkey` over HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 5 minutes) names the
+started dialog, stored as the SHA-256 of its token; a new start replaces the browser's previous
+one, and the first answer uses it up, right or wrong. Starts are limited to 60 per address in 10
+minutes (`429 rate_limited`).
+
+`POST /auth/passkey` takes `{ "credential": PublicKeyCredentialJSON, "forgetBrowser"?: boolean }`.
+Without a started dialog it answers `401 invalid_credentials` with `reason`
+`passkey_sign_in.expired`. Every other refusal answers alike, `401 invalid_credentials` with
+`reason` `passkey_sign_in.refused`: an unknown passkey or account, a signature, origin or
+challenge that does not hold, no user verification, a sign counter that does not go up, a
+disabled account, a service account, an account without a password of its own (made by an
+identity provider or directory), and password sign-in off for the person (the server's or an
+organization's `signin.local_password`). A passkey alone takes the password's place, so an
+organization that turned password sign-in off also refuses such sessions at its gate. Each answer
+counts against the address's budget of failed sign-ins and a sign-in gives it back. Refusals are
+audited as `auth.sign_in_failed` with `method: "passkey"`; the reason (`credentials`,
+`disabled`, `password_off`) and the account only when the passkey named an existing account.
+No device cookie is set (it is bound to a password); `forgetBrowser` works as for passwords.
 
 ### Sign-in
 
