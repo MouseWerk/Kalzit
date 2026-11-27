@@ -305,6 +305,14 @@
       "w": 1440,
       "x": 42560,
       "y": 0
+    },
+    "Graph082.dc.html": {
+      "expand": "fill",
+      "h": 19340,
+      "title": "Graph: algorithms and paths (M8, 0.8.2)",
+      "w": 1440,
+      "x": 44080,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -363,7 +371,8 @@
     "StartRedesign.dc.html",
     "MobileNav.dc.html",
     "Panels.dc.html",
-    "SettingsRedesign.dc.html"
+    "SettingsRedesign.dc.html",
+    "Graph082.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

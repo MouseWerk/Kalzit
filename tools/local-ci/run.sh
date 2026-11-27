@@ -4,21 +4,22 @@
 # runs of .github/workflows/ci.yml, which now run only by hand. See tools/local-ci/README.md.
 #
 #   run.sh PR [--full] [--msi] [--no-status]
-#       tests the pull request merged onto the current origin/main, the way the merge queue did,
-#       and posts the commit statuses local/linux and local/windows to its head commit; main
+#       tests the pull request squash-merged onto the current origin/main, the way GitHub merges
+#       it, and posts the commit statuses local/linux and local/windows to its head commit; main
 #       requires both. Without --full it runs the fast gate (about 30 minutes) for the areas the
 #       change touches (.github/scripts/changes.sh): fmt, clippy, the unit tests and the core
 #       integration tests, the UI checks and build, and the smoke e2e set (@smoke) in Chromium.
 #       That is enough to merge (`passed gate tree ...`); the full suite runs on main after the
 #       merges (main-watch.sh). --full runs the full suite: every job and every test.
 #   run.sh PR PR... [options]
-#       a batch, as the merge queue built up to four at once: the pull requests merged onto main
-#       one after another in this order and tested together in one run. Each head gets the
+#       a batch, as the merge queue built up to four at once: the pull requests squash-merged onto
+#       main one after another in this order and tested together in one run. Each head gets the
 #       statuses, naming the batch (`passed gate tree <tree> on main <main> batch 391,388 in N
 #       min`); merge.sh then merges exactly these, in this order (merge.sh 391 388).
 #   run.sh --ref REF [--full] [--msi] [--no-status]
 #       tests REF as it is (for example `--ref origin/main --full` as the release gate) and posts
-#       the statuses to that commit.
+#       the statuses to that commit, naming the tree last (`passed at <commit> as it is, tree
+#       <tree> in N min`), so merge.sh never takes such a run as a pull request's pass.
 #
 #   --msi        also the Windows installer test, which installs and removes Kalzit as a service
 #                on this machine
@@ -171,9 +172,12 @@ git -C "$src" checkout --quiet -f --detach "$main"
 git -C "$src" clean -ffdxq
 if [ -n "$pr" ]; then
   for i in "${!prs[@]}"; do
-    if ! git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
-        merge --quiet --no-ff --no-edit -m "Local CI: PR ${prs[$i]} onto main" "${heads[$i]}" >> "$logs/merge.log" 2>&1; then
-      git -C "$src" merge --abort || true
+    # A squash merge per pull request, as GitHub merges them, so the tested tree is the one the
+    # squash merges make (merge.sh predicts the same and checks each squash commit's tree).
+    if ! { git -C "$src" merge --squash --quiet "${heads[$i]}" >> "$logs/merge.log" 2>&1 \
+        && git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
+          commit --quiet --allow-empty -m "Local CI: PR ${prs[$i]} onto main" >> "$logs/merge.log" 2>&1; }; then
+      git -C "$src" reset --quiet --hard HEAD || true
       if [ "${#prs[@]}" -gt 1 ]; then
         echo "PR ${prs[$i]} does not merge onto main ${main:0:9} together with the PRs before it in the batch." >&2
         status failure local/linux "failed $base: PR ${prs[$i]} conflicts with the ones before it"
@@ -196,9 +200,13 @@ tested="$(git -C "$src" rev-parse HEAD)"
 # tested ahead on top of another that has merged since), and never covers anything else.
 #   passed [gate ]tree <tree> on main <main> [batch 391,388] in N min
 #   failed [gate ]tree <tree> on main <main> [batch 391,388]: <jobs>
-# "gate" marks the fast gate; without it, the full suite.
+# "gate" marks the fast gate; without it, the full suite. A --ref run names its tree last
+# (`passed at <commit> as it is, [gate ]tree <tree> in N min`): merge.sh looks only for the texts
+# above, so a run of a commit as it is never counts as a pull request's pass.
 tree="$(git -C "$src" rev-parse "HEAD^{tree}")"
-if [ "$stage" = gate ]; then base="gate tree ${tree:0:12} $base"; else base="tree ${tree:0:12} $base"; fi
+kind="tree ${tree:0:12}"
+[ "$stage" = gate ] && kind="gate $kind"
+if [ -n "$pr" ]; then base="$kind $base"; else base="$base, $kind"; fi
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
 # The gate of a pull request runs the areas it changes; everything runs for --full, for --ref,
@@ -340,4 +348,5 @@ cat "$logs/summary.txt"
 exit "$overall"
 }
 
-main "$@"
+# exit: bash must not read on past this line, even when the file was replaced during the run.
+main "$@"; exit
