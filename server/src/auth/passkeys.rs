@@ -14,8 +14,8 @@
 //! (`discoverable_*`, `routes::passkey_sign_in`). Signing in with a passkey alone requires user
 //! verification: such a passkey counts as both factors.
 
-use url::Url;
 use serde_json::Value;
+use url::Url;
 use webauthn_rs::prelude::{
     CredentialID, DiscoverableAuthentication, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse, SecurityKey, SecurityKeyAuthentication, SecurityKeyRegistration, Uuid, Webauthn,

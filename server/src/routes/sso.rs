@@ -141,7 +141,10 @@ struct PublicProvider {
     kind: String,
 }
 
-async fn providers_public(State(state): State<AppState>, Extension(info): Extension<RequestInfo>) -> ApiResult<Json<Value>> {
+async fn providers_public(
+    State(state): State<AppState>,
+    Extension(info): Extension<RequestInfo>,
+) -> ApiResult<Json<Value>> {
     let providers: Vec<PublicProvider> = store::all(&state.read_db)
         .await?
         .into_iter()

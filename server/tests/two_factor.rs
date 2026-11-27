@@ -1086,7 +1086,8 @@ async fn enroll_passkey(t: &TestApp, who: &Browser, key: &mut authenticator::Aut
     let options = t.post("/api/me/security/passkeys/setup", json!({}), who).await;
     assert_eq!(options.status, StatusCode::OK, "{}", options.body);
     key.discoverable(&options.body);
-    let r = t.post("/api/me/security/passkeys", json!({ "credential": key.register(&options.body, ORIGIN) }), who).await;
+    let r =
+        t.post("/api/me/security/passkeys", json!({ "credential": key.register(&options.body, ORIGIN) }), who).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
 }
 
@@ -1103,7 +1104,8 @@ async fn passkey_sign_in(
     let dialog = Browser { session: options.cookie("kalzit_passkey"), pending: None };
     assert!(dialog.session.is_some(), "the dialog has a cookie of its own");
     let answer = key.assert(&options.body, origin);
-    let r = t.post("/api/auth/passkey", json!({ "credential": answer, "forgetBrowser": forget_browser }), &dialog).await;
+    let r =
+        t.post("/api/auth/passkey", json!({ "credential": answer, "forgetBrowser": forget_browser }), &dialog).await;
     (dialog, r)
 }
 
@@ -1131,7 +1133,8 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     // New passkeys are asked to be discoverable, so they can sign in without a password later.
     assert_eq!(setup.body["publicKey"]["authenticatorSelection"]["residentKey"], "preferred", "{}", setup.body);
     key.discoverable(&setup.body);
-    let r = t.post("/api/me/security/passkeys", json!({ "credential": key.register(&setup.body, ORIGIN) }), &owner).await;
+    let r =
+        t.post("/api/me/security/passkeys", json!({ "credential": key.register(&setup.body, ORIGIN) }), &owner).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
 
     // The dialog names no account, needs the person verified and leaves the mediation to the page.
@@ -1162,7 +1165,10 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     let r = t.post("/api/me/security/recovery-codes", json!({}), &signed_in).await;
     assert_eq!(r.status, StatusCode::OK, "a fresh confirmation: {}", r.body);
     let first = &t.get("/api/me/sign-ins", &signed_in).await.body["items"][0];
-    assert_eq!((&first["method"], &first["secondFactor"], &first["current"]), (&json!("passkey"), &json!("passkey"), &json!(true)));
+    assert_eq!(
+        (&first["method"], &first["secondFactor"], &first["current"]),
+        (&json!("passkey"), &json!("passkey"), &json!(true))
+    );
     let (method,): (String,) = sqlx::query_as("SELECT sign_in_method FROM sessions WHERE token_hash = $1")
         .bind(kalzit::auth::session::hash_token(signed_in.session.as_deref().unwrap().split_once('=').unwrap().1))
         .fetch_one(&t.state.db)
@@ -1178,13 +1184,19 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     // all, and the reason only in the account's own entries.
     key.verified = false;
     let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
-    assert_eq!((r.status, r.code(), r.reason()), (StatusCode::UNAUTHORIZED, "invalid_credentials", "passkey_sign_in.refused"));
+    assert_eq!(
+        (r.status, r.code(), r.reason()),
+        (StatusCode::UNAUTHORIZED, "invalid_credentials", "passkey_sign_in.refused")
+    );
     key.verified = true;
     let (_, r) = passkey_sign_in(&t, &mut key, "http://evil.test", false).await;
     assert_eq!(r.reason(), "passkey_sign_in.refused", "{}", r.body);
     let owner_id = member_id(&t, "joerg@example.de").await;
     let refusal = last_refusal(&t).await;
-    assert_eq!((&refusal["method"], &refusal["reason"], &refusal["userId"]), (&json!("passkey"), &json!("credentials"), &json!(owner_id)));
+    assert_eq!(
+        (&refusal["method"], &refusal["reason"], &refusal["userId"]),
+        (&json!("passkey"), &json!("credentials"), &json!(owner_id))
+    );
     let counter = key.counter;
     key.counter = 0;
     let (_, r) = passkey_sign_in(&t, &mut key, ORIGIN, false).await;
@@ -1241,7 +1253,16 @@ async fn check_a_passkey_alone_signs_in_as_both_factors(t: TestApp) {
     let all = json!({ "value": "all", "version": 1 });
     let r = t.send(Method::PATCH, "/api/admin/settings/security.two_factor_methods", Some(all), &signed_in).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = t.send_on("10.0.0.5", "http://10.0.0.5", Method::POST, "/api/auth/passkey/options", Some(json!({})), &Browser::default()).await;
+    let r = t
+        .send_on(
+            "10.0.0.5",
+            "http://10.0.0.5",
+            Method::POST,
+            "/api/auth/passkey/options",
+            Some(json!({})),
+            &Browser::default(),
+        )
+        .await;
     assert_eq!(r.reason(), "passkey_sign_in.off", "{}", r.body);
 
     let actions = t.audit_actions().await;
@@ -1258,7 +1279,13 @@ async fn check_a_shared_computer_gets_a_short_session(t: TestApp) {
     enroll_passkey(&t, &owner, &mut key, true).await;
 
     let body = json!({ "email": "joerg@example.de", "password": PASSWORD, "forgetBrowser": true });
-    let password = t.post("/api/auth/login", body, &Browser::default()).await;
+    // The password, then the passkey as the second step: the box travels with the second step.
+    let first = t.post("/api/auth/login", body, &Browser::default()).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    let pending = Browser { session: None, pending: first.cookie("kalzit_pending") };
+    let options = t.post("/api/auth/second-factor/passkey", json!({}), &pending).await;
+    let answer = key.assert(&options.body, ORIGIN);
+    let (_, password) = second_step(&t, &pending, json!({ "method": "passkey", "credential": answer })).await;
     assert_eq!(password.status, StatusCode::OK, "{}", password.body);
     let (_, passkey) = passkey_sign_in(&t, &mut key, ORIGIN, true).await;
     assert_eq!(passkey.status, StatusCode::OK, "{}", passkey.body);
