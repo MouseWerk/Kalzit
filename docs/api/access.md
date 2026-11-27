@@ -1044,7 +1044,8 @@ not off on the server; otherwise both answer `403 forbidden` with `reason`
 started dialog, stored as the SHA-256 of its token; a new start replaces the browser's previous
 one, and the first answer uses it up, right or wrong. New dialogs are limited to 120 per address in
 10 minutes (`429 rate_limited`, `reason` `passkey_sign_in.busy`); a start that replaces the
-browser's own dialog while it lasts is not counted.
+browser's own dialog while it lasts is not counted there (of parallel starts with one cookie, only
+one replaces it) and has a budget of its own, 600 per address in 10 minutes.
 
 `POST /auth/passkey` takes `{ "credential": PublicKeyCredentialJSON, "forgetBrowser"?: boolean }`.
 Without a started dialog it answers `401 invalid_credentials` with `reason`

@@ -1379,6 +1379,19 @@ async fn check_passkey_sign_ins_are_rate_limited(t: TestApp) {
     t.setup().await;
     let mut key = Authenticator::new();
     key.user_handle = Some(vec![0; 16]);
+    // Two starts at once with one live dialog's cookie: the delete decides, so exactly one replaces
+    // the dialog uncounted and the other is a new dialog, counted and kept as a row of its own.
+    let first = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
+    let dialog = Browser { session: first.cookie("kalzit_passkey"), pending: None };
+    let (a, b) = tokio::join!(
+        t.post("/api/auth/passkey/options", json!({}), &dialog),
+        t.post("/api/auth/passkey/options", json!({}), &dialog)
+    );
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK), "{} {}", a.body, b.body);
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkey_sign_ins").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(rows, 2, "one replaced the first dialog, one is new");
+    // Counted so far: the first start and the one new dialog of the pair.
+    let counted_before = 2;
     // Failing answers use up the address's budget of failed sign-ins, shared with passwords.
     let mut refused = 0;
     let limited = loop {
@@ -1396,7 +1409,7 @@ async fn check_passkey_sign_ins_are_rate_limited(t: TestApp) {
     let r = t.post("/api/auth/login", wrong, &Browser::default()).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the password shares the budget: {}", r.body);
     // New dialogs: each keeps a row, so they have a budget of their own.
-    let mut started = refused + 1;
+    let mut started = counted_before + refused + 1;
     let mut last = Browser::default();
     let busy = loop {
         let r = t.post("/api/auth/passkey/options", json!({}), &Browser::default()).await;
