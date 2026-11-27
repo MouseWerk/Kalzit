@@ -48,6 +48,8 @@ mod tests {
     /// The namespaces reason codes live in.
     const NAMESPACES: &[&str] = &[
         "request",
+        // The quick actions of the graph canvas (docs/api/settings-dashboards.md).
+        "graph_actions",
         // Reports (docs/api/reports.md).
         "reports",
         // The password sign-in (docs/api/access.md, "Sign-in rate limits").
