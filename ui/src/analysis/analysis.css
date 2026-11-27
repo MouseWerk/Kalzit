@@ -489,4 +489,38 @@
   .step__organize-moves {
     display: flex;
   }
+
+  /* A graph algorithm step's sentence and the actions that fit it (board Graph082, frame 3). */
+  .algo-outcome {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+  }
+
+  .algo-outcome:empty {
+    display: none;
+  }
+
+  .algo-outcome__sentence {
+    margin: 0;
+  }
+
+  .algo-outcome__uses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .algo-aggregates__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-1);
+  }
+
+  /* Where a graph step computes, next to its name in the catalog: neutral, no place is better. */
+  .step-catalog__where {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
 }

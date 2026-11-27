@@ -266,8 +266,7 @@ export function edgeDisplay(
   if (edge === undefined || p.visibility.edges[index] === 0) {
     return { ...data, visibility: "hidden" };
   }
-  const isSelected =
-    p.selectedEdges?.has(index) === true || p.emphasis?.strong.has(index) === true;
+  const isSelected = p.selectedEdges?.has(index) === true || p.emphasis?.strong.has(index) === true;
   const near = isSelected || touches(edge, p.selected);
   const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
   // What a rule set wins over the panel's options: its arrow and its text show always.

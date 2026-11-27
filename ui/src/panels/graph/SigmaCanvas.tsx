@@ -16,14 +16,17 @@ import { IMAGE_REDRAW } from "../image";
 import { labelWidth } from "../measure";
 import { applyPositionsTo } from "./applyPositions";
 import { type Area, type AreaMode, nodesInArea, type Point } from "./canvas/selection";
+import { installSuggestions } from "./canvas/suggestions";
 import type { GraphPalette } from "./colors";
 import {
   DIM_EDGES_UP_TO,
   type Direction,
   type DrawStyle,
   dimsEdges,
+  type Emphasis,
   edgeDisplay,
   nodeDisplay,
+  nodeLit,
   nodeToward,
 } from "./drawing";
 import { readScene } from "./export/readScene";
@@ -176,6 +179,12 @@ export interface SigmaCanvasProps {
   drawStyle: DrawStyle;
   /** What the style rules of the panel set, by view index; absent without rules. */
   styled?: StyledView | null | undefined;
+  /** A path or a quick action's answer, held up while the rest is dimmed (drawing.ts). */
+  emphasis?: Emphasis | null | undefined;
+  /** Suggested edges by view node indexes, drawn dotted beneath the graph (canvas/suggestions.ts). */
+  suggested?: readonly { source: number; target: number }[] | undefined;
+  /** Whether the suggested edges show. */
+  showSuggested?: boolean | undefined;
   reducedMotion: boolean;
   /**
    * Whether nodes are pushed apart until nodes and labels have room in the panel (spread.ts): the
@@ -484,7 +493,18 @@ export function createRenderer(
     return {
       styled: p.styled,
       visible: (node) => p.visibility.nodes[node] === 1,
-      dimmed: (node) => p.selected.size > 0 && !p.selected.has(node) && !p.neighbours.has(node),
+      dimmed: (node) => !nodeLit(node, p),
+      palette: p.palette,
+    };
+  });
+  // Suggested edges, dotted with a diamond, beneath the drawing (canvas/suggestions.ts).
+  const removeSuggestions = installSuggestions(renderer, host, () => {
+    const p = live.current.props;
+    return {
+      edges: p.suggested ?? [],
+      show: p.showSuggested !== false,
+      visible: (node) => p.visibility.nodes[node] === 1,
+      dimmed: (p.emphasis ?? null) !== null,
       palette: p.palette,
     };
   });
@@ -623,6 +643,7 @@ export function createRenderer(
     killed = true;
     clearTimeout(settle);
     removeBadges();
+    removeSuggestions();
   });
   // Labels measured in a fallback font while the web font loaded are measured again.
   if (typeof document !== "undefined" && document.fonts?.status === "loading") {
@@ -658,6 +679,9 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     fixed,
     drawStyle,
     styled,
+    emphasis,
+    suggested,
+    showSuggested,
     reducedMotion,
   } = props;
   const tool = props.tool ?? "pointer";
@@ -769,6 +793,12 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     shownEdges.current = selectedEdges;
     renderer.refresh({ skipIndexation: true });
   }, [selectedEdges]);
+
+  // A path held up, or suggestions shown or hidden: every node and edge draws anew.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the reducers read the props through `live`; these trigger the redraw
+  useEffect(() => {
+    sigmaRef.current?.refresh({ skipIndexation: true });
+  }, [emphasis, suggested, showSuggested]);
 
   // The style changes what every node and edge draws; edge labels need the renderer's setting.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the reducers read the props through `live`; these trigger the redraw

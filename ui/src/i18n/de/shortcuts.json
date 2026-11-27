@@ -140,5 +140,10 @@
   "shortcuts.field.cancel": "Namen bearbeiten abbrechen",
   "shortcuts.handbook.search": "Im Handbuch suchen",
   "shortcuts.handbook.pages": "Vorige und nächste Seite im Handbuch",
-  "shortcuts.chart.readoutEnd": "Ablesen beenden"
+  "shortcuts.chart.readoutEnd": "Ablesen beenden",
+  "shortcuts.graph.path": "Pfad zwischen zwei gewählten Knoten, bei mehr: wie hängen diese zusammen",
+  "shortcuts.graph.nextPath": "Nächster Pfad in der Liste",
+  "shortcuts.graph.previousPath": "Voriger Pfad in der Liste",
+  "shortcuts.graph.top": "Wichtigste Knoten ein und aus",
+  "shortcuts.graph.suggestions": "Vorgeschlagene Kanten ein- und ausblenden"
 }

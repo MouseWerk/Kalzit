@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import type { CameraState } from "sigma/types";
+import type { StepKind } from "../../analysis/steps";
 import type { GraphSet } from "../../api/generated/shapes";
 import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
@@ -53,6 +54,7 @@ import {
   MINIMAP_WIDTH,
   Minimap,
 } from "./canvas/Minimap";
+import { QuickBar, QuickSheet, useQuickActions } from "./canvas/QuickActions";
 import { SearchBox } from "./canvas/SearchBox";
 import { DEFAULT_SCOPE, type SearchHit, type SearchScope, searchGraph } from "./canvas/search";
 import {
@@ -72,7 +74,7 @@ import { useHistory } from "./canvas/useHistory";
 import { useViewEdits } from "./canvas/useViewEdits";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
 import { hierarchyElk, useViewDirection } from "./direction";
-import type { DrawStyle } from "./drawing";
+import type { DrawStyle, Emphasis } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
 import { type ExportOpen, GraphExport } from "./export/GraphExport";
@@ -561,6 +563,41 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     const shown = withoutHidden(view, unhidden, hidden.nodes, hidden.edges);
     return only && selected.size > 0 ? onlySelection(view, shown, selected) : shown;
   }, [view, unhidden, hidden, only, selected]);
+  // The quick actions of the canvas (board Graph082, frames 8 to 10): none without an
+  // organization, so none on a public link or snapshot.
+  const quick = useQuickActions({
+    orgId: host.orgId,
+    model,
+    view,
+    visibility,
+    announce: setAnnouncement,
+  });
+  const chosenIds = useMemo(
+    () =>
+      selectedList.flatMap((i) => {
+        const at = view.nodes[i]?.node ?? -1;
+        const node = at >= 0 ? model.nodes[at] : undefined;
+        return node === undefined ? [] : [node.id];
+      }),
+    [selectedList, view, model],
+  );
+  // Suggested edges of a link prediction step, drawn apart from the graph's edges.
+  const suggestedView = useMemo(
+    () =>
+      model.suggested.flatMap((s) => {
+        const source = view.nodeOf[s.source] ?? -1;
+        const target = view.nodeOf[s.target] ?? -1;
+        return source >= 0 &&
+          target >= 0 &&
+          source !== target &&
+          (view.nodes[source]?.node ?? -1) >= 0 &&
+          (view.nodes[target]?.node ?? -1) >= 0
+          ? [{ source, target }]
+          : [];
+      }),
+    [model, view],
+  );
+  const [showSuggested, setShowSuggested] = useState(true);
   // Pinned nodes with a place, by view index: the canvas holds them there.
   const fixed = useMemo(
     () => fixedIndexes(model, view, viewEdits.places),
@@ -1403,6 +1440,49 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
 
   function onStageKey(event: KeyboardEvent<HTMLDivElement>) {
     if (isComposingKey(event)) return;
+    // The quick actions' keys (board Graph082, frame 20); Escape closes their answer first.
+    if (quick !== null) {
+      if (event.key === "Escape" && quick.state !== null) {
+        event.preventDefault();
+        quick.close();
+        return;
+      }
+      if (matchesShortcut("graph.path", event) && chosenIds.length >= 2) {
+        event.preventDefault();
+        if (chosenIds.length === 2) {
+          quick.path("shortest", chosenIds[0] as string, chosenIds[1] as string);
+        } else {
+          quick.connect(chosenIds);
+        }
+        return;
+      }
+      if (matchesShortcut("graph.previousPath", event) && quick.state?.kind === "path") {
+        event.preventDefault();
+        quick.step(-1);
+        return;
+      }
+      if (matchesShortcut("graph.nextPath", event) && quick.state?.kind === "path") {
+        event.preventDefault();
+        quick.step(1);
+        return;
+      }
+      if (matchesShortcut("graph.top", event)) {
+        event.preventDefault();
+        if (quick.state?.kind === "top") quick.close();
+        else quick.top("pageRank");
+        return;
+      }
+    }
+    if (matchesShortcut("graph.suggestions", event) && suggestedView.length > 0) {
+      event.preventDefault();
+      setShowSuggested(!showSuggested);
+      setAnnouncement(
+        t(showSuggested ? "graphCanvas.quick.hideSuggested" : "graphCanvas.quick.suggested", {
+          count: number.format(suggestedView.length),
+        }),
+      );
+      return;
+    }
     // The second key of a "t" sequence belongs to the time range (timeShortcuts.ts).
     if (timeKeys.current({ ...pressOf(event), timeStamp: event.timeStamp })) return;
     const action = canvasKey(pressOf(event), {
@@ -2301,6 +2381,21 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   communities: countText(t, language, "community", found.count),
                 })}
         {pins.length > 0 ? ` ${pinnedText} ` : null}
+        {suggestedView.length > 0 ? (
+          <>
+            {` ${t("graphCanvas.quick.suggested", { count: number.format(suggestedView.length) })} `}
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              aria-pressed={!showSuggested}
+              onClick={() => setShowSuggested(!showSuggested)}
+            >
+              {showSuggested
+                ? t("graphCanvas.quick.hideSuggested")
+                : t("graphCanvas.quick.showSuggested")}
+            </button>{" "}
+          </>
+        ) : null}
         {selectedList.length === 0 && selectedEdges.size === 0 ? null : (
           <span className="graph__summary-hint">
             {" "}
@@ -2491,6 +2586,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                     draggable
                     drawStyle={style}
                     styled={panelStyle.styled}
+                    emphasis={quick?.emphasis ?? null}
+                    suggested={suggestedView}
+                    showSuggested={showSuggested}
                     onPick={(index, additive) => {
                       setEdgeWalk(null);
                       pick(index, additive);
@@ -2577,15 +2675,18 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 onShow={(id) => showItems([id])}
                 onShowAll={() => showItems()}
               />
-              {selectedList.length >= 2 ? (
-                <SelectionBar
-                  text={selectionText(selected, selectedEdges.size)}
-                  only={only}
-                  onInvert={invertSelection}
-                  onHide={hideSelection}
-                  onOnly={toggleOnly}
-                />
-              ) : null}
+              <div className="graph-canvas__middle">
+                {quick === null ? null : <QuickBar quick={quick} chosen={chosenIds} />}
+                {selectedList.length >= 2 ? (
+                  <SelectionBar
+                    text={selectionText(selected, selectedEdges.size)}
+                    only={only}
+                    onInvert={invertSelection}
+                    onHide={hideSelection}
+                    onOnly={toggleOnly}
+                  />
+                ) : null}
+              </div>
               <Minimap
                 canvas={canvasRef}
                 ready={canvasReady}
@@ -2628,6 +2729,30 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             onKeyDown={onTableKey}
             onSelectMany={selectMany}
             onRowMenu={(row, at) => openMenu({ ...row, x: at.x, y: at.y, reach: 0 }, at)}
+          />
+        )}
+        {quick?.state === null || quick === null ? null : (
+          <QuickSheet
+            quick={quick}
+            model={model}
+            onSelect={(ids: readonly string[]) =>
+              selectMany(
+                ids.flatMap((id) => {
+                  const at = model.index.get(id);
+                  const v = at === undefined ? -1 : (view.nodeOf[at] ?? -1);
+                  return v >= 0 ? [v] : [];
+                }),
+              )
+            }
+            onAdopt={
+              host.addStep === undefined
+                ? undefined
+                : (step) => {
+                    const { id: _, ...rest } = step as unknown as Record<string, unknown>;
+                    host.addStep?.({ ...rest, frame: graphs[0]?.refId ?? "A" } as StepKind);
+                    quick.close();
+                  }
+            }
           />
         )}
         {panelStyle.sheet}
@@ -2799,6 +2924,11 @@ interface DrawnGraphProps {
   drawStyle: DrawStyle;
   /** What the style rules set, by view index; null without rules. */
   styled: StyledView | null;
+  /** A quick action's answer held up, the rest dimmed (drawing.ts). */
+  emphasis: Emphasis | null;
+  /** Suggested edges by view node indexes (canvas/suggestions.ts). */
+  suggested: readonly { source: number; target: number }[];
+  showSuggested: boolean;
   onPick: (node: number | null, additive: boolean) => void;
   onPickEdge: (edge: number, additive: boolean) => void;
   onMove: (moves: readonly NodeMove[]) => void;
