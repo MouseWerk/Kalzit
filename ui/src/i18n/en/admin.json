@@ -1285,5 +1285,11 @@
   "admin.settings.datasources.algorithm_max_top_k.label": "Most similar nodes per node",
   "admin.settings.datasources.algorithm_max_top_k.description": "The top k of similarity steps. At most 100.",
   "admin.settings.datasources.algorithm_max_suggestions.label": "Most suggested edges per step",
-  "admin.settings.datasources.algorithm_max_suggestions.description": "For link prediction; also the default of the step. At most 500."
+  "admin.settings.datasources.algorithm_max_suggestions.description": "For link prediction; also the default of the step. At most 500.",
+  "admin.auditAction.datasource.algorithms_installed": "TigerGraph algorithm queries installed",
+  "admin.auditAction.datasource.algorithms_updated": "TigerGraph algorithm queries updated",
+  "admin.auditAction.datasource.algorithms_removed": "TigerGraph algorithm queries removed",
+  "admin.auditAction.datasource.install_access_stored": "Install access stored",
+  "admin.auditAction.datasource.install_switch_on": "Installing algorithm queries turned on",
+  "admin.auditAction.datasource.install_switch_off": "Installing algorithm queries turned off"
 }

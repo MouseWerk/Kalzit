@@ -405,6 +405,140 @@ pub struct GraphSchema {
     pub property_keys: BTreeMap<String, Vec<String>>,
 }
 
+/// What a GSQL editor completes for a TigerGraph source (`schema` route, `gsql`): the graph's
+/// vertex and edge types with their attributes, the directions an edge type can be followed in,
+/// and GSQL's accumulator types. Read from the graph's schema, never sampled.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GsqlSchema {
+    pub vertex_types: Vec<GsqlVertexType>,
+    pub edge_types: Vec<GsqlEdgeType>,
+    pub accumulators: Vec<GsqlAccumulator>,
+}
+
+/// An attribute with its type as GSQL writes it (`INT`, `LIST<STRING>`, `MAP<STRING, INT>`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct GsqlAttribute {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GsqlVertexType {
+    pub name: String,
+    /// The primary id and its type.
+    pub primary_id: GsqlAttribute,
+    pub attributes: Vec<GsqlAttribute>,
+}
+
+/// One way an edge type can be followed from a vertex type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum GsqlDirection {
+    /// Undirected: `-(E)-` from either end.
+    Undirected,
+    /// Along a directed edge, from its source: `-(E>)-`.
+    Out,
+    /// Against a directed edge, from its target, through its reverse edge type: `-(R>)-`.
+    In,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GsqlEdgeType {
+    pub name: String,
+    pub directed: bool,
+    /// The pairs of vertex types the edge connects, `[from, to]`.
+    pub pairs: Vec<[String; 2]>,
+    /// The reverse edge type of a directed edge, when the schema defines one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reverse: Option<String>,
+    /// The directions the edge can be followed in: `undirected`, or `out` and, with a reverse
+    /// edge type, `in`.
+    pub directions: Vec<GsqlDirection>,
+    pub attributes: Vec<GsqlAttribute>,
+}
+
+/// Kalzit's algorithm queries on a TigerGraph source
+/// (`GET /api/orgs/{orgId}/datasources/{id}/tigergraph/algorithms`): which are installed, and the
+/// exact GSQL an install or removal runs, for the confirmation before it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct TigerGraphAlgorithms {
+    /// Whether the source has an install access (`installUser`, `installPassword`).
+    pub install_credential: bool,
+    /// The version of Kalzit's query texts.
+    pub version: u32,
+    pub queries: Vec<TigerGraphAlgorithm>,
+    /// The GSQL an install runs, with the install access; absent without one (or on 3.x).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub install: Option<String>,
+    /// The SHA-256 (hex) of `install`, which the install request must carry as its confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub install_checksum: Option<String>,
+    /// The GSQL a removal runs; absent without an install access or without Kalzit's queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub remove: Option<String>,
+    /// The SHA-256 (hex) of `remove`, which the removal request must carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub remove_checksum: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct TigerGraphAlgorithm {
+    pub name: String,
+    pub state: TigerGraphAlgorithmState,
+    /// Kalzit's text of the query for this graph.
+    pub gsql: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum TigerGraphAlgorithmState {
+    /// Not installed: the step runs on the Kalzit server.
+    Missing,
+    /// Installed and unchanged: byte for byte Kalzit's current text (read with the install access).
+    Current,
+    /// An older version of Kalzit's text: not run until an administrator confirms the update.
+    Older,
+    /// Installed by Kalzit, then changed in the database: not run until installed again.
+    Changed,
+    /// A query of the same name that Kalzit did not install: never run, replaced or removed by
+    /// Kalzit; an install stops until an administrator removes or renames it.
+    Foreign,
+    /// On the graph, installed by an administrator; without an install access Kalzit checks it at
+    /// each use like any installed query (readable text or approval).
+    Present,
+}
+
+/// A GSQL accumulator type: its name, its type parameters as written (`<T>`, `<K, V>`, empty for
+/// none) and the element types it takes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GsqlAccumulator {
+    pub name: String,
+    pub params: String,
+    /// The text to insert, with the type parameters as placeholders (`SumAccum<INT>`).
+    pub snippet: String,
+}
+
 /// The spans of one or more distributed traces, in their native shape: a tree per trace through
 /// `parentSpanId`, not a table. A table of spans (`spanTable`) and a service map (`serviceMap`)
 /// are explicit steps (docs/guide/traces.md).
@@ -1464,6 +1598,15 @@ mod tests {
             Edge::decl(&cfg),
             GraphPath::decl(&cfg),
             GraphSchema::decl(&cfg),
+            GsqlSchema::decl(&cfg),
+            GsqlAttribute::decl(&cfg),
+            GsqlVertexType::decl(&cfg),
+            GsqlDirection::decl(&cfg),
+            GsqlEdgeType::decl(&cfg),
+            GsqlAccumulator::decl(&cfg),
+            TigerGraphAlgorithms::decl(&cfg),
+            TigerGraphAlgorithm::decl(&cfg),
+            TigerGraphAlgorithmState::decl(&cfg),
             TraceSet::decl(&cfg),
             Span::decl(&cfg),
             SpanStatus::decl(&cfg),

@@ -1258,7 +1258,12 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
   a syntax it does not take, the source is not asked again for that step for ten minutes; when
   it ran out of time, not for that step on results of the same size or larger, by powers of two
   of nodes plus edges; errors the data causes are not remembered),
-  `algorithm.place_server` (the step asked for it). An answer of the library Kalzit cannot read
+  `algorithm.place_server` (the step asked for it), and for TigerGraph `algorithm.not_installed`
+  (Kalzit's algorithm query is not on the graph or takes other parameters),
+  `algorithm.not_verified` (it cannot be shown to only read, or an older version is installed),
+  `algorithm.changed_in_database` (its text no longer has the checksum Kalzit stored) and
+  `algorithm.subgraph_differs` (the database has other edges between the result's vertices than
+  the result; docs/api/datasources.md, "TigerGraph: algorithm steps in the database"). An answer of the library Kalzit cannot read
   is not replaced: the step fails with `steps.algorithm_answer`, `ranIn: "database"` and
   `reason: "algorithm.answer_unreadable"`, and may be run with `"place": "server"`.
 

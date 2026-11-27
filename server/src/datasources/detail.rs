@@ -215,6 +215,13 @@ mod tests {
         "dashboards.new_in_team_space",
         "dashboards.version_retention",
         "datasource.created",
+        // Audit actions of TigerGraph's install access and Kalzit's algorithm queries.
+        "datasource.algorithms_installed",
+        "datasource.algorithms_removed",
+        "datasource.algorithms_updated",
+        "datasource.install_access_stored",
+        "datasource.install_switch_off",
+        "datasource.install_switch_on",
         "datasource.deleted",
         "datasource.purged",
         "datasource.restored",

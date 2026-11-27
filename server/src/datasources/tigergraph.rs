@@ -30,6 +30,19 @@
 //!
 //! Results: vertex sets and edges from `PRINT` become a `graph` (a node id is `Type:id`; edge ids
 //! are derived from the type and the ends); other printed values become a `frame`.
+//!
+//! Analysis (0.8.3): the explorer's neighbours as interpreted GSQL made from the schema
+//! (`explore.rs`), counting vertex types of an interpreted query in the database (`pushdown.rs`),
+//! algorithm steps in administrator-installed read-only variants of library queries
+//! (`algorithms.rs`, `algorithms.gsql`), and the schema for GSQL completion (`schema.rs`).
+
+mod algorithms;
+mod explore;
+mod pushdown;
+mod schema;
+
+/// The version of Kalzit's algorithm query texts (`algorithms.gsql`).
+pub const ALGORITHMS_VERSION: u32 = algorithms::VERSION;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -49,6 +62,7 @@ use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, QueryParam, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
+use crate::analysis::algo::library::{Job, Library};
 use crate::http::{HttpClient, HttpError, HttpOptions};
 use crate::locks::MutexExt;
 use crate::shapes::{Edge, FieldType, Node, NoticeSeverity, QueryResult, Shape};
@@ -66,6 +80,13 @@ const SETTINGS: &[SettingField] = &[
     SettingField::new("approvedQueries", "datasources.settings.approvedQueries", SettingType::Text).target(),
     SettingField::new("maxNodes", "datasources.settings.maxNodes", SettingType::Number),
     SettingField::new("maxEdges", "datasources.settings.maxEdges", SettingType::Number),
+    // The optional install access that installs Kalzit's own algorithm queries (`algorithms.rs`),
+    // behind its switch (off by default): it may write queries, so setting either needs the admin
+    // level like a target, and it is used for nothing else than installing, updating, removing
+    // and reading the texts of those queries.
+    SettingField::new("installAlgorithms", "datasources.settings.installAlgorithms", SettingType::Bool).target(),
+    SettingField::new("installUser", "datasources.settings.installUser", SettingType::String).target(),
+    SettingField::new("installPassword", "datasources.settings.installPassword", SettingType::String).secret(),
 ];
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
@@ -75,6 +96,9 @@ const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 /// How long a checked installed query's text is trusted before it is read again.
 const TEXT_CACHE: Duration = Duration::from_secs(60);
 const MAX_SCHEMA_NAMES: usize = 10_000;
+/// How long an installed algorithm query's verified checksum is trusted before its text is read
+/// again (an install, update or removal through Kalzit forgets it at once).
+const VERIFIED_FOR: Duration = Duration::from_secs(120);
 
 /// Privileges a reader may hold. The built-in `queryreader` role of 4.2 holds `READ_SCHEMA`,
 /// `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`, `APP_ACCESS_DATA` (reading data in
@@ -91,6 +115,24 @@ const READ_PRIVILEGES: &[&str] = &[
     "READ_POLICY",
     "READ_QUERY",
     "EXECUTE_QUERY",
+];
+
+/// Privileges the install access may hold: reading, and creating, changing, dropping and
+/// installing queries (4.x query privileges; `WRITE_QUERY` is 3.x's single one). Nothing that
+/// writes data, the schema, loading jobs, users, roles or graphs.
+const INSTALL_PRIVILEGES: &[&str] = &[
+    "READ_SCHEMA",
+    "READ_DATA",
+    "APP_ACCESS_DATA",
+    "READ_POLICY",
+    "READ_LOADINGJOB",
+    "READ_QUERY",
+    "CREATE_QUERY",
+    "UPDATE_QUERY",
+    "DROP_QUERY",
+    "INSTALL_QUERY",
+    "EXECUTE_QUERY",
+    "WRITE_QUERY",
 ];
 
 pub fn kind() -> Kind {
@@ -113,16 +155,24 @@ struct Settings {
     approved_queries: Option<String>,
     max_nodes: Option<u64>,
     max_edges: Option<u64>,
+    install_user: Option<String>,
+    #[serde(default)]
+    install_algorithms: bool,
 }
 
-/// `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`, each with optional `params`.
+/// `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`, each with optional `params`, or
+/// an explorer form `{"explore": {"op": ...}}` (`explore.rs`).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TgQuery {
     gsql: Option<String>,
     installed: Option<String>,
+    explore: Option<explore::Explore>,
     #[serde(default)]
     params: Map<String, Value>,
+    /// Set by `pushdown.rs` on the query it rewrote: how to read the answer.
+    #[serde(rename = "kalzitStep")]
+    kalzit_step: Option<String>,
 }
 
 pub struct TigerGraph;
@@ -145,6 +195,14 @@ struct Client {
     graph: String,
     user: String,
     basic: Option<HeaderValue>,
+    /// The install access's basic auth (`installUser`, `installPassword`), when both are set. Only
+    /// `install_algorithms`, `remove_algorithms` and `installed_texts` use it.
+    install: Option<HeaderValue>,
+    install_user: Option<String>,
+    /// When the install access's privileges were last found to allow no more than installing.
+    install_checked: Mutex<Option<Instant>>,
+    /// Kalzit's installed queries whose text was found to match the stored checksum, and when.
+    verified: Mutex<HashMap<String, Instant>>,
     /// The secrets and the base64 of `user:password`, to scrub from errors (with the current
     /// REST++ token, which `scrub` adds).
     scrubber: Scrubber,
@@ -155,6 +213,8 @@ struct Client {
     texts: Mutex<HashMap<String, CheckedText>>,
     /// The graph's query names (4.x), which a `TYPEDEF` may not take, with when they were read.
     query_names: Mutex<Option<(Instant, Option<Vec<String>>)>>,
+    /// The graph's schema, for the explorer's queries, with when it was read.
+    schema: Mutex<Option<(Instant, Arc<schema::TgSchema>)>>,
     /// REST++ answered without a token when the connection was set up (authentication off).
     restpp_open: bool,
 }
@@ -246,6 +306,12 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         let mut scrubber = Scrubber::new(conn);
         let basic = Auth::Basic { user: &s.user, password: conn.secret("password").unwrap_or("") }
             .header("tigergraph.credentials_invalid", &mut scrubber)?;
+        let install = match (s.install_user.as_deref().filter(|u| !u.is_empty()), conn.secret("installPassword")) {
+            (Some(user), Some(password)) if s.install_algorithms => {
+                Some(Auth::Basic { user, password }.header("tigergraph.credentials_invalid", &mut scrubber)?)
+            }
+            _ => None,
+        };
         let mut c = Client {
             http,
             gsql,
@@ -253,6 +319,10 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             graph: s.graph.clone(),
             user: s.user.clone(),
             basic: Some(basic),
+            install,
+            install_user: s.install_user.clone().filter(|u| !u.is_empty()),
+            install_checked: Mutex::new(None),
+            verified: Mutex::new(HashMap::new()),
             scrubber,
             secret: conn.secret("secret").map(String::from),
             approved: approved_list(s.approved_queries.as_deref()),
@@ -260,6 +330,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             token: Mutex::new(None),
             texts: Mutex::new(HashMap::new()),
             query_names: Mutex::new(None),
+            schema: Mutex::new(None),
             restpp_open: false,
         };
         c.api = c.detect_api().await?;
@@ -518,6 +589,139 @@ impl Client {
         Ok(Some(token))
     }
 
+    /// The install access, or why there is none to use.
+    fn install_login(&self) -> Result<HeaderValue, SourceError> {
+        if self.api == Api::V3 {
+            return Err(SourceError::rejected(
+                "tigergraph.install_unsupported",
+                "Kalzit installs its algorithm queries on TigerGraph 4.x only",
+            ));
+        }
+        self.install.clone().ok_or_else(|| {
+            SourceError::rejected(
+                "tigergraph.install_credential_missing",
+                "the data source has no install access (installUser and installPassword)",
+            )
+        })
+    }
+
+    /// The install access after checking that it may do no more than read and install queries
+    /// (`INSTALL_PRIVILEGES`): one that may write data or the schema, or whose privileges cannot
+    /// be read, is refused. Checked again after a minute.
+    async fn checked_install(&self) -> Result<HeaderValue, SourceError> {
+        let login = self.install_login()?;
+        if self.install_checked.lock_or_recover().is_some_and(|at| at.elapsed() < TEXT_CACHE) {
+            return Ok(login);
+        }
+        let user = self.install_user.clone().unwrap_or_default();
+        let mut url = self.gsql.join("gsql/v1/users/").map_err(|e| SourceError::failed("internal", e.to_string()))?;
+        url.path_segments_mut()
+            .map_err(|_| SourceError::failed("internal", "the GSQL URL cannot take a path"))?
+            .pop_if_empty()
+            .push(&user);
+        let (status, bytes) =
+            self.call(Method::GET, url, Some(login.clone()), None, &[], MAX_SMALL_RESPONSE, None).await?;
+        let body = self.parse(status, &bytes).unwrap_or(Value::Null);
+        let rights = (status.is_success() && body.get("error").and_then(Value::as_bool) != Some(true))
+            .then(|| rights_from_json(&body, &user))
+            .flatten();
+        let excess = match &rights {
+            Some(r @ Rights { privileges: Some(_), .. }) => r.excess_for(INSTALL_PRIVILEGES),
+            _ => {
+                return Err(SourceError::rejected(
+                    "tigergraph.install_user_unverifiable",
+                    "cannot read the install access's privileges, so Kalzit cannot check that it may do no more than \
+                     install queries",
+                ));
+            }
+        };
+        if !excess.is_empty() {
+            let list = excess.join(", ");
+            return Err(SourceError::rejected(
+                "tigergraph.install_user_too_much",
+                format!(
+                    "the install access may do too much ({list}); give it a role with only the query privileges \
+                     (docs/guide/data-sources.md)"
+                ),
+            )
+            .with("privileges", list));
+        }
+        *self.install_checked.lock_or_recover() = Some(Instant::now());
+        Ok(login)
+    }
+
+    /// Whether `name`'s installed text matched its stored checksum within `VERIFIED_FOR`.
+    fn verified_recently(&self, name: &str) -> bool {
+        self.verified.lock_or_recover().get(name).is_some_and(|at| at.elapsed() < VERIFIED_FOR)
+    }
+
+    fn mark_verified(&self, name: &str) {
+        self.verified.lock_or_recover().insert(name.to_string(), Instant::now());
+    }
+
+    /// The installed text of `name`, read with the install access; `None` when the graph has no
+    /// such query.
+    async fn installed_text(&self, name: &str) -> Result<Option<String>, SourceError> {
+        let login = self.checked_install().await?;
+        let mut url = self
+            .gsql
+            .join(&format!("gsql/v1/queries/{name}"))
+            .map_err(|e| SourceError::failed("internal", e.to_string()))?;
+        set_query(&mut url, &[("graph", self.graph.as_str())]);
+        let (status, bytes) = self.call(Method::GET, url, Some(login), None, &[], MAX_SMALL_RESPONSE, None).await?;
+        let body = self.parse(status, &bytes)?;
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let body = self.ok_or_error(Answer { status, body })?;
+        Ok(find_text(&body, "queryContent").or_else(|| find_text(&body, "code")))
+    }
+
+    /// Runs GSQL commands with the install access (4.x `POST /gsql/v1/statements`) and answers
+    /// their output. Only `install_algorithms` and `remove_algorithms` call it, with Kalzit's own
+    /// fixed scripts.
+    async fn install_command(&self, script: &str) -> Result<String, SourceError> {
+        let login = self.checked_install().await?;
+        let url = self.gsql.join("gsql/v1/statements").map_err(|e| SourceError::failed("internal", e.to_string()))?;
+        let body = Some((script.as_bytes().to_vec(), "text/plain"));
+        let (status, bytes) = self.call(Method::POST, url, Some(login), body, &[], MAX_SMALL_RESPONSE, None).await?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        if !status.is_success() {
+            let body = serde_json::from_str(&text).unwrap_or(json!({ "message": text }));
+            return Err(self.api_error(status, &body));
+        }
+        // Lists and texts changed: read and verify them again.
+        *self.query_names.lock_or_recover() = None;
+        self.texts.lock_or_recover().clear();
+        self.verified.lock_or_recover().clear();
+        Ok(self.scrub(&text))
+    }
+
+    /// The schema endpoint's `results`: 4.x `/gsql/v1/schema/graphs/{g}`, 3.x `/gsqlserver/gsql/schema`.
+    async fn schema_json(&self) -> Result<Value, SourceError> {
+        let a = match self.api {
+            Api::V4 => self.gsql_json(Method::GET, &format!("gsql/v1/schema/graphs/{}", self.graph), &[]).await?,
+            Api::V3 => self.gsql_json(Method::GET, "gsqlserver/gsql/schema", &[("graph", &self.graph)]).await?,
+        };
+        let mut body = self.ok_or_error(a)?;
+        Ok(match body.get_mut("results") {
+            Some(r) => r.take(),
+            None => body,
+        })
+    }
+
+    /// The graph's schema, kept for a minute like a checked query text.
+    async fn graph_schema(&self) -> Result<Arc<schema::TgSchema>, SourceError> {
+        if let Some((at, s)) = self.schema.lock_or_recover().as_ref()
+            && at.elapsed() < TEXT_CACHE
+        {
+            return Ok(s.clone());
+        }
+        let parsed = Arc::new(schema::parse(&self.schema_json().await?));
+        *self.schema.lock_or_recover() = Some((Instant::now(), parsed.clone()));
+        Ok(parsed)
+    }
+
     /// The names of the graph's queries (4.x; kept for a minute). `None` when they cannot be read
     /// (3.x, or no right to list them): the GSQL check then refuses every `TYPEDEF`.
     async fn query_names(&self) -> Option<Vec<String>> {
@@ -683,6 +887,23 @@ struct Rights {
 }
 
 impl Rights {
+    /// Privileges beyond `allowed` (superuser always); only for rights with known privileges.
+    fn excess_for(&self, allowed: &[&str]) -> Vec<String> {
+        if self.superuser {
+            return vec!["superuser".into()];
+        }
+        let mut out: Vec<String> = self
+            .privileges
+            .iter()
+            .flatten()
+            .filter(|p| !allowed.contains(&p.to_ascii_uppercase().as_str()))
+            .cloned()
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// What the user may do beyond reading: privileges outside `READ_PRIVILEGES`, or, when only
     /// roles are known, roles other than `queryreader`.
     fn excess(&self) -> Vec<String> {
@@ -1108,6 +1329,129 @@ impl DataSourcePlugin for TigerGraph {
         &[Shape::Graph, Shape::Frame]
     }
 
+    fn capabilities(&self) -> &'static [super::Capability] {
+        &[super::Capability::Pushdown]
+    }
+
+    fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind, _max_rows: usize) -> Option<Value> {
+        pushdown::query(query, step)
+    }
+
+    fn algorithm_library(&self) -> Option<Library> {
+        Some(Library::TigerGraph)
+    }
+
+    /// Runs an algorithm step in Kalzit's installed variant of a library query (`algorithms.rs`):
+    /// only on 4.x, only when the variant is installed with the expected parameters and passes the
+    /// rules of every installed query, with the parameters as JSON in the body.
+    async fn run_algorithm(
+        &self,
+        conn: &Connection,
+        job: &Job,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<Vec<Value>>>, SourceError> {
+        if job.library != Library::TigerGraph {
+            return Err(SourceError::rejected("algorithm.no_library", "the job is for another library"));
+        }
+        let name = job.runs.first().cloned().unwrap_or_default();
+        if algorithms::signature(&name).is_none() || job.runs.len() != 1 {
+            return Err(algorithms::not_installed(&name, "no such Kalzit query"));
+        }
+        let c = client(conn).await?;
+        if c.api == Api::V3 {
+            return Err(algorithms::not_verified(&name, "TigerGraph 3.x does not describe its installed queries"));
+        }
+        match c.query_names().await {
+            Some(names) if !names.contains(&name) => {
+                return Err(algorithms::not_installed(&name, "the graph has no query of this name"));
+            }
+            None => return Err(algorithms::not_verified(&name, "the graph's queries cannot be listed")),
+            Some(_) => {}
+        }
+        // A query Kalzit installed itself: the installed text, read with the install access (the
+        // query access may not read texts), must have the checksum Kalzit stored at the install,
+        // and that must be the current version's. Admin-installed ones are checked as before.
+        let stored: Option<String> = if c.install.is_some() {
+            sqlx::query_scalar(
+                "SELECT checksum FROM tigergraph_installed_queries WHERE datasource_id = $1 AND name = $2",
+            )
+            .bind(conn.datasource_id())
+            .bind(&name)
+            .fetch_optional(conn.own_database().pool())
+            .await
+            .map_err(|e| SourceError::failed("internal", format!("internal: {e}")))?
+        } else {
+            None
+        };
+        let declared = if let Some(stored) = stored {
+            let shipped = algorithms::shipped(&c.graph).into_iter().find(|(n, _)| *n == name).map(|(_, t)| t);
+            let shipped = shipped.ok_or_else(|| algorithms::not_installed(&name, "no such Kalzit query"))?;
+            if stored != algorithms::checksum(&shipped, &c.graph) {
+                return Err(algorithms::not_verified(
+                    &name,
+                    format!(
+                        "an older version is installed; an administrator confirms the update to version {}",
+                        algorithms::VERSION
+                    ),
+                ));
+            }
+            if !c.verified_recently(&name) {
+                let text =
+                    c.installed_text(&name).await.map_err(|e| algorithms::not_verified(&name, e.detail().message))?;
+                match text {
+                    None => return Err(algorithms::not_installed(&name, "the graph has no query of this name")),
+                    Some(t) if algorithms::checksum(&t, &c.graph) == stored => c.mark_verified(&name),
+                    Some(_) => {
+                        return Err(algorithms::changed(&name));
+                    }
+                }
+            }
+            // TigerGraph's own mark stays a second check.
+            if c.query_info(&name).await.and_then(|i| i.updates) != Some(false) {
+                return Err(algorithms::not_verified(&name, "TigerGraph does not say that it does not change data"));
+            }
+            gsql::check_with(&shipped, Form::Installed, Some(&[])).map_err(SourceError::Rejected)?.params
+        } else {
+            match c.installed_params(&name).await {
+                Ok(Some(params)) => params,
+                Ok(None) => return Err(algorithms::not_verified(&name, "its parameters are unknown")),
+                Err(e) => return Err(algorithms::not_verified(&name, e.detail().message)),
+            }
+        };
+        algorithms::matches(&name, &declared)?;
+        let url = c
+            .restpp
+            .join(&format!("query/{}/{name}", c.graph))
+            .map_err(|e| SourceError::failed("internal", e.to_string()))?;
+        let body = algorithms::body(job).to_string().into_bytes();
+        let headers = [("gsql-timeout", timeout.as_millis().to_string())];
+        let mut renew = false;
+        let (status, bytes) = loop {
+            let token = c.token(renew).await?;
+            let had_token = token.is_some();
+            let auth = token
+                .and_then(|t| http_source::header_value(&format!("Bearer {t}"), "tigergraph.credentials_invalid").ok());
+            let sent = Some((body.clone(), "application/json"));
+            let (s, b) = c.call(Method::POST, url.clone(), auth, sent, &headers, MAX_SMALL_RESPONSE, None).await?;
+            if token_refused(s, &b) && !renew && had_token {
+                renew = true;
+                continue;
+            }
+            break (s, b);
+        };
+        let parsed = c.parse(status, &bytes)?;
+        let answer = c.ok_or_error(Answer { status, body: parsed }).map_err(|e| {
+            // A run TigerGraph stopped at its time limit is remembered like a slow library.
+            let d = e.detail();
+            if d.message.to_ascii_lowercase().contains("timeout") || status == StatusCode::GATEWAY_TIMEOUT {
+                SourceError::failed("algorithm.timeout", d.message)
+            } else {
+                e
+            }
+        })?;
+        algorithms::answers(job, answer.get("results").unwrap_or(&Value::Null))
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
@@ -1131,6 +1475,25 @@ impl DataSourcePlugin for TigerGraph {
                 "settings.name_invalid",
                 "the user name has letters, digits and _ - . @ only",
             ));
+        }
+        if let Some(install) = s.install_user.as_deref().filter(|u| !u.is_empty()) {
+            let ok = install.len() <= 128
+                && install.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'@'));
+            if !ok {
+                return Err(FieldError::new(
+                    "installUser",
+                    "settings.name_invalid",
+                    "the user name has letters, digits and _ - . @ only",
+                ));
+            }
+            // The query login stays a reader; installing needs a login of its own.
+            if install == s.user {
+                return Err(FieldError::new(
+                    "installUser",
+                    "settings.install_user_same",
+                    "the install access must be another user than the one that runs queries",
+                ));
+            }
         }
         if let Some(bad) = approved_list(s.approved_queries.as_deref()).into_iter().find(|q| !is_name(q)) {
             return Err(FieldError::new(
@@ -1198,12 +1561,10 @@ impl DataSourcePlugin for TigerGraph {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let c = client(conn).await?;
-        let a = match c.api {
-            Api::V4 => c.gsql_json(Method::GET, &format!("gsql/v1/schema/graphs/{}", c.graph), &[]).await?,
-            Api::V3 => c.gsql_json(Method::GET, "gsqlserver/gsql/schema", &[("graph", &c.graph)]).await?,
-        };
-        let body = c.ok_or_error(a)?;
-        let results = body.get("results").unwrap_or(&body);
+        let body = c.schema_json().await?;
+        let results = &body;
+        let parsed = Arc::new(schema::parse(results));
+        *c.schema.lock_or_recover() = Some((Instant::now(), parsed.clone()));
         let names = |key: &str| -> Vec<String> {
             results
                 .get(key)
@@ -1250,6 +1611,7 @@ impl DataSourcePlugin for TigerGraph {
             property_keys: keys,
             queries,
             query_params,
+            gsql: Some(Box::new(schema::completion(&parsed))),
         })
     }
 
@@ -1259,7 +1621,22 @@ impl DataSourcePlugin for TigerGraph {
         let max_bytes = req.limits.budget.remaining();
         let timeout_ms = req.limits.timeout.as_millis().to_string();
         let mut charge = req.limits.budget.charge();
-        let (status, bytes, executed) = match (q.gsql, q.installed) {
+        // An explorer form becomes an interpreted query made from the schema; it runs as one.
+        let mut generated = None;
+        let (gsql_text, installed, params) = match (q.gsql, q.installed, q.explore) {
+            (None, None, Some(x)) if q.params.is_empty() && q.kalzit_step.is_none() => {
+                let schema = c.graph_schema().await?;
+                let mut g = explore::generate(&x, &schema, &c.graph).map_err(SourceError::Rejected)?;
+                let text = std::mem::take(&mut g.text);
+                let params = std::mem::take(&mut g.params);
+                generated = Some(g);
+                (Some(text), None, params)
+            }
+            (gsql, installed, None) => (gsql, installed, q.params),
+            _ => (None, None, Map::new()),
+        };
+        let step = q.kalzit_step.filter(|_| gsql_text.is_some());
+        let (status, bytes, executed) = match (gsql_text, installed) {
             (Some(text), None) => {
                 let names = c.query_names().await;
                 let checked =
@@ -1267,7 +1644,7 @@ impl DataSourcePlugin for TigerGraph {
                 if let Some(g) = checked.graph.as_deref().filter(|g| !g.eq_ignore_ascii_case(&c.graph)) {
                     return Err(SourceError::Rejected(other_graph(g)));
                 }
-                let pairs = query_pairs(Some(&checked.params), &q.params, &req.variables)?;
+                let pairs = query_pairs(Some(&checked.params), &params, &req.variables)?;
                 let mut url = match c.api {
                     Api::V4 => c.gsql.join("gsql/v1/queries/interpret"),
                     Api::V3 => c.gsql.join("gsqlserver/interpreted_query"),
@@ -1291,7 +1668,7 @@ impl DataSourcePlugin for TigerGraph {
                         .with("name", &name));
                 }
                 let declared = c.installed_params(&name).await?;
-                let pairs = query_pairs(declared.as_deref(), &q.params, &req.variables)?;
+                let pairs = query_pairs(declared.as_deref(), &params, &req.variables)?;
                 let mut url = c
                     .restpp
                     .join(&format!("query/{}/{name}", c.graph))
@@ -1319,21 +1696,170 @@ impl DataSourcePlugin for TigerGraph {
             _ => {
                 return Err(SourceError::rejected(
                     "query.invalid_form",
-                    "the query needs either gsql (an interpreted query) or installed (a query name)",
+                    "the query needs either gsql (an interpreted query), installed (a query name) or explore \
+                     (an explorer step)",
                 )
-                .with("detail", "either gsql or installed"));
+                .with("detail", "either gsql, installed or explore"));
             }
         };
         let body = c.parse(status, &bytes)?;
         drop(bytes);
         let mut body = c.ok_or_error(Answer { status, body })?;
-        let results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
+        let mut results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
         drop(body);
-        let result = to_result(&results, &req, conn.settings(), executed);
+        if let Some(g) = &generated {
+            explore::tidy(&mut results, &g.reverse);
+        }
+        if step.as_deref() == Some(pushdown::COUNT_LABELS) {
+            return pushdown::counts(&results).ok_or_else(|| {
+                SourceError::failed("steps.pushdown_shape", "TigerGraph answered the graph step without its counts")
+            });
+        }
+        let mut result = to_result(&results, &req, conn.settings(), executed);
+        if let (Some(g), QueryResult::Graph { graph }) = (&generated, &mut result) {
+            for n in &g.notices {
+                graph.notices.get_or_insert_with(Vec::new).push(n.clone().notice(NoticeSeverity::Info));
+            }
+        }
         // The raw answer is gone; only the result's own charge remains.
         drop(charge);
         Ok(result)
     }
+}
+
+// ---- Kalzit's algorithm queries, installed with the install access ----
+
+/// Which of Kalzit's algorithm queries the graph has, and the GSQL an install or removal runs.
+/// `recorded` names the queries Kalzit installed on this source itself (Kalzit's own database).
+pub async fn algorithms_status(
+    conn: &Connection,
+    recorded: &[String],
+) -> Result<crate::shapes::TigerGraphAlgorithms, SourceError> {
+    use crate::shapes::{TigerGraphAlgorithm, TigerGraphAlgorithmState as St, TigerGraphAlgorithms};
+    let c = client(conn).await?;
+    let names = c.query_names().await.unwrap_or_default();
+    let login = c.install_login().is_ok();
+    if login {
+        // An install access that may do too much is refused before anything else.
+        c.checked_install().await?;
+    }
+    let mut queries = Vec::new();
+    for (name, text) in algorithms::shipped(&c.graph) {
+        let state = if !names.iter().any(|n| n == name) {
+            St::Missing
+        } else if login {
+            let installed = c.installed_text(name).await?;
+            algorithms::state_of(name, &c.graph, installed.as_deref(), recorded.iter().any(|r| r == name))
+        } else {
+            St::Present
+        };
+        queries.push(TigerGraphAlgorithm { name: name.to_string(), state, gsql: text });
+    }
+    let named = |states: &[St]| -> Vec<&str> {
+        queries.iter().filter(|q| states.contains(&q.state)).map(|q| q.name.as_str()).collect()
+    };
+    // Nothing is installed while a query of the same name is someone else's.
+    let install = (login && named(&[St::Foreign]).is_empty())
+        .then(|| algorithms::install_script(&c.graph, &named(&[St::Older, St::Changed]), &named(&[St::Missing])))
+        .flatten();
+    let ours: Vec<&str> =
+        named(&[St::Current, St::Older, St::Changed]).into_iter().filter(|n| recorded.iter().any(|r| r == n)).collect();
+    let remove = if login { algorithms::remove_script(&c.graph, &ours) } else { None };
+    Ok(TigerGraphAlgorithms {
+        install_credential: login,
+        version: algorithms::VERSION,
+        install_checksum: install.as_deref().map(algorithms::script_checksum),
+        install,
+        remove_checksum: remove.as_deref().map(algorithms::script_checksum),
+        remove,
+        queries,
+    })
+}
+
+/// Installs Kalzit's algorithm queries with the install access and answers the state after it with
+/// the checksum of each query it installed. `confirmed` must be exactly the script
+/// `algorithms_status` answers now (what the person saw); afterwards every query must be on the
+/// graph byte for byte as shipped.
+pub async fn install_algorithms(
+    conn: &Connection,
+    recorded: &[String],
+    confirmed: &str,
+) -> Result<(crate::shapes::TigerGraphAlgorithms, Vec<(String, String)>), SourceError> {
+    use crate::shapes::TigerGraphAlgorithmState as St;
+    let before = algorithms_status(conn, recorded).await?;
+    if !before.install_credential {
+        return Err(client_error_no_login());
+    }
+    if let Some(foreign) = before.queries.iter().find(|q| q.state == St::Foreign) {
+        return Err(SourceError::rejected(
+            "tigergraph.install_name_taken",
+            format!("the graph has a query {} that Kalzit did not install; nothing was installed", foreign.name),
+        )
+        .with("name", &foreign.name));
+    }
+    let Some(script) = before.install.clone() else { return Ok((before, Vec::new())) };
+    if !confirmed.eq_ignore_ascii_case(&algorithms::script_checksum(&script)) {
+        return Err(script_changed());
+    }
+    let c = client(conn).await?;
+    let output = c.install_command(&script).await?;
+    let changed: Vec<String> =
+        before.queries.iter().filter(|q| q.state != St::Current).map(|q| q.name.clone()).collect();
+    let mut now_recorded = recorded.to_vec();
+    now_recorded.extend(changed.iter().cloned());
+    let after = algorithms_status(conn, &now_recorded).await?;
+    if after.queries.iter().any(|q| q.state != St::Current) {
+        let tail: String = output.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
+        return Err(SourceError::failed(
+            "tigergraph.install_failed",
+            format!("TigerGraph did not install every query as shipped: {}", tail.trim()),
+        )
+        .with("detail", tail.trim()));
+    }
+    let installed = after
+        .queries
+        .iter()
+        .filter(|q| changed.contains(&q.name))
+        .map(|q| (q.name.clone(), algorithms::checksum(&q.gsql, &c.graph)))
+        .collect();
+    Ok((after, installed))
+}
+
+/// Removes the algorithm queries Kalzit installed itself (`recorded`) with the install access, never
+/// another query; answers the state after it and the names removed.
+pub async fn remove_algorithms(
+    conn: &Connection,
+    recorded: &[String],
+    confirmed: &str,
+) -> Result<(crate::shapes::TigerGraphAlgorithms, Vec<String>), SourceError> {
+    use crate::shapes::TigerGraphAlgorithmState as St;
+    let before = algorithms_status(conn, recorded).await?;
+    if !before.install_credential {
+        return Err(client_error_no_login());
+    }
+    let Some(script) = before.remove.clone() else { return Ok((before, Vec::new())) };
+    if !confirmed.eq_ignore_ascii_case(&algorithms::script_checksum(&script)) {
+        return Err(script_changed());
+    }
+    let c = client(conn).await?;
+    c.install_command(&script).await?;
+    let after = algorithms_status(conn, recorded).await?;
+    let removed = after.queries.iter().filter(|q| q.state == St::Missing).map(|q| q.name.clone()).collect();
+    Ok((after, removed))
+}
+
+fn script_changed() -> SourceError {
+    SourceError::rejected(
+        "tigergraph.install_script_changed",
+        "the confirmed GSQL is not the one Kalzit would run now; read it again and confirm that",
+    )
+}
+
+fn client_error_no_login() -> SourceError {
+    SourceError::rejected(
+        "tigergraph.install_credential_missing",
+        "the data source has no install access (installUser and installPassword), or runs TigerGraph 3.x",
+    )
 }
 
 /// An installed query as `GET /gsql/v1/queries/info` describes it.

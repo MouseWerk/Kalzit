@@ -61,6 +61,27 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health)
             .long_running(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema).long_running(),
+        route(
+            Method::GET,
+            "/orgs/{orgId}/datasources/{datasourceId}/tigergraph/algorithms",
+            Access::OrgMember,
+            tigergraph_algorithms,
+        )
+        .long_running(),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/datasources/{datasourceId}/tigergraph/algorithms",
+            Access::OrgMember,
+            tigergraph_install,
+        )
+        .long_running(),
+        route(
+            Method::DELETE,
+            "/orgs/{orgId}/datasources/{datasourceId}/tigergraph/algorithms",
+            Access::OrgMember,
+            tigergraph_remove,
+        )
+        .long_running(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/usage", Access::OrgMember, usage),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/history", Access::OrgMember, history),
     ]
@@ -825,6 +846,17 @@ async fn update(
         datasources::forget_last_test(&mut tx, &ds.id).await?;
     }
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
+    // A TigerGraph install access and its switch get entries of their own (D16).
+    if changed.iter().any(|c| c == "settings.installUser" || c == "secrets.installPassword") {
+        let summary =
+            json!({ "user": settings.get("installUser"), "password": body.secrets.contains_key("installPassword") });
+        record(&mut tx, &event(&ctx, &info, "datasource.install_access_stored", &ds.id, summary, now)).await?;
+    }
+    if changed.iter().any(|c| c == "settings.installAlgorithms") {
+        let on = settings.get("installAlgorithms").and_then(Value::as_bool).unwrap_or(false);
+        let action = if on { "datasource.install_switch_on" } else { "datasource.install_switch_off" };
+        record(&mut tx, &event(&ctx, &info, action, &ds.id, json!({}), now)).await?;
+    }
     let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, &ctx, saved).await?;
     crate::db::commit(tx).await?;
@@ -846,6 +878,17 @@ async fn check_target_change(
 ) -> ApiResult<()> {
     // Compared as they connect: a source stored without a TLS mode and one stating the mode it
     // falls back to have the same target.
+    // A TigerGraph install access may write queries: only who may move the target sets it.
+    if patch.contains_key("installPassword") && kind.all_settings().any(|f| f.name == "installPassword") {
+        let held = resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+        if !may_change_target(ctx, &held) {
+            return Err(ApiError::forbidden(
+                "setting the install access needs datasources:write for the organization or an admin grant on this source",
+            )
+            .because("datasource.target_change_forbidden")
+            .param("field", "installPassword"));
+        }
+    }
     let effective = |s: &Value| datasources::with_effective_tls(kind.kind(), s.clone());
     let Some(target) = kind.changed_targets(&effective(&ds.settings), &effective(settings)).first().copied() else {
         return Ok(());
@@ -1439,6 +1482,7 @@ async fn purge_in(
     }
     sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM tigergraph_installed_queries WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'datasource' AND resource_id = $2")
         .bind(org_id)
         .bind(id)
@@ -1551,6 +1595,95 @@ async fn health(
 ) -> ApiResult<Json<HealthReport>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesQuery, false).await?;
     Ok(Json(datasources::check_health(&state, &ctx.user.id, &ds).await?))
+}
+
+/// Kalzit's algorithm queries on a TigerGraph source: which are installed and the exact GSQL an
+/// install or removal runs. Read rights on the source suffice; the texts hold no secret.
+async fn tigergraph_algorithms(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path(path): Path<DsPath>,
+) -> ApiResult<Json<crate::shapes::TigerGraphAlgorithms>> {
+    let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
+    let action = datasources::TigerGraphAlgorithmsAction::Status;
+    Ok(Json(datasources::tigergraph_algorithms(&state, &ctx.user.id, &ds, action).await?.0))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfirmBody {
+    /// The SHA-256 of the GSQL the person confirmed (`installChecksum` or `removeChecksum` of the
+    /// status), so nothing runs that was not shown.
+    checksum: String,
+}
+
+/// Installing, updating or removing queries writes to the graph with the install access: it takes
+/// the right to change the source's target (org-wide `datasources:write` or an admin grant on it).
+async fn installer(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<Datasource> {
+    let ds = resource(state, ctx, id, Permission::DatasourcesWrite, false).await?;
+    let held = resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+    if !may_change_target(ctx, &held) {
+        return Err(ApiError::forbidden(
+            "installing queries on the source needs datasources:write for the organization or an admin grant on it",
+        )
+        .because("datasource.install_forbidden"));
+    }
+    managed_check(state, ctx, &ds.id).await?;
+    Ok(ds)
+}
+
+/// Records an install, update or removal, whether it worked or not, without the GSQL or any
+/// secret.
+async fn record_install(
+    state: &AppState,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    action: &str,
+    ds: &Datasource,
+    outcome: &ApiResult<(crate::shapes::TigerGraphAlgorithms, bool)>,
+) -> ApiResult<()> {
+    let summary = match outcome {
+        Ok((s, _)) => json!({
+            "name": ds.name, "version": s.version, "ok": true,
+            "queries": s.queries.iter().map(|q| json!({ "name": q.name, "state": q.state })).collect::<Vec<_>>(),
+        }),
+        Err(e) => json!({ "name": ds.name, "ok": false, "reason": e.reason.as_ref().map(|r| r.code.clone()) }),
+    };
+    let now = state.clock.now_ms();
+    crate::audit::record_all(&state.db, &[event(ctx, info, action, &ds.id, summary, now)]).await?;
+    Ok(())
+}
+
+async fn tigergraph_install(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<DsPath>,
+    JsonBody(body): JsonBody<ConfirmBody>,
+) -> ApiResult<Json<crate::shapes::TigerGraphAlgorithms>> {
+    let ds = installer(&state, &ctx, &path.datasource_id).await?;
+    let action = datasources::TigerGraphAlgorithmsAction::Install(body.checksum);
+    let outcome = datasources::tigergraph_algorithms(&state, &ctx.user.id, &ds, action).await;
+    let name = match &outcome {
+        Ok((_, true)) => "datasource.algorithms_updated",
+        _ => "datasource.algorithms_installed",
+    };
+    record_install(&state, &ctx, &info, name, &ds, &outcome).await?;
+    Ok(Json(outcome?.0))
+}
+
+async fn tigergraph_remove(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<DsPath>,
+    JsonBody(body): JsonBody<ConfirmBody>,
+) -> ApiResult<Json<crate::shapes::TigerGraphAlgorithms>> {
+    let ds = installer(&state, &ctx, &path.datasource_id).await?;
+    let action = datasources::TigerGraphAlgorithmsAction::Remove(body.checksum);
+    let outcome = datasources::tigergraph_algorithms(&state, &ctx.user.id, &ds, action).await;
+    record_install(&state, &ctx, &info, "datasource.algorithms_removed", &ds, &outcome).await?;
+    Ok(Json(outcome?.0))
 }
 
 async fn schema(

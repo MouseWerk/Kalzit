@@ -1,0 +1,190 @@
+// Read-only algorithm queries for Kalzit, version 1 (docs/guide/data-sources.md, "TigerGraph:
+// explorer, steps and algorithms in the database"). Kalzit installs them itself through a
+// source's install access, after an administrator confirmed the exact GSQL; or an administrator
+// installs them: replace MyGraph with the graph's name, run this file with `gsql`, then INSTALL
+// QUERY kalzit_pagerank, kalzit_wcc, kalzit_kcore, kalzit_triangles, kalzit_reachable. Each query's
+// whole text, up to its closing brace, is what Kalzit installs and checksums: a change here
+// is a new version (raise VERSION in algorithms.rs and keep the old checksums in OLDER). They are
+// variants of algorithms in TigerGraph's graph data
+// science library, cut down to what Kalzit needs: they compute on exactly the vertices of a
+// query's result (`nodes`) and the edges of the given types between them, keep everything in
+// accumulators of their own run, and only PRINT. No attribute is written, no file either.
+//
+// Every query prints `edges`, the number of edges it computed on (each edge once), and a vertex
+// set whose vertices carry the answer in the accumulator @kalzit_value (and @kalzit_clustering for
+// the triangles). Kalzit compares `edges` with its own result: when they differ, the database
+// holds edges between those vertices that the result left out, and Kalzit computes the step on
+// its own server instead, so both ways answer the same.
+//
+// `direction` is `out`, `in` or `both`; Kalzit asks for `out` and `in` only when every edge of the
+// result is directed.
+
+CREATE QUERY kalzit_pagerank(SET<VERTEX> nodes, SET<STRING> edge_types, STRING direction,
+    DOUBLE damping, INT max_iterations, DOUBLE tolerance) FOR GRAPH MyGraph SYNTAX V1 {
+  // Kalzit algorithm query, version 1. Installed by Kalzit or an administrator; do not edit.
+  OrAccum @kalzit_in;
+  SumAccum<DOUBLE> @kalzit_degree;
+  SumAccum<DOUBLE> @kalzit_value;
+  SumAccum<DOUBLE> @kalzit_next;
+  SumAccum<INT> @@kalzit_edges;
+  SumAccum<DOUBLE> @@kalzit_dangling;
+  MaxAccum<DOUBLE> @@kalzit_change;
+  INT kalzit_n = 0;
+  INT kalzit_round = 0;
+  kalzit_all = {nodes};
+  kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
+  kalzit_n = kalzit_all.size();
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+      ACCUM @@kalzit_edges += 1,
+            IF direction != "in" THEN s.@kalzit_degree += 1 END,
+            IF direction != "out" THEN t.@kalzit_degree += 1 END;
+  kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_value = 1.0 / kalzit_n;
+  WHILE kalzit_round < max_iterations DO
+    kalzit_round = kalzit_round + 1;
+    @@kalzit_dangling = 0;
+    @@kalzit_change = 0;
+    kalzit_seen = SELECT v FROM kalzit_all:v WHERE v.@kalzit_degree <= 0
+        POST-ACCUM @@kalzit_dangling += v.@kalzit_value;
+    kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+        WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+        ACCUM IF direction != "in" THEN t.@kalzit_next += damping * s.@kalzit_value / s.@kalzit_degree END,
+              IF direction != "out" THEN s.@kalzit_next += damping * t.@kalzit_value / t.@kalzit_degree END;
+    kalzit_all = SELECT v FROM kalzit_all:v
+        POST-ACCUM DOUBLE kalzit_rank = (1.0 - damping) / kalzit_n + damping * @@kalzit_dangling / kalzit_n + v.@kalzit_next,
+                   @@kalzit_change += abs(kalzit_rank - v.@kalzit_value),
+                   v.@kalzit_value = kalzit_rank,
+                   v.@kalzit_next = 0;
+    IF @@kalzit_change < tolerance THEN BREAK; END;
+  END;
+  PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_value];
+}
+
+CREATE QUERY kalzit_wcc(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH MyGraph SYNTAX V1 {
+  // Kalzit algorithm query, version 1. Installed by Kalzit or an administrator; do not edit.
+  OrAccum @kalzit_in;
+  MinAccum<INT> @kalzit_value;
+  MinAccum<INT> @kalzit_last;
+  SumAccum<INT> @@kalzit_edges;
+  OrAccum @@kalzit_changed;
+  kalzit_all = {nodes};
+  kalzit_all = SELECT v FROM kalzit_all:v
+      POST-ACCUM v.@kalzit_in = TRUE, v.@kalzit_value = getvid(v), v.@kalzit_last = getvid(v);
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+      ACCUM @@kalzit_edges += 1;
+  WHILE TRUE DO
+    @@kalzit_changed = FALSE;
+    kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t WHERE t.@kalzit_in
+        ACCUM t.@kalzit_value += s.@kalzit_value, s.@kalzit_value += t.@kalzit_value;
+    kalzit_all = SELECT v FROM kalzit_all:v
+        POST-ACCUM IF v.@kalzit_value < v.@kalzit_last THEN @@kalzit_changed += TRUE END,
+                   v.@kalzit_last = v.@kalzit_value;
+    IF NOT @@kalzit_changed THEN BREAK; END;
+  END;
+  PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_value];
+}
+
+CREATE QUERY kalzit_kcore(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH MyGraph SYNTAX V1 {
+  // Kalzit algorithm query, version 1. Installed by Kalzit or an administrator; do not edit.
+  OrAccum @kalzit_in;
+  OrAccum @kalzit_done;
+  SetAccum<VERTEX> @kalzit_near;
+  SetAccum<VERTEX> @kalzit_gone;
+  SumAccum<INT> @kalzit_value;
+  SumAccum<INT> @@kalzit_edges;
+  INT kalzit_k = 0;
+  kalzit_all = {nodes};
+  kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+      ACCUM @@kalzit_edges += 1,
+            IF s != t THEN s.@kalzit_near += t, t.@kalzit_near += s END;
+  kalzit_left = kalzit_all;
+  WHILE kalzit_left.size() > 0 DO
+    kalzit_peel = SELECT v FROM kalzit_left:v WHERE v.@kalzit_near.size() - v.@kalzit_gone.size() <= kalzit_k;
+    IF kalzit_peel.size() == 0 THEN
+      kalzit_k = kalzit_k + 1;
+      CONTINUE;
+    END;
+    kalzit_peel = SELECT v FROM kalzit_peel:v POST-ACCUM v.@kalzit_value = kalzit_k, v.@kalzit_done = TRUE;
+    kalzit_left = kalzit_left MINUS kalzit_peel;
+    kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+        WHERE t.@kalzit_in AND s != t AND (s.@kalzit_done OR t.@kalzit_done)
+        ACCUM IF t.@kalzit_done THEN s.@kalzit_gone += t END,
+              IF s.@kalzit_done THEN t.@kalzit_gone += s END;
+  END;
+  PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_value];
+}
+
+CREATE QUERY kalzit_triangles(SET<VERTEX> nodes, SET<STRING> edge_types) FOR GRAPH MyGraph SYNTAX V1 {
+  // Kalzit algorithm query, version 1. Installed by Kalzit or an administrator; do not edit.
+  OrAccum @kalzit_in;
+  SetAccum<VERTEX> @kalzit_near;
+  MapAccum<VERTEX, MaxAccum<INT>> @kalzit_shared;
+  SumAccum<INT> @kalzit_value;
+  SumAccum<DOUBLE> @kalzit_clustering;
+  SumAccum<INT> @@kalzit_edges;
+  kalzit_all = {nodes};
+  kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+      ACCUM @@kalzit_edges += 1,
+            IF s != t THEN s.@kalzit_near += t, t.@kalzit_near += s END;
+  // Per neighbour, the neighbours both have; summed over a vertex's neighbours, every triangle
+  // through it counts twice.
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND s != t
+      ACCUM INT kalzit_both = 0,
+            FOREACH kalzit_w IN s.@kalzit_near DO
+              IF t.@kalzit_near.contains(kalzit_w) THEN kalzit_both = kalzit_both + 1 END
+            END,
+            s.@kalzit_shared += (t -> kalzit_both),
+            t.@kalzit_shared += (s -> kalzit_both);
+  kalzit_all = SELECT v FROM kalzit_all:v
+      POST-ACCUM INT kalzit_twice = 0,
+                 FOREACH (kalzit_u, kalzit_c) IN v.@kalzit_shared DO kalzit_twice = kalzit_twice + kalzit_c END,
+                 v.@kalzit_value = kalzit_twice / 2,
+                 IF v.@kalzit_near.size() >= 2 THEN
+                   v.@kalzit_clustering = kalzit_twice * 1.0 / (v.@kalzit_near.size() * (v.@kalzit_near.size() - 1))
+                 END;
+  PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_all[kalzit_all.@kalzit_value, kalzit_all.@kalzit_clustering];
+}
+
+CREATE QUERY kalzit_reachable(SET<VERTEX> nodes, SET<STRING> edge_types, STRING direction,
+    SET<VERTEX> starts, INT max_hops) FOR GRAPH MyGraph SYNTAX V1 {
+  // Kalzit algorithm query, version 1. Installed by Kalzit or an administrator; do not edit.
+  OrAccum @kalzit_in;
+  OrAccum @kalzit_seen;
+  OrAccum @kalzit_front;
+  OrAccum @kalzit_next;
+  MinAccum<INT> @kalzit_value;
+  SumAccum<INT> @@kalzit_edges;
+  INT kalzit_hop = 0;
+  kalzit_all = {nodes};
+  kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_in = TRUE;
+  kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+      WHERE t.@kalzit_in AND (e.isDirected() OR getvid(s) <= getvid(t))
+      ACCUM @@kalzit_edges += 1;
+  kalzit_front = {starts};
+  kalzit_front = SELECT v FROM kalzit_front:v WHERE v.@kalzit_in
+      POST-ACCUM v.@kalzit_seen = TRUE, v.@kalzit_front = TRUE, v.@kalzit_value = 0;
+  WHILE kalzit_front.size() > 0 AND kalzit_hop < max_hops DO
+    kalzit_hop = kalzit_hop + 1;
+    kalzit_seen = SELECT s FROM kalzit_all:s -(edge_types:e)- :t
+        WHERE t.@kalzit_in AND (s.@kalzit_front OR t.@kalzit_front)
+        ACCUM IF direction != "in" AND s.@kalzit_front AND NOT t.@kalzit_seen THEN t.@kalzit_next += TRUE END,
+              IF direction != "out" AND t.@kalzit_front AND NOT s.@kalzit_seen THEN s.@kalzit_next += TRUE END;
+    kalzit_all = SELECT v FROM kalzit_all:v POST-ACCUM v.@kalzit_front = FALSE;
+    kalzit_front = SELECT v FROM kalzit_all:v WHERE v.@kalzit_next
+        POST-ACCUM v.@kalzit_seen = TRUE, v.@kalzit_front = TRUE, v.@kalzit_next = FALSE,
+                   v.@kalzit_value = kalzit_hop;
+  END;
+  kalzit_reached = SELECT v FROM kalzit_all:v WHERE v.@kalzit_seen;
+  PRINT @@kalzit_edges AS edges;
+  PRINT kalzit_reached[kalzit_reached.@kalzit_value];
+}

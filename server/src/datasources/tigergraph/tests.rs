@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 use super::*;
 use crate::datasources::targets::TargetPolicy;
 use crate::datasources::{Limits, OwnDatabase};
-use crate::shapes::TimeRange;
+use crate::shapes::{GraphSet, TimeRange};
 
 #[derive(Default)]
 struct Fake {
@@ -33,6 +33,24 @@ struct Fake {
     restpp_open: bool,
     /// How often `GET /gsql/v1/queries/info?query=...` was asked.
     info_calls: Mutex<u32>,
+    /// The graph the algorithm variants compute on (`kalzit_*`, `algorithms.gsql`), as a
+    /// TigerGraph result names it.
+    algo_graph: Mutex<Option<GraphSet>>,
+    /// Kalzit's variants on the graph, by name, with their texts (listed in the query info).
+    installed: Mutex<BTreeMap<String, String>>,
+    /// The database holds one edge more between the vertices than any result shows.
+    extra_edge: bool,
+    /// The JSON bodies of the variants' REST++ calls.
+    algorithm_calls: Mutex<Vec<(String, Value)>>,
+    /// The GSQL scripts the install access ran.
+    scripts: Mutex<Vec<String>>,
+}
+
+/// The install access of the tests: `installer` may only read and install queries,
+/// `installer_viel` may also write data.
+fn install_auth(h: &AxHeaders) -> Option<&'static str> {
+    let given = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+    ["installer", "installer_viel"].into_iter().find(|u| given == base64_basic(u, "einbau"))
 }
 
 type S = Arc<Fake>;
@@ -56,8 +74,19 @@ async fn schema_v4(State(s): State<S>, Path(g): Path<String>, h: AxHeaders) -> R
         200,
         json!({ "error": false, "results": {
             "GraphName": g,
-            "VertexTypes": [{ "Name": "Person", "Attributes": [{ "AttributeName": "name" }, { "AttributeName": "age" }] }],
-            "EdgeTypes": [{ "Name": "Friend", "Attributes": [{ "AttributeName": "since" }] }]
+            "VertexTypes": [
+                { "Name": "Person", "PrimaryId": { "AttributeName": "id", "AttributeType": { "Name": "STRING" } },
+                  "Attributes": [{ "AttributeName": "name", "AttributeType": { "Name": "STRING" } },
+                                 { "AttributeName": "age", "AttributeType": { "Name": "INT" } }] },
+                { "Name": "Ort", "PrimaryId": { "AttributeName": "id", "AttributeType": { "Name": "INT" } },
+                  "Attributes": [{ "AttributeName": "name", "AttributeType": { "Name": "STRING" } }] }
+            ],
+            "EdgeTypes": [
+                { "Name": "Friend", "IsDirected": false, "FromVertexTypeName": "Person", "ToVertexTypeName": "Person",
+                  "Config": {}, "Attributes": [{ "AttributeName": "since", "AttributeType": { "Name": "INT" } }] },
+                { "Name": "Lebt", "IsDirected": true, "FromVertexTypeName": "Person", "ToVertexTypeName": "Ort",
+                  "Config": { "REVERSE_EDGE": "reverse_Lebt" }, "Attributes": [] }
+            ]
         } }),
     )
 }
@@ -92,13 +121,49 @@ async fn user(Path(name): Path<String>) -> Response {
                 "privileges": { "1": { "privileges": ["READ_DATA", "DELETE_DATA", "DROP_ALL"] },
                     "social": { "privileges": [], "childPermissions": { "nachbarn": { "privileges": ["OWNER"] } } } } } }),
         ),
+        // The install access, with a role of only query privileges, and one that may write data.
+        "installer" => json_reply(
+            200,
+            json!({ "error": false, "results": { "name": "installer", "isSuperUser": false,
+                "roles": { "social": ["kalzit_installer"] },
+                "privileges": { "social": { "privileges": ["READ_SCHEMA", "READ_QUERY", "CREATE_QUERY", "DROP_QUERY",
+                    "INSTALL_QUERY"] } } } }),
+        ),
+        "installer_viel" => json_reply(
+            200,
+            json!({ "error": false, "results": { "name": "installer_viel", "isSuperUser": false,
+                "roles": { "social": ["designer"] },
+                "privileges": { "social": { "privileges": ["READ_SCHEMA", "CREATE_QUERY", "INSTALL_QUERY",
+                    "CREATE_DATA", "WRITE_SCHEMA"] } } } }),
+        ),
         // Not allowed to read its own record (4.2.5 lets a queryreader read it; older or other
         // setups may not): Kalzit asks with SHOW USER.
         _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_USER" })),
     }
 }
 
-async fn statements(h: AxHeaders, body: String) -> Response {
+async fn statements(State(s): State<S>, h: AxHeaders, body: String) -> Response {
+    if body.starts_with("USE GRAPH social\n") {
+        // Only the install access runs scripts, and only Kalzit's own.
+        assert!(install_auth(&h).is_some(), "scripts run with the install access only");
+        s.scripts.lock().unwrap().push(body.clone());
+        let mut installed = s.installed.lock().unwrap();
+        for line in body.lines() {
+            if let Some(names) = line.strip_prefix("DROP QUERY ") {
+                for n in names.split(", ") {
+                    assert!(n.starts_with("kalzit_"), "never another query: {n}");
+                    installed.remove(n);
+                }
+            }
+        }
+        for part in body.split("CREATE QUERY ").skip(1) {
+            let text = format!("CREATE QUERY {}", &part[..=part.rfind('}').unwrap()]);
+            let name = text["CREATE QUERY ".len()..].split('(').next().unwrap().to_string();
+            assert!(!installed.contains_key(&name), "{name} was dropped before");
+            installed.insert(name, text);
+        }
+        return (AxStatus::OK, "Successfully created queries.\nQuery installation finished.").into_response();
+    }
     assert_eq!(body, "SHOW USER", "Kalzit only ever sends this fixed command");
     let who = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let text = if who == base64_basic("versteckt", "geheim") {
@@ -137,8 +202,20 @@ const NACHBARN: &str = "CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<S
     Start = {p}; R = SELECT t FROM Start:s -(Friend:e)- Person:t ACCUM @@edges += e; \
     SetAccum<EDGE> @@edges; PRINT R; PRINT @@edges; }";
 
-async fn query_text(Path(name): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+async fn query_text(
+    State(s): State<S>,
+    h: AxHeaders,
+    Path(name): Path<String>,
+    Query(q): Query<BTreeMap<String, String>>,
+) -> Response {
     assert_eq!(q.get("graph").map(String::as_str), Some("social"));
+    // The install access may read query texts (READ_QUERY), the reader may not.
+    if install_auth(&h).is_some() {
+        return match s.installed.lock().unwrap().get(&name) {
+            Some(text) => json_reply(200, json!({ "error": false, "results": { "name": name, "queryContent": text } })),
+            None => json_reply(404, json!({ "error": true, "message": format!("Query {name} not found") })),
+        };
+    }
     match name.as_str() {
         "nachbarn" => {
             json_reply(200, json!({ "error": false, "results": { "name": "nachbarn", "queryContent": NACHBARN } }))
@@ -180,12 +257,45 @@ async fn query_info(State(s): State<S>, Query(q): Query<BTreeMap<String, String>
         ("schreibt_geheim", true, json!({ "query": { "default": "schreibt_geheim", "type": "STRING" } })),
         ("verboten", false, json!({ "query": { "default": "verboten", "type": "STRING" } })),
     ];
+    // Kalzit's variants as 4.2.5 describes untyped vertex sets, text sets and numbers.
+    let vertices = |i: u64, n: &str| {
+        [
+            (
+                n.to_string(),
+                json!({ "index": i, "id_type": format!("${n}.type"), "type": "STRING", "is_id": "true",
+                                     "max_count": 2_147_483_647_u64, "min_count": 0 }),
+            ),
+            (format!("{n}.type"), json!({ "index": i + 1, "type": "STRING", "min_count": 0 })),
+        ]
+    };
+    let mut all: Vec<(String, bool, Value)> = all.iter().map(|(n, u, p)| (n.to_string(), *u, p.clone())).collect();
+    let installed: Vec<String> = s.installed.lock().unwrap().keys().cloned().collect();
+    for name in &installed {
+        let mut params: Map<String, Value> = vertices(0, "nodes").into_iter().collect();
+        params.insert("edge_types".into(), json!({ "index": 2, "type": "STRING", "max_count": 2_147_483_647_u64 }));
+        let mut i = 3;
+        let signature = algorithms::signature(name).unwrap();
+        for (p, ty) in &signature[2..] {
+            match ty {
+                ParamType::Many(_) => {
+                    params.extend(vertices(i, p));
+                    i += 2;
+                    continue;
+                }
+                ParamType::Float => params.insert((*p).into(), json!({ "index": i, "type": "DOUBLE" })),
+                ParamType::Int => params.insert((*p).into(), json!({ "index": i, "type": "INT64" })),
+                _ => params.insert((*p).into(), json!({ "index": i, "type": "STRING" })),
+            };
+            i += 1;
+        }
+        all.push((name.clone(), false, Value::Object(params)));
+    }
     let mut results: Vec<Value> = all
         .iter()
         .filter(|(n, _, _)| q.get("query").is_none_or(|w| w == n))
         .map(|(n, update, params)| {
             json!({ "name": n, "installed": true, "graphUpdate": update, "status": "VALID", "syntax": "GSQL v2",
-                    "endpoint": { "query": { "social": { *n: { "GET/POST": {
+                    "endpoint": { "query": { "social": { n.as_str(): { "GET/POST": {
                         "graphUpdate": update, "action": "query", "parameters": params } } } } } })
         })
         .collect();
@@ -258,7 +368,15 @@ async fn interpret(State(s): State<S>, h: AxHeaders, raw: axum::extract::RawQuer
     }
     *s.last_query.lock().unwrap() = raw.0.unwrap_or_default();
     *s.last_body.lock().unwrap() = body.clone();
-    let results = if body.contains("PRINT R") { results_for("nachbarn") } else { results_for("zahlen") };
+    let results = if body.contains("kalzit_near") {
+        explored()
+    } else if body.contains("@@kalzit_types") {
+        json!([{ "@@kalzit_types": { "Person": 3, "Ort": 1 } }])
+    } else if body.contains("PRINT R") {
+        results_for("nachbarn")
+    } else {
+        results_for("zahlen")
+    };
     json_reply(200, json!({ "error": false, "results": results }))
 }
 
@@ -302,7 +420,7 @@ async fn fake_with(fake: Fake) -> (std::net::SocketAddr, S) {
         .route("/gsql/v1/queries/info", get(query_info))
         .route("/gsql/v1/queries/interpret", post(interpret))
         .route("/gsqlserver/interpreted_query", post(interpret))
-        .route("/restpp/query/{graph}/{name}", get(restpp_query))
+        .route("/restpp/query/{graph}/{name}", get(restpp_query).post(restpp_algorithm))
         .route("/restpp/version", get(version))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -544,19 +662,25 @@ async fn health_and_schema() {
     assert!(h.ok, "{h:?}");
     assert_eq!(h.detail.params["version"], "4.1.2");
     assert_eq!(h.detail.params["edition"], "enterprise");
-    let SourceSchema::Graph { labels, edge_types, property_keys, queries, query_params } =
+    let SourceSchema::Graph { labels, edge_types, property_keys, queries, query_params, gsql } =
         TigerGraph.schema(&conn).await.unwrap()
     else {
         panic!("a graph schema")
     };
-    assert_eq!(labels, ["Person"]);
-    assert_eq!(edge_types, ["Friend"]);
+    assert_eq!(labels, ["Person", "Ort"]);
+    assert_eq!(edge_types, ["Friend", "Lebt"]);
     assert_eq!(property_keys, ["age", "name", "since"]);
     // From the query info, which a queryreader may read; the plain query list is empty for it.
     assert_eq!(queries, ["extra", "geheim", "loescht", "nachbarn", "ohne_flag", "schreibt_geheim", "verboten"]);
     let types: Vec<String> = query_params["geheim"].iter().map(|p| format!("{} {}", p.ty, p.name)).collect();
     assert_eq!(types, ["INT k", "STRING name", "SET<INT> liste", "VERTEX v", "VERTEX<Person> p"]);
     assert_eq!(query_params["nachbarn"], []);
+    // GSQL completion: the types with their attributes and directions, and the accumulators.
+    let gsql = gsql.unwrap();
+    assert_eq!(gsql.vertex_types[0].name, "Person");
+    assert_eq!(gsql.vertex_types[0].attributes.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["name", "age"]);
+    assert_eq!(gsql.edge_types[0].directions, [crate::shapes::GsqlDirection::Undirected]);
+    assert!(gsql.accumulators.iter().any(|a| a.name == "SumAccum"));
     assert!(h.warnings.is_empty(), "REST++ refuses requests without a token: {h:?}");
 }
 
@@ -692,4 +816,365 @@ async fn variables_stay_typed_parameters() {
         .await;
     assert!(r.is_ok());
     assert_eq!(fake.last_query.lock().unwrap().as_str(), "p=1%26tiefe%3D99&tiefe=2");
+}
+
+// ---- 0.8.3: explorer, step in the database, algorithm queries ----
+
+/// As 4.2.5 answers the explorer's neighbours of Ana (shortened): her, one neighbour reached
+/// through a reverse edge type, the edges, the generated query's own accumulators.
+fn explored() -> Value {
+    json!([
+        { "kalzit_start": [{ "v_id": "1", "v_type": "Person", "attributes": { "name": "Ana", "@kalzit_pick": false } }] },
+        { "kalzit_near": [{ "v_id": "7", "v_type": "Ort", "attributes": { "name": "Bonn", "@kalzit_pick": false } },
+                          { "v_id": "2", "v_type": "Person", "attributes": { "name": "Bo", "@kalzit_pick": false } }] },
+        { "@@kalzit_edges": [
+            { "e_type": "Lebt", "from_type": "Person", "from_id": "1", "to_type": "Ort", "to_id": "7", "directed": true, "attributes": {} },
+            { "e_type": "Friend", "from_type": "Person", "from_id": "1", "to_type": "Person", "to_id": "2", "directed": false, "attributes": {} }
+        ] }
+    ])
+}
+
+#[tokio::test]
+async fn explorer_neighbours_run_as_gsql_made_from_the_schema() {
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let q = json!({ "explore": { "op": "neighbours", "node": "Person:1", "limit": 10 } });
+    let r = TigerGraph.query(&conn, req(q, json!({ "kalzit_node": "99" }))).await.unwrap();
+    let body = fake.last_body.lock().unwrap().clone();
+    assert!(body.starts_with("INTERPRET QUERY (VERTEX<Person> kalzit_node) FOR GRAPH social"), "{body}");
+    assert!(body.contains("-(Friend|Lebt>:e)- :t"), "{body}");
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&kalzit_node=1", "the id, not a variable");
+    let QueryResult::Graph { graph } = r else { panic!("a graph") };
+    let ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, ["Person:1", "Ort:7", "Person:2"]);
+    assert_eq!(graph.nodes[0].properties.keys().collect::<Vec<_>>(), ["name"], "no accumulators of Kalzit's own");
+    assert_eq!(graph.edges.len(), 2);
+    // Against the direction: the reverse type, the answer as the edge itself.
+    let q = json!({ "explore": { "op": "neighbours", "node": "Ort:7", "direction": "in" } });
+    assert!(TigerGraph.query(&conn, req(q, json!({}))).await.is_ok());
+    assert!(fake.last_body.lock().unwrap().contains("-(reverse_Lebt>:e)- :t"));
+    // Unknown names never reach the server; neither do params next to an explorer form.
+    let q = json!({ "explore": { "op": "neighbours", "node": "Person:1", "edgeTypes": ["Kennt"] } });
+    assert_eq!(reason(TigerGraph.query(&conn, req(q, json!({}))).await), "tigergraph.explore_type_unknown");
+    let q = json!({ "explore": { "op": "count", "node": "Person:1" }, "params": { "x": 1 } });
+    assert_eq!(reason(TigerGraph.query(&conn, req(q, json!({}))).await), "query.invalid_form");
+}
+
+#[tokio::test]
+async fn vertex_types_are_counted_in_the_database() {
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let original = json!({ "gsql": "INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; PRINT S; }" });
+    let step = crate::analysis::parse_step(&json!({ "id": "s", "frame": "A", "type": "countLabels" })).unwrap().kind;
+    let pushed = TigerGraph.pushdown(&original, &step, 1000).unwrap();
+    let r = TigerGraph.query(&conn, req(pushed, json!({}))).await.unwrap();
+    assert!(fake.last_body.lock().unwrap().contains("PRINT @@kalzit_types;"));
+    let r = crate::analysis::pushdown::normalize(&step, r, 1000).unwrap();
+    let QueryResult::Frame { frame } = r else { panic!("a table") };
+    assert_eq!(frame.fields()[0].values, [json!("Person"), json!("Ort")]);
+    assert_eq!(frame.fields()[1].values, [json!(3.0), json!(1.0)]);
+}
+
+/// A conformance graph as a TigerGraph result: vertices `V:<id>` (their labels kept for the steps
+/// that filter by label) with their name in `kz`, edges
+/// with TigerGraph's ids (`Type:a->b`).
+fn tigergraph_graph(cases: &Value, name: &str) -> GraphSet {
+    let g = &cases["algorithmGraphs"][name];
+    let mut out: GraphSet = serde_json::from_value(g.clone()).unwrap();
+    for n in &mut out.nodes {
+        n.properties.insert("kz".into(), json!(n.id));
+        n.id = format!("V:{}", n.id);
+    }
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for e in &mut out.edges {
+        e.properties.insert("kz".into(), json!(e.id));
+        e.from = format!("V:{}", e.from);
+        e.to = format!("V:{}", e.to);
+        let base = format!("{}:{}->{}", e.edge_type, e.from, e.to);
+        let n = seen.entry(base.clone()).or_default();
+        *n += 1;
+        e.id = if *n == 1 { base } else { format!("{base}#{n}") };
+    }
+    out
+}
+
+/// REST++ running one of Kalzit's variants, as the real query computes it: on the given
+/// vertices and the edges of the given types between them, here with Kalzit's own server
+/// algorithms, so the fake checks the way there and back (parameters, answer, edge count).
+async fn restpp_algorithm(
+    State(s): State<S>,
+    Path((graph, name)): Path<(String, String)>,
+    h: AxHeaders,
+    body: String,
+) -> Response {
+    assert_eq!(graph, "social");
+    let bearer =
+        h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
+    if bearer.is_none() || bearer != *s.valid_token.lock().unwrap() {
+        return json_reply(403, json!({ "error": true, "message": "Access Denied", "code": "REST-10016" }));
+    }
+    assert_eq!(h.get("content-type").and_then(|v| v.to_str().ok()), Some("application/json"));
+    let p: Value = serde_json::from_str(&body).unwrap();
+    s.algorithm_calls.lock().unwrap().push((name.clone(), p.clone()));
+    let full = s.algo_graph.lock().unwrap().clone().unwrap();
+    let ids = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| format!("{}:{}", x["type"].as_str().unwrap(), x["id"].as_str().unwrap()))
+            .collect()
+    };
+    let nodes = ids(&p["nodes"]);
+    let types: Vec<String> = serde_json::from_value(p["edge_types"].clone()).unwrap();
+    let sub = GraphSet {
+        nodes: full.nodes.iter().filter(|n| nodes.contains(&n.id)).cloned().collect(),
+        edges: full
+            .edges
+            .iter()
+            .filter(|e| types.contains(&e.edge_type) && nodes.contains(&e.from) && nodes.contains(&e.to))
+            .cloned()
+            .collect(),
+        ..Default::default()
+    };
+    let edges = sub.edges.len() + usize::from(s.extra_edge);
+    let (step, outputs) = match name.as_str() {
+        "kalzit_pagerank" => (
+            json!({ "type": "centrality", "measure": "pageRank", "direction": p["direction"], "damping": p["damping"],
+                    "maxIterations": p["max_iterations"], "tolerance": p["tolerance"] }),
+            vec![("kalzit_value", "pagerank")],
+        ),
+        "kalzit_wcc" => {
+            (json!({ "type": "communities", "algorithm": "weaklyConnected" }), vec![("kalzit_value", "component")])
+        }
+        "kalzit_kcore" => (json!({ "type": "kCore" }), vec![("kalzit_value", "core")]),
+        "kalzit_triangles" => {
+            (json!({ "type": "triangles" }), vec![("kalzit_value", "triangles"), ("kalzit_clustering", "clustering")])
+        }
+        "kalzit_reachable" => (
+            json!({ "type": "reachable", "from": ids(&p["starts"]), "maxHops": p["max_hops"], "direction": p["direction"] }),
+            vec![("kalzit_value", "distance")],
+        ),
+        other => panic!("{other}"),
+    };
+    let mut step = step;
+    step["id"] = json!("s");
+    step["frame"] = json!("A");
+    let kind = crate::analysis::parse_step(&step).unwrap().kind;
+    let control = crate::analysis::steps::Control::new(Arc::new(std::sync::atomic::AtomicBool::new(false)), 10)
+        .with_algorithm_limits(Default::default())
+        .with_algorithm_slot(true);
+    let (crate::analysis::graph::GraphOut::Graph(out), _) =
+        crate::analysis::graph::apply_summarized(&kind, &sub, &control).unwrap()
+    else {
+        panic!("a graph")
+    };
+    let vertices: Vec<Value> = out
+        .nodes
+        .iter()
+        .map(|n| {
+            let (ty, id) = n.id.split_once(':').unwrap();
+            let attrs: Map<String, Value> = outputs
+                .iter()
+                .map(|(acc, prop)| (format!("kalzit_all.@{acc}"), n.properties.get(*prop).cloned().unwrap_or(json!(0))))
+                .collect();
+            json!({ "v_id": id, "v_type": ty, "attributes": attrs })
+        })
+        .collect();
+    json_reply(200, json!({ "error": false, "results": [{ "edges": edges }, { "kalzit_all": vertices }] }))
+}
+
+/// Runs one step after a TigerGraph result as a query does, with the source's library.
+async fn step_after(conn: &Connection, graph: &GraphSet, step: Value) -> (QueryResult, crate::shapes::StepPlace) {
+    let mut step = step;
+    step["id"] = json!("s");
+    step["frame"] = json!("A");
+    let parsed = crate::analysis::parse_step(&step).unwrap();
+    let after = crate::datasources::AfterQuery {
+        name: "A".into(),
+        in_source: false,
+        timeout_secs: 10,
+        algorithms: Default::default(),
+    };
+    let result = QueryResult::Graph { graph: graph.clone() };
+    let (result, mut places) =
+        crate::datasources::graph_steps_after(&TigerGraph, conn, vec![parsed], result, after).await.unwrap();
+    (result, places.remove(0))
+}
+
+/// The conformance cases the variants take, against the fake: each runs in the database (as far
+/// as the route sends it there) and passes the case's checks for a library.
+#[tokio::test]
+async fn algorithm_steps_run_in_the_installed_variants() {
+    use crate::analysis::algo::library;
+    let cases: Value = serde_json::from_str(include_str!("../../analysis/conformance.json")).unwrap();
+    let installed: BTreeMap<String, String> =
+        algorithms::shipped("social").into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+    let mut in_database = 0;
+    for case in cases["algorithms"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        if case.get("error").is_some() || case["step"]["type"] == "mergeNodes" {
+            continue;
+        }
+        let graph = tigergraph_graph(&cases, case["graph"].as_str().unwrap());
+        let (addr, fake) = fake_with(Fake { installed: Mutex::new(installed.clone()), ..Fake::default() }).await;
+        *fake.algo_graph.lock().unwrap() = Some(graph.clone());
+        // Approved by name: the reader cannot read their texts; TigerGraph says they only read.
+        let approved = algorithms::shipped("social").iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
+        let conn = connection(addr, "leser", json!({ "approvedQueries": approved })).await;
+        let mut step = case["step"].clone();
+        for key in ["from", "to"] {
+            match step.get(key).cloned() {
+                Some(Value::String(s)) => step[key] = json!(format!("V:{s}")),
+                Some(Value::Array(l)) => {
+                    step[key] = Value::Array(l.iter().map(|v| json!(format!("V:{}", v.as_str().unwrap()))).collect())
+                }
+                _ => {}
+            }
+        }
+        let (result, place) = step_after(&conn, &graph, step.clone()).await;
+        assert!(place.error.is_none(), "{name}: {place:?}");
+        let kind = {
+            let mut s = step.clone();
+            s["id"] = json!("s");
+            s["frame"] = json!("A");
+            crate::analysis::parse_step(&s).unwrap().kind
+        };
+        let routed = library::route(Some(library::Library::TigerGraph), &kind, &graph, &Default::default());
+        let in_library = place.ran_in == crate::shapes::RanIn::Database;
+        assert_eq!(in_library, matches!(routed, Ok(Ok(_))), "{name}: {place:?}");
+        if in_library {
+            in_database += 1;
+        } else {
+            assert!(place.reason.is_some(), "{name}: a step on the server says why");
+        }
+        let out = match result {
+            QueryResult::Graph { graph } => graph,
+            _ => GraphSet::default(),
+        };
+        crate::analysis::algo::conformance::check_case(case, &out, place.summary.as_ref(), in_library)
+            .unwrap_or_else(|e| panic!("{e}"));
+    }
+    assert!(in_database >= 8, "{in_database} cases ran in the variants");
+}
+
+#[tokio::test]
+async fn a_variant_on_other_edges_or_not_installed_leaves_the_step_to_the_server() {
+    use crate::analysis::algo::library::reason;
+    let cases: Value = serde_json::from_str(include_str!("../../analysis/conformance.json")).unwrap();
+    let graph = tigergraph_graph(&cases, "triangles");
+    let installed: BTreeMap<String, String> =
+        algorithms::shipped("social").into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+    let approved =
+        json!({ "approvedQueries": "kalzit_pagerank, kalzit_wcc, kalzit_kcore, kalzit_triangles, kalzit_reachable" });
+    // The database has an edge between the vertices that the result does not show.
+    let (addr, extra) = fake_with(Fake { installed: Mutex::new(installed), extra_edge: true, ..Fake::default() }).await;
+    *extra.algo_graph.lock().unwrap() = Some(graph.clone());
+    let conn = connection(addr, "leser", approved.clone()).await;
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.ran_in, crate::shapes::RanIn::Server);
+    assert_eq!(place.reason.as_deref(), Some(reason::SUBGRAPH_DIFFERS));
+    // Not installed: said, and not asked again for a while.
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", approved).await;
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::NOT_INSTALLED));
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::NOT_INSTALLED));
+    assert!(fake.algorithm_calls.lock().unwrap().is_empty());
+    // Installed but neither readable nor approved: not shown to only read.
+    let installed: BTreeMap<String, String> =
+        algorithms::shipped("social").into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+    let (addr, _) = fake_with(Fake { installed: Mutex::new(installed), ..Fake::default() }).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::NOT_VERIFIED));
+}
+
+/// The install access: off without the switch, refused when it may do too much, installs only
+/// what was confirmed, records what it installed, and Kalzit runs a query only while its text
+/// has the stored checksum.
+#[tokio::test]
+async fn the_install_access_installs_kalzits_queries_only_when_confirmed() {
+    use crate::analysis::algo::library::reason;
+    use crate::shapes::TigerGraphAlgorithmState as St;
+    let cases: Value = serde_json::from_str(include_str!("../../analysis/conformance.json")).unwrap();
+    let graph = tigergraph_graph(&cases, "triangles");
+    let (addr, fake) = fake(false).await;
+    *fake.algo_graph.lock().unwrap() = Some(graph.clone());
+    let with = |user: &str, on: bool| json!({ "installAlgorithms": on, "installUser": user });
+    let install_conn = |settings: Value| async move {
+        let mut c = connection(addr, "leser", settings).await;
+        c.secrets.insert("installPassword".into(), Zeroizing::new("einbau".into()));
+        c
+    };
+    // The switch off: no install access, as before.
+    let off = install_conn(with("installer", false)).await;
+    let s = algorithms_status(&off, &[]).await.unwrap();
+    assert!(!s.install_credential && s.install.is_none());
+    assert!(s.queries.iter().all(|q| q.state == St::Missing));
+    // An install access that may write data is refused.
+    let much = install_conn(with("installer_viel", true)).await;
+    let e = algorithms_status(&much, &[]).await.unwrap_err();
+    assert_eq!(e.detail().reason, "tigergraph.install_user_too_much");
+    assert!(e.detail().params["privileges"].contains("CREATE_DATA"));
+    // The install needs the checksum of exactly the shown GSQL.
+    let conn = install_conn(with("installer", true)).await;
+    let s = algorithms_status(&conn, &[]).await.unwrap();
+    let script = s.install.clone().unwrap();
+    assert!(!script.contains("DROP"), "nothing to replace: {script}");
+    let e = install_algorithms(&conn, &[], "0000").await.unwrap_err();
+    assert_eq!(e.detail().reason, "tigergraph.install_script_changed");
+    assert!(fake.scripts.lock().unwrap().is_empty(), "nothing ran");
+    let (after, installed) = install_algorithms(&conn, &[], s.install_checksum.as_deref().unwrap()).await.unwrap();
+    assert_eq!(fake.scripts.lock().unwrap().as_slice(), [script]);
+    assert!(after.queries.iter().all(|q| q.state == St::Current));
+    assert_eq!(installed.len(), algorithms::shipped("social").len());
+    assert!(after.install.is_none(), "all current: nothing to install");
+    // What Kalzit installed is recorded, as the route does.
+    let db = conn.own_database().pool();
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(db).await.unwrap();
+    for (name, sum) in &installed {
+        sqlx::query(
+            "INSERT INTO tigergraph_installed_queries (datasource_id, name, version, checksum, installed_at) \
+             VALUES ('ds', $1, 1, $2, 0)",
+        )
+        .bind(name)
+        .bind(sum)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    // Runs in the database with the query access, the text checked with the install access.
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.ran_in, crate::shapes::RanIn::Database, "{place:?}");
+    // Changed in the database: not run, said so.
+    fake.installed.lock().unwrap().get_mut("kalzit_kcore").unwrap().push_str("\n// geändert");
+    // The verified checksum is trusted for two minutes; an install through Kalzit forgets it.
+    client(&conn).await.unwrap().verified.lock().unwrap().clear();
+    let (_, place) = step_after(&conn, &graph, json!({ "type": "kCore" })).await;
+    assert_eq!(place.reason.as_deref(), Some(reason::CHANGED_IN_DATABASE), "{place:?}");
+    let recorded: Vec<String> = installed.iter().map(|(n, _)| n.clone()).collect();
+    let s = algorithms_status(&conn, &recorded).await.unwrap();
+    assert_eq!(s.queries.iter().find(|q| q.name == "kalzit_kcore").unwrap().state, St::Changed);
+    assert!(s.install.as_deref().unwrap().contains("DROP QUERY kalzit_kcore\n"), "an update replaces it");
+    // Someone else's query of the same name: shown, and no install.
+    let s = algorithms_status(&conn, &[]).await.unwrap();
+    assert_eq!(s.queries.iter().find(|q| q.name == "kalzit_kcore").unwrap().state, St::Foreign);
+    assert!(s.install.is_none() && s.remove.is_none(), "never touches another's query: {s:?}");
+    let e = install_algorithms(&conn, &[], "x").await.unwrap_err();
+    assert_eq!(e.detail().reason, "tigergraph.install_name_taken");
+    // Removal: only what Kalzit installed, with the confirmed checksum.
+    let s = algorithms_status(&conn, &recorded).await.unwrap();
+    let (after, removed) = remove_algorithms(&conn, &recorded, s.remove_checksum.as_deref().unwrap()).await.unwrap();
+    assert_eq!(removed.len(), recorded.len());
+    assert!(after.queries.iter().all(|q| q.state == St::Missing));
+    assert!(fake.installed.lock().unwrap().is_empty());
+}
+
+#[test]
+fn the_install_user_is_another_user() {
+    let s = json!({ "url": "http://tg:14240", "graph": "social", "user": "leser", "installUser": "leser" });
+    assert_eq!(kind().validate_settings(&s).unwrap_err().detail.reason, "settings.install_user_same");
+    let s = json!({ "url": "http://tg:14240", "graph": "social", "user": "leser", "installUser": "a b" });
+    assert_eq!(kind().validate_settings(&s).unwrap_err().detail.reason, "settings.name_invalid");
 }

@@ -1535,6 +1535,114 @@ Read-only rules:
   read before every run.
 - Kalzit never calls REST++ upsert, delete or loading endpoints.
 
+### TigerGraph explorer: `{"explore": {"op": ...}}`
+
+GSQL has no generic expand, so the graph explorer sends a form and the server writes the
+interpreted GSQL from the graph's schema (read with the source's user, kept for a minute). Names
+come from the schema only, the vertex id goes in as a typed parameter (`VERTEX<Type>`), the numbers
+are bounded; the generated text then passes the same read-only check and runs on the same
+interpret endpoint as any interpreted query, with the user's rights (`datasources:query`). No
+other field (`params` included) may stand next to `explore` (`query.invalid_form`).
+
+| `op` | Fields | Answer |
+| --- | --- | --- |
+| `neighbours` | `node` (`Type:id`), `edgeTypes` (default all), `direction` (`out`, `in`, `both`; default `both`), `limit` (1-200, default 25), `skip` (0-10,000) | `graph`: the vertex, up to `limit` neighbours after the `skip` best connected (by out-degree, then TigerGraph's internal id, so "load more" continues), and the edges between it and them |
+| `count` | `node`, `edgeTypes`, `direction` | `frame` with `total`, the distinct neighbours the same step reaches |
+| `nodes` | `ids` (1-1,000 `Type:id`), `edges` (default `false`) | `graph`: the vertices, with `edges` also every edge between them |
+
+Directions: an undirected edge type is followed in every direction; a directed one along its
+direction (`E>`) for `out`, and against it for `in` only through its reverse edge type (`R>`, for
+edge types created `WITH REVERSE_EDGE`). An edge reached through a reverse type comes back as the
+edge itself (type and ends), so it merges with the same edge seen from the other side. A directed
+type without a reverse type is left out against its direction, and the answer carries the notice
+`tigergraph.explore_no_reverse_edge`. Unknown names are refused before anything is sent
+(`tigergraph.explore_type_unknown`), as is an id without a type (`tigergraph.explore_node`).
+
+### TigerGraph: graph steps in the database
+
+GSQL has no subqueries, so a TigerGraph query cannot be wrapped as a Cypher query is. Where every
+`PRINT` of an interpreted query prints only vertex set variables (`PRINT A, B;`), its result is the
+union of those sets, and **count labels** (`countLabels`) runs in TigerGraph: each such `PRINT`
+collects its set into an accumulator, and the query prints the number of vertices per type at the
+end, over the whole result instead of the vertices Kalzit holds after the node limit. The step's
+place is then `ranIn: database`. Every other query (edges, accumulators, projections printed, an
+installed query) and every other step runs on the server as before; a rewritten text TigerGraph
+refuses falls back to the query as written.
+
+### TigerGraph: algorithm steps in the database
+
+Algorithm steps run in Kalzit's own read-only variants of TigerGraph's library queries
+(`server/src/datasources/tigergraph/algorithms.gsql`, version 1): `kalzit_pagerank` (PageRank),
+`kalzit_wcc` (weakly connected components), `kalzit_kcore` (core numbers), `kalzit_triangles`
+(triangles and local clustering) and `kalzit_reachable` (reachable within `maxHops`). They take
+the result's vertices as a set and the edge types the step reads, compute on the edges of those
+types between those vertices, keep everything in accumulators of their own run and only `PRINT`:
+no attribute and no file is written. Every other algorithm step runs on the server with its reason
+(`algorithm.not_in_library`, `algorithm.enumerating`, `algorithm.option` for a weight or for
+`out`/`in` when the result has undirected edges).
+
+Before a run the variant must be installed with exactly the parameters of that file (TigerGraph
+4.x only), and pass the rules of any installed query: with the install access below, its text must
+have the checksum Kalzit stored when it installed it (read with the install access, which the query
+access may not do; a verified checksum is trusted for two minutes and forgotten at every install,
+update or removal) and TigerGraph's info must say it does not change data (`graphUpdate: false`);
+installed by an administrator instead, its text must be readable and pass the GSQL check, or it
+must be approved by name with `graphUpdate: false`. The query access (the `queryreader`) runs it,
+on REST++ with the parameters as JSON in the body. The variant answers the number of edges it
+computed on; when that differs from the result, the database holds other edges between those
+vertices and the server computes the step (`algorithm.subgraph_differs`), so both ways answer the
+same. A variant that is missing or cannot be shown to only read is not asked again for ten
+minutes (`algorithm.not_installed`, `algorithm.not_verified`, `algorithm.changed_in_database`).
+
+### TigerGraph: the install access and Kalzit's algorithm queries
+
+Kalzit can install its algorithm queries itself, through a second access of the source, off by
+default: the switch `installAlgorithms` and `installUser` (settings, admin level like a target) and
+the secret `installPassword` (in Kalzit's encrypted secret store; setting it needs the admin level
+too, `datasource.target_change_forbidden`). The install access must be another user than the query
+access (`settings.install_user_same`) and may hold no more than reading and the query privileges
+(`READ_SCHEMA`, `READ_DATA`, `READ_QUERY`, `CREATE_QUERY`, `UPDATE_QUERY`, `DROP_QUERY`,
+`INSTALL_QUERY`, `EXECUTE_QUERY`, 3.x's `WRITE_QUERY`, and `APP_ACCESS_DATA`, `READ_POLICY`,
+`READ_LOADINGJOB`): Kalzit reads its privileges (`GET /gsql/v1/users/{installUser}`) before every
+use (again after a minute) and refuses one that may write data, the schema, loading jobs, users or
+roles (`tigergraph.install_user_too_much`) or whose privileges it cannot read
+(`tigergraph.install_user_unverifiable`). It is used for nothing else than installing, updating
+and removing Kalzit's queries and reading their texts; the query access stays a reader and never
+installs.
+
+`GET /api/orgs/{orgId}/datasources/{id}/tigergraph/algorithms` (`datasources:read` on the source)
+answers `TigerGraphAlgorithms`: `installCredential`, `version`, per query its `name`, `state` and
+Kalzit's `gsql` for this graph, and with the install access the exact script an install (`install`,
+`installChecksum`) or a removal (`remove`, `removeChecksum`) would run. States: `missing` (not
+installed), `current` (installed and unchanged, byte for byte the current text), `older` (an older
+version of Kalzit's text: not run until an administrator confirms the update), `changed` (installed
+by Kalzit, then changed in the database: not run), `foreign` (a query of that name Kalzit did not
+install: never run, replaced or removed by Kalzit), and without the install access `present`
+(installed by an administrator, checked at each use as above).
+
+`POST .../tigergraph/algorithms` with `{"checksum": "<installChecksum>"}` installs or updates:
+missing queries are created, Kalzit's own older or changed ones dropped and created again, current
+ones left alone, then all are installed. `DELETE .../tigergraph/algorithms` with
+`{"checksum": "<removeChecksum>"}` drops the queries Kalzit installed itself, never another query.
+Both need `datasources:write` for the organization or an `admin` grant on the source
+(`datasource.install_forbidden`) and run only the script whose checksum the request carries
+(`tigergraph.install_script_changed` otherwise); nothing is installed while a `foreign` query has
+one of the names (`tigergraph.install_name_taken`). After an install every query must be `current`
+(`tigergraph.install_failed` otherwise). Kalzit stores name, version and checksum of each query it
+installed in its own database. A Kalzit update with a new version of the texts replaces nothing on
+its own: the older queries stop running in the database (`older`) until an administrator confirms
+the update. Audit actions: `datasource.algorithms_installed`, `datasource.algorithms_updated`,
+`datasource.algorithms_removed` (also when they fail, with the reason; never the GSQL),
+`datasource.install_access_stored` (user and whether a password was stored, never the password),
+`datasource.install_switch_on` and `datasource.install_switch_off`.
+
+### TigerGraph: GSQL completion
+
+The schema route answers TigerGraph sources with `gsql` next to the flat lists (`GsqlSchema`):
+`vertexTypes` with their primary id and attributes with types, `edgeTypes` with `directed`, the
+vertex type `pairs`, the `reverse` edge type, the `directions` they can be followed in (`undirected`,
+`out`, `in`) and their attributes, and GSQL's `accumulators` (name, type parameters, a snippet).
+
 ### Graph steps
 
 A query item may carry graph steps (`"steps": [...]`, the forms in docs/api/settings-dashboards.md,
@@ -2399,6 +2507,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.target_change_forbidden` | `field` | `403 forbidden`: changing a target field needs the admin level |
 | `datasource.not_in_trash` | | `409 conflict`: only a source in the trash can be purged (also when it was restored while purging) |
 | `datasource.purge_forbidden` | | `403 forbidden`: purging needs the org-wide write or an `admin` grant on the source |
+| `datasource.install_forbidden` | | `403 forbidden`: installing, updating or removing Kalzit's TigerGraph algorithm queries needs the org-wide `datasources:write` or an `admin` grant on the source |
 | `datasource.in_use` | `dashboards`, `libraryPanels`, `alertRules` | `409 conflict`: dashboards, library panels or alert rules still use the source, so it is not purged |
 | `analysis.in_use` | `dashboards` | `409 conflict`: dashboards link the saved analysis (trashed ones count), so it is not trashed, purged, made team only or moved where a linking dashboard's readers may not see it, and a folder holding it is not trashed, purged, restricted or moved under another restricted folder while a dashboard outside links it; `dashboards` counts those the caller may read |
 | `datasource.test_rate_limited` | `max` | `429 rate_limited`: more than `max` tests of unsaved settings per minute |
@@ -2440,6 +2549,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.header_name_invalid` | | `http_json`: `apiKeyHeader` is not a header name or is a reserved one |
 | `settings.url_no_host` | | the URL has no host |
 | `settings.name_invalid` | | TigerGraph: the graph, user or an approved query name has characters other than letters, digits and `_` (users also `-`, `.`, `@`) |
+| `settings.install_user_same` | | TigerGraph: the install access (`installUser`) is the same user as the query access; it must be another one |
 | `settings.project_invalid` | | BigQuery: the project ID has characters other than lower-case letters, digits, `-`, `.` and `:` |
 | `settings.location_invalid` | | BigQuery: the location has characters other than letters, digits and `-` |
 | `settings.dataset_invalid` | | BigQuery: the dataset has characters other than letters, digits and `_` |
@@ -2693,6 +2803,17 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.query_info_unreadable` | `name` | TigerGraph 4.x: the approved installed query's info cannot be read or does not say whether it changes data (`graphUpdate`) or which parameters it takes, so it does not run |
 | `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
 | `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
+| `tigergraph.explore_node` | `node` | an explorer form names a vertex that is not of the form `Type:id` |
+| `tigergraph.explore_type_unknown` | `type` | an explorer form names a vertex or edge type the graph's schema does not have |
+| `tigergraph.explore_limit` | `max` | an explorer form's `limit` (1 to 200), `skip` (at most 10,000) or `ids` (1 to 1,000) is out of range |
+| `tigergraph.explore_no_reverse_edge` | `types` | notice: these directed edge types have no reverse edge type, so the explorer cannot follow them against their direction |
+| `tigergraph.install_unsupported` | | Kalzit installs its algorithm queries on TigerGraph 4.x only |
+| `tigergraph.install_credential_missing` | | the source has no install access: the switch `installAlgorithms` is off, or `installUser` or `installPassword` is missing |
+| `tigergraph.install_user_unverifiable` | | the install access's privileges cannot be read, so Kalzit cannot check that it may do no more than install queries; it is not used |
+| `tigergraph.install_user_too_much` | `privileges` | the install access may do more than read and create, drop and install queries (write data, the schema, users, ...); it is not used |
+| `tigergraph.install_script_changed` | | the confirmed checksum is not the one of the GSQL Kalzit would run now; nothing ran; read the status again and confirm that |
+| `tigergraph.install_name_taken` | `name` | the graph has a query of that name that Kalzit did not install; nothing was installed |
+| `tigergraph.install_failed` | `detail` | TigerGraph did not install every query as shipped (its output in `detail`) |
 | `arangodb.empty` | | the AQL query is empty |
 | `arangodb.unclosed` | | an unclosed string, quoted name or comment |
 | `arangodb.syntax` | `char` | a character outside ASCII, `;` or the like outside strings and comments, `@` without a name, or a syntax tree nested too deeply |
@@ -2805,6 +2926,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `algorithm.library_failed` | | step `reason`: the library failed or did not answer in time; the server computed the same result |
 | `algorithm.place_server` | | step `reason`: the step asks to run on the server (`"place": "server"`) |
 | `algorithm.answer_unreadable` | | step `reason`: the library answered in a form Kalzit does not read; nothing is guessed, the step fails with `steps.algorithm_answer` and can run with `"place": "server"` |
+| `algorithm.answer` | `detail` | the TigerGraph algorithm query answered without its edge count or values; the server computes the step |
+| `algorithm.not_installed` | `name`, `detail` | step `reason` (TigerGraph): Kalzit's algorithm query is not installed on the graph, or takes other parameters; the server computes the step and does not ask again for ten minutes |
+| `algorithm.not_verified` | `name`, `detail` | step `reason` (TigerGraph): the algorithm query cannot be shown to only read (its text is unreadable and it is not approved, TigerGraph marks it as changing data, an older version Kalzit installed, or TigerGraph 3.x); the server computes the step |
+| `algorithm.changed_in_database` | `name` | step `reason` (TigerGraph): the query Kalzit installed no longer has the text whose checksum Kalzit stored; it does not run until an administrator installs it again |
+| `algorithm.subgraph_differs` | `database`, `result` | step `reason` (TigerGraph): the database holds other edges between the result's vertices than the result, so the query's answer would differ; the server computes the step |
 | `analysis.paths_cut` | `shown`, `total` | notice: only `shown` of `total` shortest paths are listed (the step's `maxCount`); a higher bound lists more |
 | `analysis.cycles_cut` | `limit` | notice: the cycle step stopped at `limit` cycles (its `maxCount`); there are more, how many is not counted |
 | `analysis.paths_too_long` | `maxLength`, `edges` | notice: no path fits within `maxLength` edges, the shortest has `edges`; a higher `maxLength` finds it |

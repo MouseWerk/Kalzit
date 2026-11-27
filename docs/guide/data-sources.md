@@ -99,7 +99,7 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | HTTP JSON | URL, Basic auth or Bearer token, Header and value for an API key, CA certificate, Path to the documents in the answer | documents |
 | MongoDB | Hosts (comma-separated), "Look up the servers in DNS (mongodb+srv)", Replica set, Database, User name, Password, Authentication database, Use TLS, CA certificate, Response size limit | documents |
 | Neo4j, Memgraph (Cypher over Bolt) | Host, Port (7687), Database, User name, Password, Encrypt the connection, trust and CA settings, Node limit (10,000), Edge limit (50,000) | graph |
-| TigerGraph 3.10+ and 4.x (GSQL) | GSQL server URL, REST++ URL, Graph, User name, Password, REST++ secret, CA certificate, Approved installed queries, Node and edge limits | graph |
+| TigerGraph 3.10+ and 4.x (GSQL) | GSQL server URL, REST++ URL, Graph, User name, Password, REST++ secret, CA certificate, Approved installed queries, Node and edge limits, Install algorithm queries, Install user, Install password | graph |
 | Graphite (graphite-web, carbonapi) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
 | Redis, Valkey (also Redis Stack: JSON, search, time series) | Host, Port (6379), Database number (0), User name (an ACL user, optional), Password, Use TLS, CA certificate | frame, documents (streams, JSON, search hits) |
 | Oracle Database | Host, Port (1521), Service name, User name, Password, Use TLS, CA certificate | frame |
@@ -296,6 +296,65 @@ Graph sources answer in the `graph` shape: Neo4j and Memgraph through Cypher, Ti
 GSQL (`PRINT` of vertex and edge sets becomes the graph; other printed values become a table).
 Edges appear only when the query returns them. What you do with the result is in
 [Explore](explore.md#graphs) and [Panels](panels.md#graph-panels).
+
+### TigerGraph: explorer, steps and algorithms in the database
+
+**Explorer.** The graph explorer works on TigerGraph too: Kalzit writes the GSQL for a vertex's
+neighbours from the graph's schema (vertex and edge types, their directions) and runs it as an
+interpreted query with the source's reading user. Undirected edge types are followed in every
+direction; a directed one against its direction only through its reverse edge type, so create
+edge types `WITH REVERSE_EDGE` if you want to explore them backwards (the explorer says which ones
+it cannot follow).
+
+**Steps in the database.** Counting vertex types runs in TigerGraph when an interpreted query
+prints only vertex sets (`PRINT A, B;`): it counts the whole result, not only what fits the node
+limit. Other steps run on the Kalzit server.
+
+**Algorithms.** PageRank, weakly connected components, core numbers, triangles and reachability
+run in TigerGraph when Kalzit's own read-only algorithm queries are installed on the graph
+(`kalzit_pagerank`, `kalzit_wcc`, `kalzit_kcore`, `kalzit_triangles`, `kalzit_reachable`). They
+compute only on the vertices of your result and the edges between them, write nothing, and Kalzit
+checks after each run that they saw the same edges as your result; otherwise, and for every other
+algorithm, the step runs on the Kalzit server, and its place says why. Without them everything
+works as before, on the server.
+
+There are two ways to install them:
+
+- **Kalzit installs them (install access).** Turn on **Install algorithm queries** on the data
+  source and give a second TigerGraph user under **Install user** and **Install password**. Only
+  data source admins can set these, the password is kept encrypted like every secret, and the
+  install access is used for nothing else than installing, updating and removing Kalzit's queries
+  and reading their texts; the normal user stays a `queryreader` and runs them. Kalzit shows the
+  exact GSQL before it installs, updates or removes anything and runs only what you confirmed. It
+  touches only queries named `kalzit_...` that it installed itself, stops when such a name belongs
+  to someone else, keeps a checksum of each query it installed, and does not run a query whose
+  text was changed in the database. After a Kalzit update nothing is replaced by itself: queries of
+  an older version run on the server until you confirm the update. Every install, update and
+  removal is in the audit log, as are storing the install access and turning the switch on or off.
+- **An administrator installs them.** Replace `MyGraph` in `algorithms.gsql` (in Kalzit's
+  repository, `server/src/datasources/tigergraph/`), run it with `gsql` and
+  `INSTALL QUERY kalzit_pagerank, kalzit_wcc, kalzit_kcore, kalzit_triangles, kalzit_reachable`.
+  Since a `queryreader` cannot read query texts, add the five names to **Approved installed
+  queries**; TigerGraph must report that they do not change data.
+
+The install access must be another user with a role that may only read and create, drop and
+install queries; Kalzit checks its privileges before every use and refuses one that may write data,
+the schema, loading jobs, users or roles. On TigerGraph 4.x, for the graph `social`:
+
+```
+CREATE ROLE kalzit_installer
+GRANT READ_SCHEMA, READ_QUERY, CREATE_QUERY, DROP_QUERY, INSTALL_QUERY ON GRAPH social TO kalzit_installer
+CREATE USER
+GRANT ROLE kalzit_installer ON GRAPH social TO kalzit_install
+```
+
+(`CREATE USER` asks for the name, `kalzit_install`, and the password.) Check the role with
+`SHOW PRIVILEGE ON ROLE kalzit_installer`; the privilege names differ between versions (3.x has
+one `WRITE_QUERY` instead of the create, drop and install privileges). The algorithm queries need
+TigerGraph 4.x.
+
+**Completion.** The GSQL editor completes vertex and edge types with their attributes and the
+directions an edge type can be followed in, and GSQL's accumulator types.
 
 ### Graph algorithms (Neo4j GDS, Memgraph MAGE)
 

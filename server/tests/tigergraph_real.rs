@@ -451,3 +451,78 @@ async fn auth_off_rest_without_authentication_warns() {
     assert_eq!(h["warnings"].as_array().unwrap().len(), 1, "{h}");
     t.finish().await;
 }
+
+/// The install access of setup.sh: a role with only the query privileges.
+const INSTALLER: (&str, &str) = ("kalzit_einbau", "einbau-Passwort1");
+
+/// The explorer's neighbours as generated GSQL, and counting vertex types in the database.
+#[tokio::test]
+#[ignore = "needs a real TigerGraph (KALZIT_TEST_TIGERGRAPH_URL), see the nightly job"]
+async fn explorer_and_steps_in_the_database() {
+    let t = T::new().await;
+    let id = t.source(READER, json!({})).await;
+    let r = t.query(&id, json!({ "explore": { "op": "neighbours", "node": "Person:1" } })).await;
+    eprintln!("neighbours: {r}");
+    assert_eq!(r["result"]["shape"], "graph", "{r}");
+    let nodes = ids(&r["result"]["graph"]["nodes"]);
+    assert!(nodes.contains(&"Person:1".to_string()) && nodes.contains(&"Ort:7".to_string()), "{r}");
+    let r = t.query(&id, json!({ "explore": { "op": "count", "node": "Person:1" } })).await;
+    eprintln!("count: {r}");
+    assert_eq!(r["result"]["shape"], "frame", "{r}");
+    let r = t.query(&id, json!({ "explore": { "op": "nodes", "ids": ["Person:1", "Person:2"], "edges": true } })).await;
+    eprintln!("nodes: {r}");
+    assert_eq!(ids(&r["result"]["graph"]["nodes"]), ["Person:1", "Person:2"], "{r}");
+    let item = json!({ "refId": "A", "datasourceId": id,
+        "query": { "gsql": "INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; O = {Ort.*}; PRINT S, O; }" },
+        "steps": [{ "id": "s", "frame": "A", "type": "countLabels" }] });
+    let body =
+        json!({ "queries": [item], "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } });
+    let (status, r) = t.send(Method::POST, "/query", Some(body)).await;
+    eprintln!("count labels: {r}");
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["results"]["A"]["steps"][0]["ranIn"], "database", "{r}");
+    t.finish().await;
+}
+
+/// The install access installs Kalzit's algorithm queries after the confirmation, PageRank runs in
+/// them, and they are removed again (also when an assertion failed before, as far as possible).
+#[tokio::test]
+#[ignore = "needs a real TigerGraph (KALZIT_TEST_TIGERGRAPH_URL), see the nightly job"]
+async fn install_access_installs_and_runs_algorithm_queries() {
+    let t = T::new().await;
+    let settings = json!({ "url": url(), "graph": "social", "user": READER.0, "installAlgorithms": true,
+                           "installUser": INSTALLER.0 });
+    let body = json!({ "name": "TigerGraph install", "kind": "tigergraph", "settings": settings,
+                       "secrets": { "password": READER.1, "installPassword": INSTALLER.1 } });
+    let (status, created) = t.send(Method::POST, "/datasources", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap().to_string();
+    let path = format!("/datasources/{id}/tigergraph/algorithms");
+    let (status, s) = t.send(Method::GET, &path, None).await;
+    eprintln!("status: {s}");
+    assert_eq!(status, StatusCode::OK, "{s}");
+    assert_eq!(s["installCredential"], true, "{s}");
+    let (status, installed) = t.send(Method::POST, &path, Some(json!({ "checksum": s["installChecksum"] }))).await;
+    eprintln!("installed: {installed}");
+    let item = json!({ "refId": "A", "datasourceId": id,
+        "query": { "gsql": "INTERPRET QUERY () FOR GRAPH social { SetAccum<EDGE> @@e; S = {Person.*}; \
+                    R = SELECT t FROM S:s -(Friend:e)- Person:t ACCUM @@e += e; PRINT S; PRINT @@e; }" },
+        "steps": [{ "id": "s", "frame": "A", "type": "centrality", "measure": "pageRank" }] });
+    let body =
+        json!({ "queries": [item], "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } });
+    let (_, ran) = t.send(Method::POST, "/query", Some(body)).await;
+    eprintln!("pagerank: {ran}");
+    // Removed before the checks, so a failure leaves the graph as setup.sh made it.
+    let (_, now) = t.send(Method::GET, &path, None).await;
+    if let Some(sum) = now["removeChecksum"].as_str() {
+        let (status, removed) = t.send(Method::DELETE, &path, Some(json!({ "checksum": sum }))).await;
+        eprintln!("removed: {removed}");
+        assert_eq!(status, StatusCode::OK, "{removed}");
+    }
+    assert_eq!(status, StatusCode::OK, "{installed}");
+    assert!(installed["queries"].as_array().unwrap().iter().all(|q| q["state"] == "current"), "{installed}");
+    assert_eq!(ran["results"]["A"]["steps"][0]["ranIn"], "database", "{ran}");
+    let (_, after) = t.send(Method::GET, &path, None).await;
+    assert!(after["queries"].as_array().unwrap().iter().all(|q| q["state"] == "missing"), "{after}");
+    t.finish().await;
+}

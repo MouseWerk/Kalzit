@@ -97,7 +97,7 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | HTTP JSON | URL, Basic Auth oder Bearer-Token, Header und Wert für einen API-Schlüssel, CA-Zertifikat, Pfad zu den Dokumenten in der Antwort | documents |
 | MongoDB | Hosts (durch Kommas getrennt), „Server im DNS nachschlagen (mongodb+srv)“, Replica Set, Datenbank, Benutzername, Passwort, Datenbank für die Anmeldung, TLS verwenden, CA-Zertifikat, Größengrenze einer Antwort | documents |
 | Neo4j, Memgraph (Cypher über Bolt) | Host, Port (7687), Datenbank, Benutzername, Passwort, Verbindung verschlüsseln, Vertrauens- und CA-Einstellungen, Knotenlimit (10.000), Kantenlimit (50.000) | graph |
-| TigerGraph 3.10+ und 4.x (GSQL) | URL des GSQL-Servers, REST++-URL, Graph, Benutzername, Passwort, REST++-Secret, CA-Zertifikat, Freigegebene installierte Abfragen, Knoten- und Kantenlimits | graph |
+| TigerGraph 3.10+ und 4.x (GSQL) | URL des GSQL-Servers, REST++-URL, Graph, Benutzername, Passwort, REST++-Secret, CA-Zertifikat, Freigegebene installierte Abfragen, Knoten- und Kantenlimits, Algorithmus-Abfragen installieren, Installations-Benutzer, Installations-Passwort | graph |
 | Graphite (graphite-web, carbonapi) | URL, Benutzername und Passwort für Basic Auth, Bearer-Token, CA-Zertifikat | frame |
 | Redis, Valkey (auch Redis Stack: JSON, Suche, Zeitreihen) | Host, Port (6379), Datenbanknummer (0), Benutzername (ein ACL-Benutzer, optional), Passwort, TLS verwenden, CA-Zertifikat | frame, documents (Streams, JSON, Suchtreffer) |
 | Oracle Database | Host, Port (1521), Dienstname, Benutzername, Passwort, TLS verwenden, CA-Zertifikat | frame |
@@ -309,6 +309,69 @@ Graph-Quellen antworten in der Form `graph`: Neo4j und Memgraph über Cypher, Ti
 (`PRINT` von Knoten- und Kantenmengen wird zum Graphen; andere ausgegebene Werte werden zu einer
 Tabelle). Kanten erscheinen nur, wenn die Abfrage sie zurückgibt. Was du mit dem Ergebnis machst,
 steht in [Explore](explore.md#graphen) und [Panels](panels.md#graph-panels).
+
+### TigerGraph: Explorer, Schritte und Algorithmen in der Datenbank
+
+**Explorer.** Der Graph-Explorer funktioniert auch mit TigerGraph: Kalzit schreibt das GSQL für die
+Nachbarn eines Knotens aus dem Schema des Graphen (Vertex- und Kantentypen, ihre Richtungen) und
+führt es als interpretierte Abfrage mit dem lesenden Benutzer der Quelle aus. Ungerichteten
+Kantentypen folgt er in jede Richtung, einem gerichteten gegen seine Richtung nur über seinen
+Rückwärts-Kantentyp; lege Kantentypen also `WITH REVERSE_EDGE` an, wenn du sie rückwärts erkunden
+willst (der Explorer sagt, welchen er nicht folgen kann).
+
+**Schritte in der Datenbank.** Das Zählen der Vertex-Typen läuft in TigerGraph, wenn eine
+interpretierte Abfrage nur Vertex-Mengen ausgibt (`PRINT A, B;`): Es zählt das ganze Ergebnis, nicht
+nur das, was ins Knotenlimit passt. Andere Schritte laufen auf dem Kalzit-Server.
+
+**Algorithmen.** PageRank, schwach zusammenhängende Komponenten, Kernzahlen, Dreiecke und
+Erreichbarkeit laufen in TigerGraph, wenn Kalzits eigene, nur lesende Algorithmus-Abfragen auf dem
+Graphen installiert sind (`kalzit_pagerank`, `kalzit_wcc`, `kalzit_kcore`, `kalzit_triangles`,
+`kalzit_reachable`). Sie rechnen nur auf den Knoten deines Ergebnisses und den Kanten zwischen
+ihnen, schreiben nichts, und Kalzit prüft nach jedem Lauf, dass sie dieselben Kanten gesehen haben
+wie dein Ergebnis; sonst, und für jeden anderen Algorithmus, rechnet der Schritt auf dem
+Kalzit-Server, und sein Ort sagt warum. Ohne sie funktioniert alles wie bisher, auf dem Server.
+
+Es gibt zwei Wege, sie zu installieren:
+
+- **Kalzit installiert sie (Installations-Zugang).** Schalte an der Datenquelle **Algorithmus-
+  Abfragen installieren** ein und gib einen zweiten TigerGraph-Benutzer unter **Installations-
+  Benutzer** und **Installations-Passwort** an. Nur Admins der Datenquelle können das setzen, das
+  Passwort wird wie jedes Geheimnis verschlüsselt gespeichert, und der Installations-Zugang dient
+  nur dazu, Kalzits Abfragen zu installieren, zu aktualisieren, zu entfernen und ihre Texte zu
+  lesen; der normale Benutzer bleibt `queryreader` und führt sie aus. Kalzit zeigt das genaue GSQL,
+  bevor es etwas installiert, aktualisiert oder entfernt, und führt nur aus, was du bestätigt hast.
+  Es fasst nur Abfragen namens `kalzit_...` an, die es selbst installiert hat, bricht ab, wenn ein
+  solcher Name jemand anderem gehört, speichert eine Prüfsumme jeder installierten Abfrage und
+  führt keine Abfrage aus, deren Text in der Datenbank geändert wurde. Nach einem Kalzit-Update wird
+  nichts von selbst ersetzt: Abfragen einer älteren Version rechnen auf dem Server, bis du das
+  Update bestätigst. Jede Installation, Aktualisierung und Entfernung steht im Audit-Log, ebenso
+  das Speichern des Installations-Zugangs und das Ein- und Ausschalten des Schalters.
+- **Ein Administrator installiert sie.** Ersetze `MyGraph` in `algorithms.gsql` (im Kalzit-
+  Repository, `server/src/datasources/tigergraph/`), führe die Datei mit `gsql` aus und dann
+  `INSTALL QUERY kalzit_pagerank, kalzit_wcc, kalzit_kcore, kalzit_triangles, kalzit_reachable`.
+  Weil ein `queryreader` Abfragetexte nicht lesen kann, trage die fünf Namen unter **Freigegebene
+  installierte Abfragen** ein; TigerGraph muss melden, dass sie keine Daten ändern.
+
+Der Installations-Zugang muss ein anderer Benutzer sein, mit einer Rolle, die nur lesen und
+Abfragen anlegen, entfernen und installieren darf; Kalzit prüft seine Rechte vor jeder Nutzung und
+lehnt einen ab, der Daten, das Schema, Ladejobs, Benutzer oder Rollen schreiben darf
+(„Zugang darf zu viel“). Mit TigerGraph 4.x, für den Graphen `social`:
+
+```
+CREATE ROLE kalzit_installer
+GRANT READ_SCHEMA, READ_QUERY, CREATE_QUERY, DROP_QUERY, INSTALL_QUERY ON GRAPH social TO kalzit_installer
+CREATE USER
+GRANT ROLE kalzit_installer ON GRAPH social TO kalzit_install
+```
+
+(`CREATE USER` fragt nach dem Namen, `kalzit_install`, und dem Passwort.) Prüfe die Rolle mit
+`SHOW PRIVILEGE ON ROLE kalzit_installer`; die Namen der Rechte unterscheiden sich je nach Version
+(3.x hat ein einziges `WRITE_QUERY` statt der Rechte zum Anlegen, Entfernen und Installieren). Die
+Algorithmus-Abfragen brauchen TigerGraph 4.x.
+
+**Vervollständigung.** Der GSQL-Editor vervollständigt Vertex- und Kantentypen mit ihren Attributen
+und den Richtungen, in denen einem Kantentyp gefolgt werden kann, sowie die Akkumulator-Typen von
+GSQL.
 
 ### Graphalgorithmen (Neo4j GDS, Memgraph MAGE)
 

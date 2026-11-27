@@ -558,6 +558,7 @@ impl DataSourcePlugin for Gremlin {
             property_keys: keys,
             queries: Vec::new(),
             query_params: BTreeMap::new(),
+            gsql: None,
         })
     }
 

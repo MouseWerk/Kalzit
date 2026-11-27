@@ -124,6 +124,73 @@ export type GraphSchema = { labels: Array<string>, edgeTypes: Array<string>,
  */
 propertyKeys: { [key in string]: Array<string> }, };
 
+export type GsqlSchema = { vertexTypes: Array<GsqlVertexType>, edgeTypes: Array<GsqlEdgeType>, accumulators: Array<GsqlAccumulator>, };
+
+export type GsqlAttribute = { name: string, type: string, };
+
+export type GsqlVertexType = { name: string, 
+/**
+ * The primary id and its type.
+ */
+primaryId: GsqlAttribute, attributes: Array<GsqlAttribute>, };
+
+export type GsqlDirection = "undirected" | "out" | "in";
+
+export type GsqlEdgeType = { name: string, directed: boolean, 
+/**
+ * The pairs of vertex types the edge connects, `[from, to]`.
+ */
+pairs: Array<[string, string]>, 
+/**
+ * The reverse edge type of a directed edge, when the schema defines one.
+ */
+reverse?: string, 
+/**
+ * The directions the edge can be followed in: `undirected`, or `out` and, with a reverse
+ * edge type, `in`.
+ */
+directions: Array<GsqlDirection>, attributes: Array<GsqlAttribute>, };
+
+export type GsqlAccumulator = { name: string, params: string, 
+/**
+ * The text to insert, with the type parameters as placeholders (`SumAccum<INT>`).
+ */
+snippet: string, };
+
+export type TigerGraphAlgorithms = { 
+/**
+ * Whether the source has an install access (`installUser`, `installPassword`).
+ */
+installCredential: boolean, 
+/**
+ * The version of Kalzit's query texts.
+ */
+version: number, queries: Array<TigerGraphAlgorithm>, 
+/**
+ * The GSQL an install runs, with the install access; absent without one (or on 3.x).
+ */
+install?: string, 
+/**
+ * The SHA-256 (hex) of `install`, which the install request must carry as its confirmation.
+ */
+installChecksum?: string, 
+/**
+ * The GSQL a removal runs; absent without an install access or without Kalzit's queries.
+ */
+remove?: string, 
+/**
+ * The SHA-256 (hex) of `remove`, which the removal request must carry.
+ */
+removeChecksum?: string, };
+
+export type TigerGraphAlgorithm = { name: string, state: TigerGraphAlgorithmState, 
+/**
+ * Kalzit's text of the query for this graph.
+ */
+gsql: string, };
+
+export type TigerGraphAlgorithmState = "missing" | "current" | "older" | "changed" | "foreign" | "present";
+
 export type TraceSet = { 
 /**
  * By trace, then by start time; parents may be missing when the source did not send them.

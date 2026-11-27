@@ -638,6 +638,7 @@ impl DataSourcePlugin for GraphDb {
             property_keys,
             queries: Vec::new(),
             query_params: BTreeMap::new(),
+            gsql: None,
         })
     }
 

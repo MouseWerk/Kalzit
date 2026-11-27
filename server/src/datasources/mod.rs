@@ -137,8 +137,8 @@ pub trait DataSourcePlugin: Send + Sync {
     }
     /// The graph algorithm library of this kind's sources (`analysis::algo::library`): algorithm
     /// steps run there on the result's subgraph where it can, else on the server. `None`: always
-    /// on the server. TigerGraph has none yet; an administrator-installed, read-only library query
-    /// limited to a vertex set would be offered here.
+    /// on the server. TigerGraph's are Kalzit's own installed, read-only variants of its library
+    /// queries (`tigergraph/algorithms.rs`).
     fn algorithm_library(&self) -> Option<crate::analysis::algo::library::Library> {
         None
     }
@@ -325,6 +325,10 @@ pub enum SourceSchema {
         /// the query info), by query name.
         #[serde(rename = "queryParams", skip_serializing_if = "BTreeMap::is_empty")]
         query_params: BTreeMap<String, Vec<QueryParam>>,
+        /// TigerGraph: what a GSQL editor completes (vertex and edge types with attributes and
+        /// directions, accumulator types).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        gsql: Option<Box<crate::shapes::GsqlSchema>>,
     },
     /// Keys found with SCAN and their types (Redis); `complete` when the scan reached the end.
     Keys {
@@ -540,6 +544,12 @@ impl OwnDatabase {
     pub fn new(db: AnyPool, database_url: &str) -> Self {
         let is_postgres = crate::pg_location::is_postgres_url(database_url);
         Self { db, is_postgres, identity: OnceCell::new() }
+    }
+
+    /// Kalzit's own database, for what a kind keeps about its sources there (TigerGraph: the
+    /// checksums of the algorithm queries Kalzit installed).
+    pub(crate) fn pool(&self) -> &AnyPool {
+        &self.db
     }
 
     /// `(system_identifier, current_database())` when Kalzit runs on PostgreSQL.
@@ -2324,6 +2334,11 @@ async fn graph_steps_after(
                     break;
                 }
                 Ok(Err(why)) => reason = Some(why),
+                // A variant found missing or not shown to only read is not asked for again for a
+                // while either; the step keeps saying why.
+                Ok(Ok(job)) if remembered_missing(conn, &job).is_some() => {
+                    reason = remembered_missing(conn, &job);
+                }
                 Ok(Ok(job))
                     if conn.pushdown.refused(&job.memo_key())
                         || job.slow_keys().any(|key| conn.pushdown.refused(&key)) =>
@@ -2333,6 +2348,7 @@ async fn graph_steps_after(
                 Ok(Ok(job)) => {
                     let left = deadline.saturating_duration_since(Instant::now());
                     let time = left.min(Duration::from_secs(algorithms.timeout_secs)).max(Duration::from_secs(1));
+                    let mut specific = None;
                     let why = match tokio::time::timeout(time, plugin.run_algorithm(conn, &job, time)).await {
                         Ok(Ok(answers)) => match merge_blocking(&step.kind, &job, answers, &mut result).await? {
                             Ok((out, summary)) => {
@@ -2363,10 +2379,17 @@ async fn graph_steps_after(
                         // the library again.
                         Ok(Err(e)) => {
                             let detail = e.detail();
-                            if detail.reason == "algorithm.unsupported" {
-                                conn.pushdown.remember(&job.memo_key());
-                            } else if detail.reason == "algorithm.timeout" {
-                                conn.pushdown.remember(&job.slow_key());
+                            match detail.reason {
+                                "algorithm.unsupported" => conn.pushdown.remember(&job.memo_key()),
+                                "algorithm.timeout" => conn.pushdown.remember(&job.slow_key()),
+                                library::reason::NOT_INSTALLED
+                                | library::reason::NOT_VERIFIED
+                                | library::reason::CHANGED_IN_DATABASE => {
+                                    conn.pushdown.remember(&missing_key(&job, detail.reason));
+                                    specific = Some(detail.reason);
+                                }
+                                library::reason::SUBGRAPH_DIFFERS => specific = Some(detail.reason),
+                                _ => {}
                             }
                             detail.message
                         }
@@ -2377,7 +2400,7 @@ async fn graph_steps_after(
                     };
                     tracing::debug!("graph algorithm not run in the source: {}", scrub(&why, std::iter::empty()));
 
-                    reason = Some(library::reason::LIBRARY_FAILED);
+                    reason = Some(specific.unwrap_or(library::reason::LIBRARY_FAILED));
                 }
             }
         }
@@ -2421,6 +2444,18 @@ async fn graph_steps_after(
         }
     }
     Ok((result, places))
+}
+
+/// What the source remembers when a library lacks the job's query (`algorithm.not_installed`) or
+/// cannot show it only reads (`algorithm.not_verified`), with that reason.
+fn missing_key(job: &crate::analysis::algo::library::Job, reason: &str) -> Value {
+    serde_json::json!({ "missing": job.memo_key(), "reason": reason })
+}
+
+/// The reason a library was found to lack the job's query within the memo's time, if it was.
+fn remembered_missing(conn: &Connection, job: &crate::analysis::algo::library::Job) -> Option<&'static str> {
+    use crate::analysis::algo::library::reason::{CHANGED_IN_DATABASE, NOT_INSTALLED, NOT_VERIFIED};
+    [NOT_INSTALLED, NOT_VERIFIED, CHANGED_IN_DATABASE].into_iter().find(|r| conn.pushdown.refused(&missing_key(job, r)))
 }
 
 /// A library's answers merged into the graph `result` (`library::merge`), in a blocking thread.
@@ -2922,6 +2957,96 @@ pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> Ap
         Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
         Ok(Ok((_, Ok(schema)))) => Ok(schema),
     }
+}
+
+/// What the TigerGraph algorithm route does (`tigergraph::algorithms_status` and friends).
+pub enum TigerGraphAlgorithmsAction {
+    Status,
+    /// With the checksum of the GSQL the person confirmed.
+    Install(String),
+    Remove(String),
+}
+
+/// How long installing TigerGraph queries may take (TigerGraph compiles them).
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+/// Kalzit's algorithm queries on a TigerGraph source: their state, or installing or removing them
+/// with the source's install access. The caller has checked the rights.
+pub async fn tigergraph_algorithms(
+    state: &AppState,
+    user_id: &str,
+    ds: &Datasource,
+    action: TigerGraphAlgorithmsAction,
+) -> ApiResult<(crate::shapes::TigerGraphAlgorithms, bool)> {
+    if ds.kind != "tigergraph" {
+        return Err(ApiError::not_found());
+    }
+    let registry = &state.datasources;
+    let recorded: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM tigergraph_installed_queries WHERE datasource_id = $1 ORDER BY name")
+            .bind(&ds.id)
+            .fetch_all(&state.db)
+            .await?;
+    let run = async {
+        let _slots = registry.slots(state, user_id).await?;
+        let conn = registry.connection(state, ds).await?;
+        let out = match action {
+            TigerGraphAlgorithmsAction::Status => {
+                tigergraph::algorithms_status(&conn, &recorded).await.map(|s| (s, Vec::new(), Vec::new()))
+            }
+            TigerGraphAlgorithmsAction::Install(sum) => {
+                tigergraph::install_algorithms(&conn, &recorded, &sum).await.map(|(s, i)| (s, i, Vec::new()))
+            }
+            TigerGraphAlgorithmsAction::Remove(sum) => {
+                tigergraph::remove_algorithms(&conn, &recorded, &sum).await.map(|(s, r)| (s, Vec::new(), r))
+            }
+        };
+        Ok::<_, SourceError>((conn, out))
+    };
+    let (status, installed, removed) = match tokio::time::timeout(INSTALL_TIMEOUT, run).await {
+        Err(_) => return Err(api_error(SourceError::Timeout(INSTALL_TIMEOUT.as_secs()), None)),
+        Ok(Err(e)) => return Err(api_error(e, None)),
+        Ok(Ok((conn, Err(e)))) => return Err(api_error(e, Some(&conn))),
+        Ok(Ok((_, Ok(out)))) => out,
+    };
+    // What Kalzit installed itself, so it replaces and removes only those.
+    if !installed.is_empty() || !removed.is_empty() {
+        let mut tx = crate::db::begin(&state.db).await?;
+        for (name, sum) in &installed {
+            sqlx::query("DELETE FROM tigergraph_installed_queries WHERE datasource_id = $1 AND name = $2")
+                .bind(&ds.id)
+                .bind(name)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "INSERT INTO tigergraph_installed_queries (datasource_id, name, version, checksum, installed_at, \
+                 installed_by) VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(&ds.id)
+            .bind(name)
+            .bind(i64::from(tigergraph::ALGORITHMS_VERSION))
+            .bind(sum)
+            .bind(state.clock.now_ms())
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        for name in removed.iter().filter(|n| recorded.contains(n)) {
+            sqlx::query("DELETE FROM tigergraph_installed_queries WHERE datasource_id = $1 AND name = $2")
+                .bind(&ds.id)
+                .bind(name)
+                .execute(&mut *tx)
+                .await?;
+        }
+        crate::db::commit(tx).await?;
+    }
+    // Steps ask the graph again at once, not after the memo of a missing query ends.
+    if !installed.is_empty() || !removed.is_empty() {
+        registry.forget(&ds.id);
+    }
+    // An update replaced queries Kalzit had installed before.
+    let updated = installed.iter().any(|(n, _)| recorded.contains(n));
+    Ok((status, updated))
 }
 
 // ---- helpers shared by the built-in kinds ----
