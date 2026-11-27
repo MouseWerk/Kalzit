@@ -398,6 +398,10 @@ pub fn graph_part(graph: &GraphSet, ids: &[String]) -> GraphSet {
             .cloned()
             .collect()
     });
+    // Suggested edges of a link prediction step follow the same rule as the result's edges.
+    let suggested = graph.suggested.as_ref().map(|suggested| {
+        suggested.iter().filter(|e| keep.contains(e.from.as_str()) && keep.contains(e.to.as_str())).cloned().collect()
+    });
     GraphSet {
         nodes,
         edges,
@@ -405,6 +409,7 @@ pub fn graph_part(graph: &GraphSet, ids: &[String]) -> GraphSet {
         schema: graph.schema.clone(),
         truncated: graph.truncated.clone(),
         notices: graph.notices.clone(),
+        suggested,
     }
 }
 
@@ -1522,7 +1527,7 @@ mod tests {
                     properties: props(vec![]),
                 },
             ],
-            paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+            paths: Some(vec![GraphPath::new(vec!["1".into(), "2".into()], vec!["e1".into()])]),
             ..GraphSet::default()
         }
     }
