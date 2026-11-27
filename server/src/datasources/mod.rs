@@ -1230,11 +1230,15 @@ fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBu
     .flatten()
     .cloned()
     .collect();
-    let dirs = std::env::var_os("CREDENTIALS_DIRECTORY")
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("CREDENTIALS_DIRECTORY")
         .filter(|d| !d.is_empty())
         .map(std::path::PathBuf::from)
         .into_iter()
         .collect();
+    // A plugin folder outside the data directory is Kalzit's own as well.
+    if config.plugins_dir_moved() {
+        dirs.push(config.plugins_dir());
+    }
     (files, dirs)
 }
 

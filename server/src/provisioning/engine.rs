@@ -1884,6 +1884,8 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
     let org_id = ctx.org_id.as_str();
     let now = state.clock.now_ms();
     let keep = crate::settings::get(state, "dashboards.version_retention").await?.as_i64().unwrap_or(0);
+    // A pruned data source keeps the trash retention in force now (`purge_at`).
+    let trash_days = crate::routes::datasources::trash_days(state).await?;
     let mut tx = crate::db::begin(&state.db).await?;
     authz::lock_org(&mut tx, org_id).await?;
 
@@ -1991,12 +1993,13 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
             }
             ResourceKind::Datasource => {
                 sqlx::query(
-                    "UPDATE datasources SET deleted_at = $1, updated_at = $1, is_default = 0 WHERE id = $2 AND org_id = $3 \
-                     AND deleted_at IS NULL",
+                    "UPDATE datasources SET deleted_at = $1, updated_at = $1, trash_days = $4, is_default = 0 \
+                     WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL",
                 )
                 .bind(now)
                 .bind(&s.id)
                 .bind(org_id)
+                .bind(trash_days)
                 .execute(&mut *tx)
                 .await?;
                 record(&mut tx, &event(ctx, info, "datasource.deleted", ("datasource", &s.id), audit_of(s), now))

@@ -482,7 +482,11 @@ gefunden“. Siehe [Verwaltung](administration.md#rollen-und-rechte).
 
 **Löschen…** verschiebt eine Datenquelle in den **Papierkorb** (**Datenquellen** > **Papierkorb**).
 Dashboards, die sie nutzen, zeigen einen Fehler, bis du sie wiederherstellst (**Wiederherstellen**). Nur
-Mitglieder, die Datenquellen ändern dürfen, sehen den Papierkorb.
+Mitglieder, die Datenquellen ändern dürfen, sehen den Papierkorb. Eine Quelle bleibt mit ihren
+gespeicherten Passwörtern 30 Tage im Papierkorb, dann wird sie endgültig gelöscht; ein Server-Admin
+stellt die Zahl der Tage unter **Einstellungen > Speicher und Aufbewahrung** ein („Papierkorb der
+Datenquellen (Tage)“, 1 bis 3650). Jede Zeile des Papierkorbs zeigt den Tag, an dem ihre Quelle
+geht.
 
 **Endgültig löschen…** im Papierkorb entfernt eine Datenquelle samt ihren gespeicherten Passwörtern
 und Schlüsseln endgültig, nachdem du bestätigt hast. Das geht nicht, solange ein Dashboard (auch

@@ -17,10 +17,14 @@ data sources and other Grafana content are not imported.
 - **Panels** with a Kalzit counterpart: time series (also the old graph panel), stat (also the
   old singlestat), gauge, bar gauge, table (also the old table), pie chart, bar chart, heatmap,
   histogram, XY chart (its first series mapping: X, Y, size and colour fields, points or lines),
-  trend (with its X field), state timeline, status history, text and node graph (as a network
-  panel). Other
-  panel types and library panels are skipped, and skipped panels are left out, not kept as
-  empty places. A panel none of whose queries could be converted is skipped too.
+  trend (with its X field), state timeline, status history, text, node graph (as a network
+  panel) and geomap (as a map). Other panel types and library panels are skipped, and skipped
+  panels are left out, not kept as empty places. A panel none of whose queries could be
+  converted is skipped too.
+- **Geomap**: marker layers become point layers with their place (coordinates, geohash or a
+  country code lookup), size field, sizes and query; the base map becomes the bundled outlines.
+  Heatmap, route, GeoJSON and other layers, lookup lists other than countries and a fixed view
+  are named in the report.
 - **Queries** for Prometheus (PromQL), Loki (LogQL), PostgreSQL, MySQL, SQL Server, SQLite and
   ClickHouse (the SQL text; `$__timeFilter`, `$__timeFrom`, `$__timeTo` and `$__interval` work in
   Kalzit, other macros are reported), Elasticsearch (the Lucene query; aggregations are reported)

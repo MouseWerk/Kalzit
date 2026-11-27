@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { leavePage } from "../../lib/leavePage";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { openAdmin, sent } from "../admin/test/openAdmin";
@@ -168,6 +169,55 @@ describe("account: sign-in and security", () => {
     expect(within(dialog).getByText(/Sign in again first/)).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Sign in again" })).toBeTruthy();
     expect(within(dialog).queryByLabelText("Six-digit code")).toBeNull();
+  });
+
+  it("sends an account without a password to sign in again at its provider before its first factor", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.reauthProvider = { slug: "mueller-sso", name: "Müller SSO" };
+    // A fresh sign-in alone is not enough for a session from an OpenID Connect provider.
+    server.security.freshSignInUntil = Date.now() + 300_000;
+    const go = vi.spyOn(leavePage, "go").mockImplementation(() => {});
+    const { user } = renderApp("/settings/account-security");
+    await user.click(await screen.findByRole("button", { name: "Set up" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
+    expect(within(dialog).getByText(/Sign in there again first: Müller SSO asks/)).toBeTruthy();
+    expect(within(dialog).queryByLabelText("Six-digit code")).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Sign in at Müller SSO" }));
+    await waitFor(() =>
+      expect(go).toHaveBeenCalledWith("https://idp.example/authorize?max_age=0&prompt=login"),
+    );
+    expect(server.security.reauthStarts).toEqual([{ returnTo: "/settings/account-security" }]);
+  });
+
+  it("says the outcome of the sign-in again at the provider, and sets up the app after it", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.reauthProvider = { slug: "mueller-sso", name: "Müller SSO" };
+    server.security.providerConfirmedUntil = Date.now() + 300_000;
+    const { user } = renderApp("/settings/account-security?reauth=done");
+    expect(await screen.findByText(/Confirmed at your provider/)).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toBe(""));
+    await user.click(screen.getByRole("button", { name: "Set up" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
+    await user.type(await within(dialog).findByLabelText("Six-digit code"), server.security.code);
+    expect(await screen.findByRole("dialog", { name: "Your recovery codes" })).toBeTruthy();
+  });
+
+  it("says when the provider did not ask for the sign-in again", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.reauthProvider = { slug: "mueller-sso", name: "Müller SSO" };
+    renderApp("/settings/account-security?reauth=stale");
+    expect(await screen.findByText(/did not ask for your sign-in again/)).toBeTruthy();
+  });
+
+  it("says when the sign-in at the provider ran out", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.reauthProvider = { slug: "mueller-sso", name: "Müller SSO" };
+    renderApp("/settings/account-security?reauth=expired");
+    expect(await screen.findByText(/took too long/)).toBeTruthy();
   });
 
   it("sets up the app right after a sign-in when the account has no password", async () => {
