@@ -36,7 +36,7 @@ function Canvas({
   chosen: string[];
   /** The organization; null for a public page without one. */
   orgId?: string | null;
-  onAdopt?: (step: unknown) => void;
+  onAdopt?: (steps: readonly unknown[]) => void;
 }) {
   const model = buildGraphModel([GRAPH], { nodeLimit: 100, caption: "name" });
   const view = buildView(model, {
@@ -58,8 +58,14 @@ function Canvas({
   if (quick === null) return <p>none</p>;
   return (
     <>
-      <QuickBar quick={quick} chosen={chosen} />
-      <QuickSheet quick={quick} model={model} onSelect={() => undefined} onAdopt={onAdopt} />
+      <QuickBar quick={quick} chosen={chosen} caption={(id) => id} />
+      <QuickSheet
+        quick={quick}
+        model={model}
+        onSelect={() => undefined}
+        onOnly={() => undefined}
+        onAdopt={onAdopt}
+      />
       <output data-testid="held">
         {quick.emphasis === null ? "" : [...quick.emphasis.nodes].join(",")}
       </output>
@@ -84,7 +90,7 @@ describe("quick actions on the canvas", () => {
     });
     const adopted: unknown[] = [];
     const user = userEvent.setup();
-    render(<Canvas chosen={["a", "b"]} onAdopt={(s) => adopted.push(s)} />);
+    render(<Canvas chosen={["a", "b"]} onAdopt={(steps) => adopted.push(...steps)} />);
     // Weighted needs a number on the edges: shown, with the reason, but not run.
     await user.click(screen.getByRole("button", { name: "Find path" }));
     const weighted = screen.getByRole("button", { name: /Weighted path/ });

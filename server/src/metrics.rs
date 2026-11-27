@@ -95,7 +95,13 @@ pub struct Metrics {
     alert_skipped: AtomicU64,
     /// Attempts to deliver an alert notification: failed, and arrived.
     alert_deliveries: [AtomicU64; 2],
+    /// Quick actions of the graph canvas (`routes::graph_actions`), by action and whether they
+    /// ran or were turned away as busy; nothing about the graph or the user.
+    graph_actions: [[AtomicU64; 2]; 3],
 }
+
+/// The quick actions `Metrics::graph_action` counts, in the order of its counters.
+const GRAPH_ACTIONS: [&str; 3] = ["path", "connect", "top"];
 
 impl Default for Metrics {
     fn default() -> Self {
@@ -108,6 +114,7 @@ impl Default for Metrics {
             alert_evaluations: Default::default(),
             alert_skipped: AtomicU64::new(0),
             alert_deliveries: Default::default(),
+            graph_actions: Default::default(),
         }
     }
 }
@@ -138,6 +145,13 @@ impl Metrics {
     /// One attempt to deliver an alert notification.
     pub fn alert_delivery(&self, ok: bool) {
         self.alert_deliveries[usize::from(ok)].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// One quick action of the graph canvas (`path`, `connect` or `top`), run or busy.
+    pub fn graph_action(&self, action: &str, ran: bool) {
+        if let Some(i) = GRAPH_ACTIONS.iter().position(|a| *a == action) {
+            self.graph_actions[i][usize::from(ran)].fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn write(&self, out: &mut String) {
@@ -178,6 +192,19 @@ impl Metrics {
         for (i, result) in ["failed", "ok"].iter().enumerate() {
             let n = self.alert_deliveries[i].load(Ordering::Relaxed);
             let _ = writeln!(out, "kalzit_alert_deliveries_total{{result=\"{result}\"}} {n}");
+        }
+        help(
+            out,
+            "kalzit_graph_quick_actions_total",
+            "counter",
+            "Quick actions of the graph canvas, by action and outcome.",
+        );
+        for (i, action) in GRAPH_ACTIONS.iter().enumerate() {
+            for (j, outcome) in ["busy", "ran"].iter().enumerate() {
+                let n = self.graph_actions[i][j].load(Ordering::Relaxed);
+                let _ =
+                    writeln!(out, "kalzit_graph_quick_actions_total{{action=\"{action}\",outcome=\"{outcome}\"}} {n}");
+            }
         }
     }
 }
@@ -365,6 +392,12 @@ mod tests {
             out.contains("kalzit_query_duration_seconds_bucket{kind=\"neo4j\",outcome=\"timeout\",le=\"300\"} 0\n")
         );
         assert!(out.contains("kalzit_http_requests_total{code=\"2xx\"} 1\n"));
+        m.graph_action("connect", true);
+        m.graph_action("unknown", true);
+        let mut again = String::new();
+        m.write(&mut again);
+        assert!(again.contains("kalzit_graph_quick_actions_total{action=\"connect\",outcome=\"ran\"} 1\n"));
+        assert!(again.contains("kalzit_graph_quick_actions_total{action=\"top\",outcome=\"busy\"} 0\n"));
         assert!(out.contains("kalzit_http_requests_total{code=\"4xx\"} 1\n"));
         assert!(out.contains("kalzit_http_request_duration_seconds_count 2\n"));
     }

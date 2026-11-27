@@ -116,10 +116,21 @@ struct SizeBy {
     max: u32,
 }
 
+/// A color from a node's number property: one tone, light to saturated (Graph082, decision 1).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColorBy {
+    property: String,
+    #[allow(dead_code)]
+    color: StyleColor,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct NodeTargets {
+    #[serde(rename = "colorBy")]
+    color_by: Option<ColorBy>,
     color: Option<StyleColor>,
     size: Option<u32>,
     #[serde(rename = "sizeBy")]
@@ -260,6 +271,12 @@ pub fn check(at: &str, style: &GraphStyle) -> Result<(), String> {
         let at = format!("{at}.nodes[{i}]");
         check_rule(&at, rule, &mut ids)?;
         check_range(&format!("{at}.set.size"), rule.set.size, MIN_RULE_SIZE, MAX_RULE_SIZE)?;
+        if let Some(by) = &rule.set.color_by {
+            if by.property.is_empty() {
+                return Err(format!("{at}.set.colorBy.property must not be empty"));
+            }
+            check_text(&format!("{at}.set.colorBy.property"), &by.property)?;
+        }
         if let Some(by) = &rule.set.size_by {
             if by.property.is_empty() {
                 return Err(format!("{at}.set.sizeBy.property must not be empty"));
@@ -336,6 +353,7 @@ mod tests {
                 rule("r4", condition("date", "lastDays"), json!({ "border": "dashed", "label": "{name} (gekündigt)", "color": "critical" })),
                 rule("r5", condition("boolean", "false"), json!({ "color": "neutral", "size": 2, "border": "none" })),
                 rule("r7", json!({ "kind": "always" }), json!({ "sizeBy": { "property": "pagerank", "min": 5, "max": 17 } })),
+                rule("r8", json!({ "kind": "always" }), json!({ "colorBy": { "property": "pagerank", "color": "chart-3" } })),
                 rule("r6", condition("text", "startsWith"), json!({ "shape": "triangle", "color": "neutral-strong" })),
             ],
             "edges": [
@@ -421,6 +439,11 @@ mod tests {
                 edges(json!([rule("e1", always(), json!({ "sizeBy": { "property": "p", "min": 5, "max": 9 } }))])),
                 "unknown field",
             ),
+            (
+                nodes(json!([rule("r1", always(), json!({ "colorBy": { "property": "", "color": "chart-1" } }))])),
+                "options.style.nodes[0].set.colorBy.property",
+            ),
+            (nodes(json!([rule("r1", always(), json!({ "colorBy": { "property": "p", "color": "#ff0000" } }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "shape": "star" }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "../x" }))])), "options.style.nodes[0].set.icon"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "User" }))])), "options.style.nodes[0].set.icon"),

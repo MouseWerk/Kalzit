@@ -432,9 +432,14 @@ export function evaluateRules(
     }
     report.matched = hits.length;
     if (!rule.on) return;
-    // A size by value rests like a rule whose property the result lacks (a step turned off).
+    // A size or color by value rests like a rule whose property the result lacks (a step
+    // turned off).
     const sizes = sizeByValue(rule.set.sizeBy, hits, items);
-    if (sizes === null) {
+    const shades =
+      rule.set.colorBy === undefined
+        ? new Map()
+        : valueShares(rule.set.colorBy.property, hits, items);
+    if (sizes === null || shades === null) {
       report.state = "dormant";
       return;
     }
@@ -461,6 +466,14 @@ export function evaluateRules(
         delete set.sizeBy;
         const size = sizes.get(i);
         if (size !== undefined) set.size = size;
+      }
+      if (set.colorBy !== undefined) {
+        const share = shades.get(i);
+        if (share !== undefined) {
+          set.color = set.colorBy.color;
+          set.shade = Math.round((0.25 + 0.75 * share) * 100) / 100;
+        }
+        delete set.colorBy;
       }
       apply(i, r, set);
     }
@@ -498,19 +511,35 @@ export function sizeByValue(
 ): Map<number, number> | null {
   const out = new Map<number, number>();
   if (sizeBy === undefined) return out;
+  const shares = valueShares(sizeBy.property, hits, items);
+  if (shares === null) return null;
+  for (const [i, share] of shares) {
+    const root = Math.sqrt(share);
+    out.set(i, Math.round((sizeBy.min + (sizeBy.max - sizeBy.min) * root) * 10) / 10);
+  }
+  return out;
+}
+
+/**
+ * Where each item's number property lies between the smallest and the largest among `hits`, 0 to
+ * 1 (all the same: 0.5); items without a number are left out; null when none has one.
+ */
+export function valueShares(
+  property: string,
+  hits: readonly number[],
+  items: readonly StyleItem[],
+): Map<number, number> | null {
   const values = new Map<number, number>();
   for (const i of hits) {
-    const v = readNumber((items[i] as StyleItem).properties[sizeBy.property]);
+    const v = readNumber((items[i] as StyleItem).properties[property]);
     if (v !== null) values.set(i, v);
   }
   if (values.size === 0) return null;
   const all = [...values.values()];
   const lo = Math.min(...all);
   const hi = Math.max(...all);
-  for (const [i, v] of values) {
-    const share = hi === lo ? 0.5 : Math.sqrt((v - lo) / (hi - lo));
-    out.set(i, Math.round((sizeBy.min + (sizeBy.max - sizeBy.min) * share) * 10) / 10);
-  }
+  const out = new Map<number, number>();
+  for (const [i, v] of values) out.set(i, hi === lo ? 0.5 : (v - lo) / (hi - lo));
   return out;
 }
 

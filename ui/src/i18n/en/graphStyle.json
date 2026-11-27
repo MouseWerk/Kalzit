@@ -168,5 +168,9 @@
   "graphStyle.sizeBy.property": "Number property",
   "graphStyle.sizeBy.min": "Smallest node",
   "graphStyle.sizeBy.max": "Largest node",
-  "graphStyle.sizeBy.hint": "Value range from the result. The area grows with the value; nodes without a number keep their size."
+  "graphStyle.sizeBy.hint": "Value range from the result. The area grows with the value; nodes without a number keep their size.",
+  "graphStyle.target.colorBy": "Color by value",
+  "graphStyle.colorBy.text": "Color by {property}, {color} from light to saturated",
+  "graphStyle.colorBy.tone": "Tone",
+  "graphStyle.colorBy.hint": "Value range from the result: the smallest value light, the largest saturated. Nodes without a number keep their color."
 }

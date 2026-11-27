@@ -77,6 +77,12 @@ export function targetText(
     case "label":
     case "badge":
       return t("graphStyle.quoted", { name, text: String(value) });
+    case "colorBy": {
+      const by = value as { property: string; color: StyleColor };
+      return t("graphStyle.colorBy.text", { property: by.property, color: colorText(t, by.color) });
+    }
+    case "shade":
+      return "";
     case "sizeBy": {
       const by = value as { property: string; min: number; max: number };
       return t("graphStyle.sizeBy.text", {

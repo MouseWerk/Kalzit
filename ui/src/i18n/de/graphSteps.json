@@ -182,5 +182,5 @@
   "graphSteps.algo.fields.alongPaths": "Bleibt ein Graph; jeder Pfad bekommt den Wert über seine Knoten oder Kanten.",
   "graphSteps.algo.added.size": "Regel angelegt: Größe nach {property}. Die Regel steht unter Stil und lässt sich dort ändern.",
   "graphSteps.algo.added.groups": "Regel angelegt: Farbe je Wert von {property}. Die Regel steht unter Stil und lässt sich dort ändern.",
-  "graphSteps.algo.added.color": "Farbe nach {property} in den Optionen des Panels eingestellt."
+  "graphSteps.algo.added.color": "Regel angelegt: Farbe nach {property}, von hell bis satt. Die Regel steht unter Stil und lässt sich dort ändern."
 }

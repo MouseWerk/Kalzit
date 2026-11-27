@@ -182,5 +182,5 @@
   "graphSteps.algo.fields.alongPaths": "Stays a graph; every path gets the value over its nodes or edges.",
   "graphSteps.algo.added.size": "Rule added: size by {property}. It is listed under Style and can be changed there.",
   "graphSteps.algo.added.groups": "Rule added: color per value of {property}. It is listed under Style and can be changed there.",
-  "graphSteps.algo.added.color": "Color by {property} set in the panel’s options."
+  "graphSteps.algo.added.color": "Rule added: color by {property}, from light to saturated. It is listed under Style and can be changed there."
 }

@@ -620,14 +620,11 @@ export function PanelEditor({
     setSteps((current) => [...current, { id: crypto.randomUUID(), ...step }]);
     setTab("steps");
   }, []);
-  // A graph step's result shown on the canvas (board Graph082, frames 5 and 6): a size rule, a
-  // color per community, or the basis colored by the value.
+  // A graph step's result shown on the canvas (board Graph082, frames 5 and 6): a rule for the
+  // size or the color by value, or a color per community.
   const useResult = useCallback((use: ResultUse, property: string) => {
     setLook((p) => {
       const options = p.options as Record<string, unknown>;
-      if (use === "color") {
-        return { ...p, options: { ...options, colorBy: "property", colorProperty: property } };
-      }
       const next = withResultRule(parseGraphStyle(options.style), use, property);
       return { ...p, options: { ...options, style: next.style } };
     });

@@ -12,17 +12,22 @@ import type { GraphView, Visibility } from "../view";
 
 /**
  * The quick actions of the canvas (board Graph082, frames 8 to 10): "Pfad finden" between two
- * chosen nodes (one, all, weighted), "Wie hängen diese zusammen?" for three or more, and
+ * chosen nodes (one, all, weighted, k shortest), "Wie hängen diese zusammen?" for three to
+ * twenty, and
  * "Wichtigste Knoten". They compute on the Kalzit server on what the canvas has loaded
  * (`POST /orgs/{orgId}/graph/actions`) and ask no data source; they belong to the person and the
  * view and are not saved, unless taken over as a step.
  */
 
-export type PathKind = "shortest" | "allShortest" | "weighted";
+export type PathKind = "shortest" | "allShortest" | "weighted" | "kShortest";
 export type TopMeasure = "pageRank" | "degree" | "betweenness";
 
-/** At most this many chosen nodes for "Wie hängen diese zusammen?" (the server's 45 pairs). */
-export const MAX_CONNECT_NODES = 10;
+/** At most this many chosen nodes for "Wie hängen diese zusammen?" (board frame 8; the server's 190 pairs). */
+export const MAX_CONNECT_NODES = 20;
+/** Paths "k kürzeste Pfade" asks for. */
+export const K_PATHS = 3;
+/** Rows a ranking lists before "and N more" (many ties). */
+export const MAX_RANK_ROWS = 10;
 /** "Wichtigste Knoten" holds up the first this many ranks. */
 export const TOP_RANKS = 5;
 
@@ -40,17 +45,24 @@ export interface ActionAnswer {
   notices?: Notice[];
 }
 
-/** The graph the canvas shows, as the steps read it: its drawn nodes and the edges between them. */
+/**
+ * The graph the canvas shows, as the steps read it: its drawn nodes and the drawn edges between
+ * them. Hidden nodes, edges and edge types are not sent.
+ */
 export function loadedGraph(model: GraphModel, view: GraphView, visibility: Visibility): GraphSet {
   const shown = (i: number) => {
     const at = view.nodeOf[i] ?? -1;
     return at >= 0 && visibility.nodes[at] === 1;
   };
+  const edgeShown = (i: number) => {
+    const at = view.edgeOf[i] ?? -1;
+    return at >= 0 && visibility.edges[at] === 1;
+  };
   const nodes = model.nodes
     .filter((_, i) => shown(i))
     .map((n) => ({ id: n.id, labels: n.labels, properties: n.properties }));
   const edges = model.edges
-    .filter((e) => shown(e.source) && shown(e.target))
+    .filter((e, i) => shown(e.source) && shown(e.target) && edgeShown(i))
     .map((e) => ({
       id: e.id,
       type: e.type,
@@ -87,7 +99,8 @@ export function pathStep(
     from,
     to,
     direction: directed ? "out" : "both",
-    ...(kind === "weighted" && weight !== undefined ? { weight } : {}),
+    ...((kind === "weighted" || kind === "kShortest") && weight !== undefined ? { weight } : {}),
+    ...(kind === "kShortest" ? { k: K_PATHS } : {}),
   };
 }
 
@@ -110,11 +123,63 @@ export function connectSteps(ids: readonly string[]): ActionStep[] {
   return steps;
 }
 
-/** The step behind "Wichtigste Knoten" by the chosen measure; the value is named `score`. */
-export function topStep(measure: TopMeasure): ActionStep {
+/**
+ * The step behind "Wichtigste Knoten" by the chosen measure. The quick action names its value
+ * `score`; taken over as a step it keeps the measure's own name (`pagerank`, `degree`,
+ * `betweenness`), the property rules and tables read.
+ */
+export function topStep(measure: TopMeasure, named = true): ActionStep {
+  const name = named ? { name: "score" } : {};
   return measure === "degree"
-    ? { id: "top", type: "degree", frame: "A", name: "score" }
-    : { id: "top", type: "centrality", frame: "A", measure, name: "score" };
+    ? { id: "top", type: "degree", frame: "A", ...name }
+    : { id: "top", type: "centrality", frame: "A", measure, ...name };
+}
+
+/** The property a taken-over "Wichtigste Knoten" step adds. */
+export function topProperty(measure: TopMeasure): string {
+  return measure === "pageRank" ? "pagerank" : measure;
+}
+
+/** A quick action's step as a step of the panel: without its id, on the panel's query. */
+export function adopted(step: ActionStep, frame: string): Record<string, unknown> {
+  const { id: _, ...rest } = step;
+  return { ...rest, frame };
+}
+
+/** One edge of a path, as its details list it. */
+export interface PathEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: string;
+  /** The edge's weight property, when the path is weighted; null where it has none. */
+  weight: number | null;
+}
+
+/** The edges of a path in order, and the sum of their weights (null without a weight). */
+export function pathDetails(
+  model: GraphModel,
+  path: GraphPath,
+  weight: string | undefined,
+): { edges: PathEdge[]; sum: number | null } {
+  const byId = new Map(model.edges.map((e) => [e.id, e]));
+  const caption = (i: number) => model.nodes[i]?.caption ?? "";
+  const edges = path.edges.flatMap((id): PathEdge[] => {
+    const e = byId.get(id);
+    if (e === undefined) return [];
+    const value = weight === undefined ? undefined : e.properties[weight];
+    return [
+      {
+        id,
+        from: caption(e.source),
+        to: caption(e.target),
+        type: e.type,
+        weight: typeof value === "number" ? value : null,
+      },
+    ];
+  });
+  const sum = weight === undefined ? null : edges.reduce((total, e) => total + (e.weight ?? 1), 0);
+  return { edges, sum };
 }
 
 /** One node of a ranking: ties share a rank, so the list may run longer than `TOP_RANKS`. */

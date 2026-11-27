@@ -168,5 +168,9 @@
   "graphStyle.sizeBy.property": "Zahl-Property",
   "graphStyle.sizeBy.min": "Kleinster Knoten",
   "graphStyle.sizeBy.max": "Größter Knoten",
-  "graphStyle.sizeBy.hint": "Wertebereich aus dem Ergebnis. Die Fläche wächst mit dem Wert; Knoten ohne Zahl behalten ihre Größe."
+  "graphStyle.sizeBy.hint": "Wertebereich aus dem Ergebnis. Die Fläche wächst mit dem Wert; Knoten ohne Zahl behalten ihre Größe.",
+  "graphStyle.target.colorBy": "Farbe nach Wert",
+  "graphStyle.colorBy.text": "Farbe nach {property}, {color} von hell bis satt",
+  "graphStyle.colorBy.tone": "Farbton",
+  "graphStyle.colorBy.hint": "Wertebereich aus dem Ergebnis: der kleinste Wert hell, der größte satt. Knoten ohne Zahl behalten ihre Farbe."
 }

@@ -116,8 +116,24 @@ export interface SizeByValue {
   max: number;
 }
 
+/**
+ * A color by value (board Graph082, frame 5, decision 1): one tone of the data palette, from
+ * light for the smallest value of `property` in the result to saturated for the largest.
+ */
+export interface ColorByValue {
+  property: string;
+  color: StyleColor;
+}
+
 export interface NodeTargets {
   color?: StyleColor;
+  /** A color from a number property: one tone, light to saturated. */
+  colorBy?: ColorByValue;
+  /**
+   * How saturated a color by value draws a node, 0.25 to 1; worked out by the evaluation, never
+   * stored.
+   */
+  shade?: number;
   /** In px. */
   size?: number;
   /** A size from a number property instead of one fixed size. */
@@ -166,6 +182,7 @@ export const EMPTY_STYLE: GraphStyle = { version: STYLE_VERSION, nodes: [], edge
 
 export const NODE_TARGETS = [
   "color",
+  "colorBy",
   "size",
   "sizeBy",
   "shape",
@@ -265,6 +282,11 @@ function parseNodeTargets(stored: unknown): NodeTargets {
   if (size !== undefined) out.size = size;
   const sizeBy = parseSizeBy(value.sizeBy);
   if (sizeBy !== undefined) out.sizeBy = sizeBy;
+  if (isRecord(value.colorBy)) {
+    const property = text(value.colorBy.property);
+    const tone = choice(STYLE_COLORS, value.colorBy.color);
+    if (property !== "" && tone !== undefined) out.colorBy = { property, color: tone };
+  }
   const shape = choice(RULE_SHAPES, value.shape);
   if (shape !== undefined) out.shape = shape;
   if (isIconName(value.icon)) out.icon = value.icon;

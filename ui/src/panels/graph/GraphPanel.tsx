@@ -55,6 +55,7 @@ import {
   Minimap,
 } from "./canvas/Minimap";
 import { QuickBar, QuickSheet, useQuickActions } from "./canvas/QuickActions";
+import { adopted, topProperty, topStep } from "./canvas/quickSteps";
 import { SearchBox } from "./canvas/SearchBox";
 import { DEFAULT_SCOPE, type SearchHit, type SearchScope, searchGraph } from "./canvas/search";
 import {
@@ -1291,6 +1292,39 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     return true;
   }
 
+  /** Shows or hides the suggested edges and says which (key U, the summary's button). */
+  function toggleSuggestions() {
+    const next = !showSuggested;
+    setShowSuggested(next);
+    setAnnouncement(
+      next
+        ? t("graphCanvas.quick.suggestionsShown", { count: number.format(suggestedView.length) })
+        : t("graphCanvas.quick.suggestionsHidden"),
+    );
+  }
+
+  /** The view indexes of nodes by their model ids. */
+  function viewNodes(ids: readonly string[]): number[] {
+    return ids.flatMap((id) => {
+      const at = model.index.get(id);
+      const v = at === undefined ? -1 : (view.nodeOf[at] ?? -1);
+      return v >= 0 ? [v] : [];
+    });
+  }
+
+  /** "Nur Pfad zeigen", "Nur diese zeigen": these nodes become the selection, shown alone. */
+  function onlyThese(ids: readonly string[]) {
+    selectMany(viewNodes(ids));
+    if (!only) {
+      setOnly(true);
+      history.record(
+        t("graphCanvas.step.only"),
+        () => setOnly(false),
+        () => setOnly(true),
+      );
+    }
+  }
+
   function toggleOnly() {
     if (selected.size === 0 && !only) return;
     const next = !only;
@@ -1474,12 +1508,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }
     if (matchesShortcut("graph.suggestions", event) && suggestedView.length > 0) {
       event.preventDefault();
-      setShowSuggested(!showSuggested);
-      setAnnouncement(
-        t(showSuggested ? "graphCanvas.quick.hideSuggested" : "graphCanvas.quick.suggested", {
-          count: number.format(suggestedView.length),
-        }),
-      );
+      toggleSuggestions();
       return;
     }
     // The second key of a "t" sequence belongs to the time range (timeShortcuts.ts).
@@ -2386,12 +2415,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             <button
               type="button"
               className="button button--ghost button--small"
-              aria-pressed={!showSuggested}
-              onClick={() => setShowSuggested(!showSuggested)}
+              aria-pressed={showSuggested}
+              onClick={toggleSuggestions}
             >
-              {showSuggested
-                ? t("graphCanvas.quick.hideSuggested")
-                : t("graphCanvas.quick.showSuggested")}
+              {t("graphCanvas.quick.suggestionsToggle")}
             </button>{" "}
           </>
         ) : null}
@@ -2675,7 +2702,16 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 onShowAll={() => showItems()}
               />
               <div className="graph-canvas__middle">
-                {quick === null ? null : <QuickBar quick={quick} chosen={chosenIds} />}
+                {quick === null ? null : (
+                  <QuickBar
+                    quick={quick}
+                    chosen={chosenIds}
+                    caption={(id) => {
+                      const at = model.index.get(id);
+                      return at === undefined ? id : (model.nodes[at]?.caption ?? id);
+                    }}
+                  />
+                )}
                 {selectedList.length >= 2 ? (
                   <SelectionBar
                     text={selectionText(selected, selectedEdges.size)}
@@ -2730,34 +2766,43 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             onRowMenu={(row, at) => openMenu({ ...row, x: at.x, y: at.y, reach: 0 }, at)}
           />
         )}
-        {quick?.state === null || quick === null ? null : (
+        {/* One sheet at a time: a quick action's answer wins while it is open (board, frame 9). */}
+        {quick !== null && quick.state !== null ? (
           <QuickSheet
             quick={quick}
             model={model}
-            onSelect={(ids: readonly string[]) =>
-              selectMany(
-                ids.flatMap((id) => {
-                  const at = model.index.get(id);
-                  const v = at === undefined ? -1 : (view.nodeOf[at] ?? -1);
-                  return v >= 0 ? [v] : [];
-                }),
-              )
+            onSelect={(ids: readonly string[]) => selectMany(viewNodes(ids))}
+            onOnly={onlyThese}
+            onSize={
+              host.addStep === undefined
+                ? undefined
+                : (measure) => {
+                    host.addStep?.(
+                      adopted(topStep(measure, false), graphs[0]?.refId ?? "A") as StepKind,
+                    );
+                    const n = panelStyle.addRule("size", topProperty(measure));
+                    setAnnouncement(
+                      t("graphCanvas.quick.ruleAdded", {
+                        n: String(n),
+                        property: topProperty(measure),
+                      }),
+                    );
+                  }
             }
             onAdopt={
               host.addStep === undefined
                 ? undefined
-                : (step) => {
-                    const { id: _, ...rest } = step as unknown as Record<string, unknown>;
-                    host.addStep?.({ ...rest, frame: graphs[0]?.refId ?? "A" } as StepKind);
+                : (steps) => {
+                    for (const step of steps) {
+                      host.addStep?.(adopted(step, graphs[0]?.refId ?? "A") as StepKind);
+                    }
                     quick.close();
                   }
             }
           />
-        )}
-        {panelStyle.sheet}
-        {panelStyle.sheet !== null ? null : sheetEdgeIndex !== null &&
-          sheetOpen &&
-          selectedEdges.has(sheetEdgeIndex) ? (
+        ) : panelStyle.sheet !== null ? (
+          panelStyle.sheet
+        ) : sheetEdgeIndex !== null && sheetOpen && selectedEdges.has(sheetEdgeIndex) ? (
           <EdgeSheet
             model={model}
             view={view}

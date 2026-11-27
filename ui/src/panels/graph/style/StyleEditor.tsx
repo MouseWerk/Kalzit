@@ -711,6 +711,8 @@ function defaultOf(key: TargetKey): unknown {
       return RULE_SIZE.default;
     case "sizeBy":
       return { property: "", min: 5, max: 17 };
+    case "colorBy":
+      return { property: "", color: "chart-1" };
     case "width":
       return RULE_WIDTH.default;
     case "shape":
@@ -1070,6 +1072,27 @@ function TargetField({
           max={bounds.max}
           onChange={onChange}
         />
+      );
+      break;
+    }
+    case "colorBy": {
+      const by = value as { property: string; color: StyleColor };
+      control = (
+        <fieldset className="graph-style-size-by">
+          <legend className="field__label">{name}</legend>
+          <TextField
+            label={t("graphStyle.sizeBy.property")}
+            value={by.property}
+            mono
+            onChange={(property) => onChange({ ...by, property })}
+          />
+          <ColorPalette
+            label={t("graphStyle.colorBy.tone")}
+            value={by.color}
+            onChange={(color) => onChange({ ...by, color })}
+          />
+          <p className="field__hint">{t("graphStyle.colorBy.hint")}</p>
+        </fieldset>
       );
       break;
     }

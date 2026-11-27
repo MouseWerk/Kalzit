@@ -1,5 +1,5 @@
 import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
-import type { GraphPalette, RampName } from "./colors";
+import { type GraphPalette, hex, mix, type RampName, toRgb } from "./colors";
 import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
 import { SHAPE_SCALE } from "./shapes";
@@ -117,6 +117,18 @@ function nodeColor(
   );
 }
 
+/**
+ * A color by value: the tone mixed toward the canvas color the less saturated it is (`shade` 1 is
+ * the tone itself). A color that cannot be read stays as it is.
+ */
+export function shaded(color: string, shade: number | undefined, background: string): string {
+  if (shade === undefined || shade >= 1) return color;
+  const tone = toRgb(color);
+  const canvas = toRgb(background);
+  if (tone === null || canvas === null) return color;
+  return hex(mix(tone, canvas, 1 - shade));
+}
+
 /** A selected node is drawn this much larger. */
 export const SELECTED_SCALE = 1.4;
 
@@ -185,7 +197,7 @@ export function nodeDisplay(
   const color =
     look?.color === undefined
       ? nodeColor(node.group, lit, p)
-      : ruleColor(p.palette, look.color, lit);
+      : shaded(ruleColor(p.palette, look.color, lit), look.shade, p.palette.background);
   const labelVisibility = labelWish(index, p, ratio, budget);
   const size = (look?.size ?? data.size) * SHAPE_SCALE[shape] * nodeScale;
   const caption = look?.caption ?? data.label;

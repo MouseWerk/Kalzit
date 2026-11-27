@@ -2591,8 +2591,13 @@ async fn graph_quick_actions_compute_for_members_within_the_limits(t: TestApp) {
     let foreign_org = uuid::Uuid::now_v7().to_string();
     let r = t.post(&format!("/orgs/{foreign_org}/graph/actions"), body.clone(), &viewer).await;
     assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{}", r.body);
-    let r = t.send(Method::POST, &t.path("~/graph/actions"), Some(body), None).await;
+    let r = t.send(Method::POST, &t.path("~/graph/actions"), Some(body.clone()), None).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    // A body beyond what a canvas holds is refused before it is read.
+    let mut huge = body;
+    huge["graph"]["nodes"][0]["properties"]["filler"] = json!("x".repeat(kalzit::routes::graph_actions::BODY_LIMIT));
+    let r = t.post("~/graph/actions", huge, &viewer).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.body);
 }
 
 async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {
