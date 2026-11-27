@@ -4,6 +4,7 @@
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
 import type enGraphCanvas from "./en/graphCanvas.json";
+import type enGraphSteps from "./en/graphSteps.json";
 import type enGraphStyle from "./en/graphStyle.json";
 import type enHandbook from "./en/handbook.json";
 import type enProvisioning from "./en/provisioning.json";
@@ -19,6 +20,7 @@ export type DeferredMessages = typeof enSharing &
   typeof enServerAdmin &
   typeof enApps &
   typeof enGraphStyle &
+  typeof enGraphSteps &
   typeof enGraphCanvas &
   typeof enHandbook;
 
@@ -36,6 +38,9 @@ export const DEFERRED_AREAS = [
   // The graph panels' canvas (tools, search, minimap, info card, node and edge sheets, the table
   // view): the graph panels load it together with the style rules (loadAreas).
   "graphCanvas",
+  // The graph algorithm steps (board Graph082): their catalog entries, forms and sentences; the
+  // steps editor loads them once a query answered a graph.
+  "graphSteps",
   // The built-in handbook: its page, the search and the article's parts (src/handbook).
   "handbook",
 ] as const;
@@ -78,6 +83,10 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   graphCanvas: {
     de: () => import("./de/graphCanvas.json").then(pick),
     en: () => import("./en/graphCanvas.json").then(pick),
+  },
+  graphSteps: {
+    de: () => import("./de/graphSteps.json").then(pick),
+    en: () => import("./en/graphSteps.json").then(pick),
   },
   handbook: {
     de: () => import("./de/handbook.json").then(pick),

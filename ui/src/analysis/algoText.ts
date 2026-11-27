@@ -1,6 +1,5 @@
 import type { StepSummary } from "../api/generated/shapes";
 import { hasMessage, type MessageKey, type Translate } from "../i18n/i18n";
-import { LIBRARY_NAMES, libraryOf } from "./algoSteps";
 
 /**
  * The words of the graph algorithm steps: the sentence a step sums its result up in, and where
@@ -46,21 +45,6 @@ export function summarySentence(
     return t("analysis.summary.centralitySame", params);
   }
   return t(key as MessageKey, params);
-}
-
-/** Where a step ran, as its badge says it: "Läuft in Neo4j (GDS)" or "Im Server". */
-export function placeBadge(
-  t: Translate,
-  ranIn: "database" | "server",
-  kind: string | undefined,
-): string {
-  const library = libraryOf(kind);
-  if (ranIn === "database" && library !== undefined) {
-    return t("analysis.where.library", LIBRARY_NAMES[library]);
-  }
-  return ranIn === "database"
-    ? t("analysis.where.database", { engine: kind ?? "" })
-    : t("analysis.where.server");
 }
 
 /** Why a step ran on the server, in plain words; null when the server named no reason. */

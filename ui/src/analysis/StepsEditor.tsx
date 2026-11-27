@@ -4,20 +4,20 @@ import { LazyPiece, pieceSource } from "../components/LazyPiece";
 import { reasonText } from "../features/datasources/reasons";
 import { hasMessage, loadArea, type MessageKey, type Translate, useI18n } from "../i18n/i18n";
 import { formatValue, isNumeric } from "../panels/frame";
-import { AlgoOutcome, type ResultUse } from "./AlgoOutcome";
-import { AlgoStepForm } from "./AlgoStepForm";
+import type { ResultUse } from "./AlgoOutcome";
 import {
   type AlgoStepKind,
   algoMakesTable,
   GRAPH_VARIANTS,
   type GraphVariant,
+  type GraphWords,
+  graphWords,
   isAlgoType,
-  LIBRARY_NAMES,
   newAlgoStep,
   plannedPlace,
   variantOf,
 } from "./algoSteps";
-import { placeBadge, summarySentence } from "./algoText";
+import { summarySentence } from "./algoText";
 import { DetailError, FUNCTIONS, parse } from "./expr";
 import {
   type Direction,
@@ -200,7 +200,7 @@ function shapesOf(step: StepKind): [ShapeName, ShapeName] {
 function kindLabel(t: Translate, step: StepKind): string {
   if (isAlgoStep(step)) {
     const variant = variantOf(step as unknown as { type: string } & Record<string, unknown>);
-    return t(`analysis.kind.${variant?.key ?? step.type}` as MessageKey);
+    return graphWords.current?.kind(t, variant?.key ?? step.type) ?? step.type;
   }
   return step.type === "toFrame" && step.rows !== undefined
     ? t("analysis.kind.graphToFrame")
@@ -289,7 +289,9 @@ export function stepSummary(t: Translate, step: StepKind): string {
     case "similarity":
       return (step.properties ?? []).join(", ");
     case "mergeNodes":
-      return step.by === "property" ? (step.property ?? "") : t("analysis.algo.mergeBy.label");
+      return step.by === "property"
+        ? (step.property ?? "")
+        : (graphWords.current?.mergeByLabel(t) ?? "");
     case "aggregateAlong":
       return step.name;
     default:
@@ -331,6 +333,22 @@ export function StepsEditor({
   onUseResult,
 }: StepsEditorProps) {
   const { t, language } = useI18n();
+  // The algorithm steps' words and forms, a deferred area loaded once a graph is there.
+  const [words, setWords] = useState<GraphWords | null>(graphWords.current);
+  const wantsWords = inputs.some((i) => "graph" in i) || steps.some((s) => isAlgoType(s.type));
+  useEffect(() => {
+    if (!wantsWords || words !== null) return;
+    let current = true;
+    void loadArea("graphSteps")
+      .then(() => import("./graphCatalog"))
+      .then((module) => {
+        graphWords.current = module.GRAPH_WORDS;
+        if (current) setWords(module.GRAPH_WORDS);
+      });
+    return () => {
+      current = false;
+    };
+  }, [wantsWords, words]);
   // Compact cards open for editing one by one; a step just added opens at once.
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const isOpen = (id: string) => !compact || opened.has(id);
@@ -530,32 +548,27 @@ export function StepsEditor({
   const graphEntryOf = (variant: GraphVariant): CatalogEntry => {
     const base = entryOf(variant.type as StepType);
     if (!isAlgoType(variant.type) && variant.type !== "degree") {
-      return { ...base, key: variant.key, graphGroup: variant.group };
+      const group = words?.group(t, variant.group);
+      return {
+        ...base,
+        key: variant.key,
+        graphGroup: variant.group,
+        ...(group === undefined ? {} : { groupLabel: group }),
+      };
     }
-    const library = plannedPlace(variant, graphKind);
-    const help = `analysis.help.${variant.key}` as MessageKey;
-    const words = `analysis.keywords.${variant.key}` as MessageKey;
-    return {
-      ...base,
-      key: variant.key,
-      label: t(`analysis.kind.${variant.key}` as MessageKey),
-      about: t(`analysis.about.${variant.key}` as MessageKey),
-      ...(hasMessage(help) ? { help: t(help) } : {}),
-      keywords: hasMessage(words)
-        ? t(words)
-            .split(",")
-            .map((w) => w.trim())
-        : [],
-      to: variant.table === true ? "frame" : "graph",
-      graphGroup: variant.group,
-      ...(variant.type === "degree" ? {} : { isNew: true }),
-      where:
-        library === undefined
-          ? t("analysis.where.serverAlgo")
-          : t("analysis.where.libraryOrServer", LIBRARY_NAMES[library]),
-      whereShort:
-        library === undefined ? t("analysis.where.server") : LIBRARY_NAMES[library].engine,
-    };
+    const group = words?.group(t, variant.group);
+    if (variant.type === "degree") {
+      return {
+        ...base,
+        key: variant.key,
+        graphGroup: variant.group,
+        ...(group === undefined ? {} : { groupLabel: group }),
+        whereShort: t("analysis.where.server"),
+      };
+    }
+    // The algorithms' words come with their deferred area (graphCatalog.ts).
+    const entry = words?.entry(t, variant, base, graphKind) ?? base;
+    return { ...entry, ...(group === undefined ? {} : { groupLabel: group }) };
   };
   /** One kind of step for the catalog, with its group, keywords and where it runs. */
   const entryOf = (type: StepType): CatalogEntry => {
@@ -600,7 +613,10 @@ export function StepsEditor({
   ) as StepType[];
   const catalog: CatalogEntry[] = [
     ...(tracesLeft ? TRACE_STEP_TYPES : []).map(entryOf),
-    ...(graphsLeft ? GRAPH_VARIANTS : []).map(graphEntryOf),
+    // The algorithm steps join once their words are there (a moment after the first graph).
+    ...(graphsLeft ? GRAPH_VARIANTS : [])
+      .filter((v) => words !== null || !isAlgoType(v.type))
+      .map(graphEntryOf),
     ...tableOrder.map(entryOf),
   ];
   const catalogShapes: ShapeName[] = [
@@ -693,7 +709,9 @@ export function StepsEditor({
           } else if (outcome?.skipped === true) {
             status = t("analysis.steps.status.notRun");
           } else if (outcome?.waiting === true) {
-            status = isAlgoStep(step) ? t("analysis.algo.running") : t("analysis.chain.unknown");
+            status = isAlgoStep(step)
+              ? (words?.running(t) ?? t("analysis.chain.unknown"))
+              : t("analysis.chain.unknown");
           } else if (outcome?.traces?.some((x) => stepTarget(step) === x.name) === true) {
             status = t("analysis.chain.spans", {
               count:
@@ -717,7 +735,8 @@ export function StepsEditor({
           const where = isTraceStep(step)
             ? t("analysis.where.server")
             : isAlgoStep(step)
-              ? placeBadge(t, placeOf(index), kindOf(stepTarget(step)))
+              ? (words?.badge(t, placeOf(index), kindOf(stepTarget(step))) ??
+                t("analysis.where.server"))
               : isGraphStep(step)
                 ? placeOf(index) === "database"
                   ? t("analysis.where.database", {
@@ -830,8 +849,8 @@ export function StepsEditor({
                     traces={tracesOf(index)}
                   />
                   <p className="step__status">{status}</p>
-                  {isAlgoStep(step) && step.disabled !== true ? (
-                    <AlgoOutcome
+                  {isAlgoStep(step) && step.disabled !== true && words !== null ? (
+                    <words.AlgoOutcome
                       step={step}
                       outcome={outcome}
                       onServer={() => update(index, { ...step, place: "server" })}
@@ -849,7 +868,7 @@ export function StepsEditor({
                           ? undefined
                           : (use, property) => {
                               onUseResult(use, property, step);
-                              announce(t(`analysis.algo.added.${use}`, { property }));
+                              announce(words.added(t, use, property));
                             }
                       }
                     />
@@ -1139,8 +1158,10 @@ function StepForm({ step, onChange, refIds, input, graphs, traces }: FormProps) 
   }
   if (isAlgoStep(step)) {
     const graph = graphs.find((g) => g.name === step.frame)?.graph;
+    const Form = graphWords.current?.AlgoStepForm;
+    if (Form === undefined) return <p className="field__hint">{t("common.loading")}</p>;
     return (
-      <AlgoStepForm
+      <Form
         step={step as AlgoStepKind & { id: string }}
         graph={graph}
         frameChoice={frameChoice}

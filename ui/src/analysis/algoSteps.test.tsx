@@ -1,15 +1,16 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../api/generated/shapes";
-import { translate } from "../i18n/i18n";
+import { loadArea, translate } from "../i18n/i18n";
 import { pickOption } from "../test/select";
 import { addStep, catalogOption, openCatalog } from "../test/stepCatalog";
 import {
   algoStepComplete,
   GRAPH_GROUPS,
   GRAPH_VARIANTS,
+  graphWords,
   newAlgoStep,
   plannedPlace,
   variantOf,
@@ -37,6 +38,12 @@ const GRAPH: GraphSet = {
 };
 
 const INPUTS: NamedInput[] = [{ name: "A", graph: GRAPH }];
+
+// The algorithm steps' words and forms come with their deferred area, as on the page.
+beforeAll(async () => {
+  await loadArea("graphSteps");
+  graphWords.current = (await import("./graphCatalog")).GRAPH_WORDS;
+});
 const en = (key: string, params?: Record<string, string>) => translate("en", key as never, params);
 const de = (key: string, params?: Record<string, string>) => translate("de", key as never, params);
 
@@ -48,7 +55,8 @@ describe("the catalog's graph steps", () => {
     expect(GRAPH_GROUPS.at(-1)).toBe("basic");
     expect(new Set(GRAPH_VARIANTS.map((v) => v.key)).size).toBe(GRAPH_VARIANTS.length);
     for (const v of GRAPH_VARIANTS) {
-      expect(en(`analysis.kind.${v.key}`), v.key).not.toBe(`analysis.kind.${v.key}`);
+      const key = v.type === "degree" || v.group === "basic" ? "analysis" : "graphSteps";
+      expect(en(`${key}.kind.${v.key}`), v.key).not.toBe(`${key}.kind.${v.key}`);
     }
   });
 
@@ -170,7 +178,7 @@ describe("algorithm steps in the steps editor", () => {
     expect(within(dialog).getByText("Link prediction · 3")).toBeTruthy();
     // The place shows next to the name; link prediction always runs on the server.
     expect(within(catalogOption(dialog, "PageRank")).getByText("Neo4j")).toBeTruthy();
-    expect(within(catalogOption(dialog, "Adamic-Adar")).getByText("On the server")).toBeTruthy();
+    expect(within(catalogOption(dialog, "Adamic-Adar")).getByText("Runs on the server")).toBeTruthy();
     await user.keyboard("{Escape}");
     await addStep(user, "PageRank");
     expect(stored()[0]).toMatchObject({ type: "centrality", measure: "pageRank", frame: "A" });
@@ -215,7 +223,7 @@ describe("algorithm steps in the steps editor", () => {
     const card = screen.getByRole("listitem", { name: "Step 1" });
     expect(within(card).getByText("3 nodes scored. Highest value: Abo (0.412).")).toBeTruthy();
     expect(within(card).getByText(/the database has no library for this step/)).toBeTruthy();
-    expect(within(card).getByText("On the server")).toBeTruthy();
+    expect(within(card).getByText("Runs on the server")).toBeTruthy();
     await user.click(within(card).getByRole("button", { name: "Show as size" }));
     expect(screen.getByTestId("rules").textContent).toBe("size:pagerank");
   });

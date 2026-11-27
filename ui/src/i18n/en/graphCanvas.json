@@ -177,5 +177,7 @@
   "graphCanvas.quick.close": "Close",
   "graphCanvas.quick.suggested": "Plus {count} suggested edges; they are not counted and are not in the database.",
   "graphCanvas.quick.showSuggested": "Show suggestions",
-  "graphCanvas.quick.hideSuggested": "Hide suggestions"
+  "graphCanvas.quick.hideSuggested": "Hide suggestions",
+  "graphCanvas.quick.running": "Computing…",
+  "graphCanvas.quick.useSize": "Show as size"
 }

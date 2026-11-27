@@ -56,6 +56,8 @@ export interface CatalogEntry {
   group?: CatalogGroup;
   /** The group of a graph step (board Graph082, frame 1). */
   graphGroup?: GraphGroup;
+  /** The name of that group, in the person's language. */
+  groupLabel?: string;
   /** Where the step computes with the chosen source, in one or two words next to its name. */
   whereShort?: string;
   /** Marked "new". */
@@ -380,7 +382,7 @@ function CatalogDialog({
         <div key={g} role="group" aria-labelledby={`${id}-gg-${g}`} className="step-catalog__group">
           <div className="step-catalog__heading" id={`${id}-gg-${g}`} role="presentation">
             {t("analysis.catalog.groupCount", {
-              group: t(`analysis.catalog.graphGroup.${g}`),
+              group: inGroup[0]?.entry.groupLabel ?? "",
               count: inGroup.length,
             })}
           </div>

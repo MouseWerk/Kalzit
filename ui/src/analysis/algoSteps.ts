@@ -1,5 +1,10 @@
+import type { ComponentType } from "react";
 import type { GraphSet, RanIn, StepSummary } from "../api/generated/shapes";
+import type { Translate } from "../i18n/i18n";
+import type { AlgoOutcomeProps } from "./AlgoOutcome";
+import type { AlgoStepFormProps } from "./AlgoStepForm";
 import type { Direction } from "./graphSteps";
+import type { CatalogEntry } from "./StepCatalog";
 
 /**
  * Graph algorithm steps (docs/api/settings-dashboards.md, "Graph algorithm steps"; board
@@ -584,3 +589,27 @@ export function plannedPlace(variant: GraphVariant, kind: string | undefined): L
   const library = libraryOf(kind);
   return library !== undefined && (variant.libraries ?? []).includes(library) ? library : undefined;
 }
+
+/**
+ * The words and forms of the algorithm steps, from the deferred area `graphSteps`
+ * (graphCatalog.ts, loaded behind its gate). Until they are there, a step shows its type.
+ */
+export interface GraphWords {
+  kind: (t: Translate, key: string) => string;
+  entry: (
+    t: Translate,
+    variant: GraphVariant,
+    base: CatalogEntry,
+    kind: string | undefined,
+  ) => CatalogEntry;
+  group: (t: Translate, group: GraphGroup | "other") => string;
+  badge: (t: Translate, ranIn: "database" | "server", kind: string | undefined) => string;
+  added: (t: Translate, use: "size" | "color" | "groups", property: string) => string;
+  running: (t: Translate) => string;
+  mergeByLabel: (t: Translate) => string;
+  AlgoStepForm: ComponentType<AlgoStepFormProps>;
+  AlgoOutcome: ComponentType<AlgoOutcomeProps>;
+}
+
+/** The words once loaded; one load serves every steps editor of the page. */
+export const graphWords: { current: GraphWords | null } = { current: null };

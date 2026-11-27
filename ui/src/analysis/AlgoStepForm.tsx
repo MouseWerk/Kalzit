@@ -108,9 +108,9 @@ function Aggregates({
         // biome-ignore lint/suspicious/noArrayIndexKey: aggregates have no identity of their own
         <div className="algo-aggregates__row" key={i}>
           <Choice
-            label={t("analysis.algo.aggregateOp")}
+            label={t("graphSteps.algo.aggregateOp")}
             value={a.op}
-            options={AGG_OPS.map((op) => [op, t(`analysis.algo.op.${op}`)])}
+            options={AGG_OPS.map((op) => [op, t(`graphSteps.algo.op.${op}`)])}
             onChange={(op) => {
               const next = op as GraphAggregateOp;
               const { property: _, ...rest } = a;
@@ -124,14 +124,14 @@ function Aggregates({
           />
           {a.op === "count" ? null : (
             <Choice
-              label={t("analysis.algo.aggregateProperty")}
+              label={t("graphSteps.algo.aggregateProperty")}
               value={a.property ?? ""}
               options={withCurrent(keys, [a.property ?? ""]).map((k) => [k, k])}
               onChange={(property) => set(i, { ...a, property })}
             />
           )}
           <Text
-            label={t("analysis.algo.aggregateName")}
+            label={t("graphSteps.algo.aggregateName")}
             value={a.name}
             onChange={(name) => set(i, { ...a, name })}
           />
@@ -140,7 +140,7 @@ function Aggregates({
             className="button button--ghost button--small"
             onClick={() => onChange(value.filter((_, j) => j !== i))}
           >
-            {t("analysis.algo.aggregateRemove")}
+            {t("graphSteps.algo.aggregateRemove")}
           </button>
         </div>
       ))}
@@ -155,7 +155,7 @@ function Aggregates({
             onChange([...value, { op: "count", name }]);
           }}
         >
-          {t("analysis.algo.aggregateAdd")}
+          {t("graphSteps.algo.aggregateAdd")}
         </button>
       ) : null}
     </fieldset>
@@ -179,7 +179,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
   const nodeNumbers = numericNodeKeys(graph);
   const set = (key: string, value: unknown) => onChange(withField(step, key, value));
   const range = (min: number, max: number) =>
-    t("analysis.algo.range", { min: String(min), max: String(max) });
+    t("graphSteps.algo.range", { min: String(min), max: String(max) });
   const hint = (text: string) => <p className="field__hint step__wide">{text}</p>;
 
   const direction = (fallback: Direction = "both") => (
@@ -194,10 +194,10 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
     const value = (step as { weight?: string }).weight ?? "";
     return (
       <Choice
-        label={t("analysis.algo.weight")}
+        label={t("graphSteps.algo.weight")}
         value={value}
         options={[
-          ...(required ? [] : [["", t("analysis.algo.noWeight")] as [string, string]]),
+          ...(required ? [] : [["", t("graphSteps.algo.noWeight")] as [string, string]]),
           ...withCurrent(edgeNumbers, [value]).map((k): [string, string] => [k, k]),
         ]}
         onChange={(w) => set("weight", w)}
@@ -219,7 +219,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
     const value = (step as { label?: string }).label ?? "";
     return (
       <Choice
-        label={t("analysis.algo.label")}
+        label={t("graphSteps.algo.label")}
         value={value}
         options={[
           ["", t("analysis.graph.allLabels")],
@@ -256,11 +256,11 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
   );
   const place = (
     <Choice
-      label={t("analysis.algo.place")}
+      label={t("graphSteps.algo.place")}
       value={step.place ?? "auto"}
       options={[
-        ["auto", t("analysis.algo.place.auto")],
-        ["server", t("analysis.algo.place.server")],
+        ["auto", t("graphSteps.algo.place.auto")],
+        ["server", t("graphSteps.algo.place.server")],
       ]}
       onChange={(p) => set("place", p === "server" ? "server" : undefined)}
     />
@@ -276,7 +276,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {iterative ? weight() : null}
           {step.measure === "pageRank" ? (
             <NumberField
-              label={t("analysis.algo.damping")}
+              label={t("graphSteps.algo.damping")}
               value={step.damping ?? 0.85}
               min={0.01}
               max={0.99}
@@ -288,14 +288,14 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {iterative
             ? number(
                 "maxIterations",
-                t("analysis.algo.maxIterations"),
+                t("graphSteps.algo.maxIterations"),
                 100,
                 1,
                 ALGO_LIMITS.maxIterations,
               )
             : null}
           {property(step.measure === "pageRank" ? "pagerank" : step.measure)}
-          {hint(t(`analysis.algo.fields.centrality.${step.measure}`))}
+          {hint(t(`graphSteps.algo.fields.centrality.${step.measure}`))}
         </>
       );
       break;
@@ -309,28 +309,32 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {components ? null : weight()}
           {modular ? (
             <NumberField
-              label={t("analysis.algo.resolution")}
+              label={t("graphSteps.algo.resolution")}
               value={step.resolution ?? 1}
               min={0.01}
               max={99}
               decimals
-              hint={t("analysis.algo.resolutionHint")}
+              hint={t("graphSteps.algo.resolutionHint")}
               onChange={(n) => set("resolution", n)}
             />
           ) : null}
           {step.algorithm === "labelPropagation"
             ? number(
                 "maxIterations",
-                t("analysis.algo.maxIterations"),
+                t("graphSteps.algo.maxIterations"),
                 10,
                 1,
                 ALGO_LIMITS.maxCommunityIterations,
               )
             : null}
-          {components ? null : number("seed", t("analysis.algo.seed"), 42, 0, 2_147_483_647)}
+          {components ? null : number("seed", t("graphSteps.algo.seed"), 42, 0, 2_147_483_647)}
           {property(components ? "component" : "community")}
           {hint(
-            t(components ? "analysis.algo.fields.components" : "analysis.algo.fields.communities"),
+            t(
+              components
+                ? "graphSteps.algo.fields.components"
+                : "graphSteps.algo.fields.communities",
+            ),
           )}
         </>
       );
@@ -340,13 +344,13 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           <CheckBox
-            label={t("analysis.algo.kCoreOnly")}
+            label={t("graphSteps.algo.kCoreOnly")}
             checked={step.k !== undefined}
             onChange={(on) => set("k", on ? 2 : undefined)}
           />
           {step.k === undefined ? null : number("k", "k", 2, 1, ALGO_LIMITS.maxCore)}
           {property("core")}
-          {hint(t("analysis.algo.fields.kCore"))}
+          {hint(t("graphSteps.algo.fields.kCore"))}
         </>
       );
       break;
@@ -355,11 +359,11 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
         <>
           {property("triangles")}
           <Text
-            label={t("analysis.algo.clusteringName")}
+            label={t("graphSteps.algo.clusteringName")}
             value={step.clustering ?? "clustering"}
             onChange={(c) => set("clustering", c === "clustering" ? undefined : c)}
           />
-          {hint(t("analysis.algo.fields.triangles"))}
+          {hint(t("graphSteps.algo.fields.triangles"))}
         </>
       );
       break;
@@ -371,7 +375,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {labelChoice()}
           {byProperties ? (
             <Checks
-              legend={t("analysis.algo.properties")}
+              legend={t("graphSteps.algo.properties")}
               options={withCurrent(nodeNumbers, step.properties ?? []).map((k) => [k, k])}
               value={step.properties ?? []}
               onChange={(next) => set("properties", next.slice(0, ALGO_LIMITS.maxProperties))}
@@ -382,15 +386,15 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
               {direction()}
             </>
           )}
-          {number("topK", t("analysis.algo.topK"), 10, 1, ALGO_LIMITS.maxTopK)}
-          {number("minScore", t("analysis.algo.minScore"), 0, 0, 1_000_000, true)}
+          {number("topK", t("graphSteps.algo.topK"), 10, 1, ALGO_LIMITS.maxTopK)}
+          {number("minScore", t("graphSteps.algo.minScore"), 0, 0, 1_000_000, true)}
           {step.measure === "knn" ? null : (
             <Choice
-              label={t("analysis.algo.output")}
+              label={t("graphSteps.algo.output")}
               value={output}
               options={[
-                ["table", t("analysis.algo.output.table")],
-                ["edges", t("analysis.algo.output.edges")],
+                ["table", t("graphSteps.algo.output.table")],
+                ["edges", t("graphSteps.algo.output.edges")],
               ]}
               onChange={(o) => set("output", o === "table" ? undefined : o)}
             />
@@ -399,8 +403,8 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {hint(
             t(
               output === "edges"
-                ? "analysis.algo.fields.similarEdges"
-                : "analysis.algo.fields.similarTable",
+                ? "graphSteps.algo.fields.similarEdges"
+                : "graphSteps.algo.fields.similarTable",
             ),
           )}
         </>
@@ -411,9 +415,9 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           {labelChoice()}
-          {number("topK", t("analysis.algo.topSuggestions"), 50, 1, ALGO_LIMITS.maxSuggestions)}
-          {number("minScore", t("analysis.algo.minScore"), 0, 0, 1_000_000, true)}
-          {hint(t("analysis.algo.fields.linkPrediction"))}
+          {number("topK", t("graphSteps.algo.topSuggestions"), 50, 1, ALGO_LIMITS.maxSuggestions)}
+          {number("minScore", t("graphSteps.algo.minScore"), 0, 0, 1_000_000, true)}
+          {hint(t("graphSteps.algo.fields.linkPrediction"))}
         </>
       );
       break;
@@ -421,13 +425,13 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           <NodeChoice
-            label={t("analysis.algo.from")}
+            label={t("graphSteps.algo.from")}
             value={step.from}
             graph={graph}
             onChange={(from) => onChange({ ...step, from })}
           />
           <NodeChoice
-            label={t("analysis.algo.to")}
+            label={t("graphSteps.algo.to")}
             value={step.to}
             graph={graph}
             onChange={(to) => onChange({ ...step, to })}
@@ -438,26 +442,26 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
             : null}
           {step.mode === "kShortest" ? number("k", "k", 3, 1, ALGO_LIMITS.maxKPaths) : null}
           {step.mode === "allShortest"
-            ? number("maxPaths", t("analysis.algo.maxPaths"), 200, 1, ALGO_LIMITS.maxAllPaths)
+            ? number("maxPaths", t("graphSteps.algo.maxPaths"), 200, 1, ALGO_LIMITS.maxAllPaths)
             : null}
           {number(
             "maxLength",
-            t("analysis.algo.maxLength"),
+            t("graphSteps.algo.maxLength"),
             step.mode === "kShortest" ? 8 : 30,
             1,
             step.mode === "kShortest" ? ALGO_LIMITS.maxCycleLength : ALGO_LIMITS.maxPathLength,
           )}
           {edgeTypes()}
           <CheckBox
-            label={t("analysis.algo.keepAll")}
+            label={t("graphSteps.algo.keepAll")}
             checked={step.keepAll === true}
             onChange={(on) => set("keepAll", on ? true : undefined)}
           />
           {property("path_order")}
           {step.from !== "" && step.from === step.to ? (
-            <p className="field__hint step__wide steps__error">{t("analysis.algo.sameEnds")}</p>
+            <p className="field__hint step__wide steps__error">{t("graphSteps.algo.sameEnds")}</p>
           ) : null}
-          {hint(t("analysis.algo.fields.paths"))}
+          {hint(t("graphSteps.algo.fields.paths"))}
         </>
       );
       break;
@@ -467,7 +471,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
         <>
           {nodes.length > 0 && nodes.length <= 50 ? (
             <Checks
-              legend={t("analysis.algo.startNodes")}
+              legend={t("graphSteps.algo.startNodes")}
               options={withCurrent(
                 nodes.map((n) => n.id),
                 step.from,
@@ -482,17 +486,17 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
             />
           ) : (
             <NodeChoice
-              label={t("analysis.algo.startNode")}
+              label={t("graphSteps.algo.startNode")}
               value={step.from[0] ?? ""}
               graph={graph}
               onChange={(id) => onChange({ ...step, from: id === "" ? [] : [id] })}
             />
           )}
-          {number("maxHops", t("analysis.algo.maxHops"), 2, 1, ALGO_LIMITS.maxHops)}
+          {number("maxHops", t("graphSteps.algo.maxHops"), 2, 1, ALGO_LIMITS.maxHops)}
           {direction()}
           {edgeTypes()}
           {property("distance")}
-          {hint(t("analysis.algo.fields.reachable"))}
+          {hint(t("graphSteps.algo.fields.reachable"))}
         </>
       );
       break;
@@ -501,7 +505,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           {property("bridge")}
-          {hint(t("analysis.algo.fields.bridges"))}
+          {hint(t("graphSteps.algo.fields.bridges"))}
         </>
       );
       break;
@@ -509,18 +513,18 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           {property("articulation")}
-          {hint(t("analysis.algo.fields.articulationPoints"))}
+          {hint(t("graphSteps.algo.fields.articulationPoints"))}
         </>
       );
       break;
     case "cycles":
       fields = (
         <>
-          {number("maxLength", t("analysis.algo.maxLength"), 6, 2, ALGO_LIMITS.maxCycleLength)}
-          {number("maxCount", t("analysis.algo.maxCount"), 200, 1, ALGO_LIMITS.maxCycles)}
+          {number("maxLength", t("graphSteps.algo.maxLength"), 6, 2, ALGO_LIMITS.maxCycleLength)}
+          {number("maxCount", t("graphSteps.algo.maxCount"), 200, 1, ALGO_LIMITS.maxCycles)}
           {direction("out")}
           {property("in_cycle")}
-          {hint(t("analysis.algo.fields.cycles"))}
+          {hint(t("graphSteps.algo.fields.cycles"))}
         </>
       );
       break;
@@ -528,11 +532,11 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           <Choice
-            label={t("analysis.algo.mergeBy")}
+            label={t("graphSteps.algo.mergeBy")}
             value={step.by}
             options={[
-              ["label", t("analysis.algo.mergeBy.label")],
-              ["property", t("analysis.algo.mergeBy.property")],
+              ["label", t("graphSteps.algo.mergeBy.label")],
+              ["property", t("graphSteps.algo.mergeBy.property")],
             ]}
             onChange={(by) => {
               const { property: _, ...rest } = step;
@@ -552,28 +556,28 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
             />
           ) : null}
           <Aggregates
-            legend={t("analysis.algo.aggregates")}
+            legend={t("graphSteps.algo.aggregates")}
             value={step.aggregates ?? []}
             keys={allKeys}
             onChange={(next) => set("aggregates", next)}
           />
           <Aggregates
-            legend={t("analysis.algo.edgeAggregates")}
+            legend={t("graphSteps.algo.edgeAggregates")}
             value={step.edgeAggregates ?? []}
             keys={edgeNumbers}
             onChange={(next) => set("edgeAggregates", next)}
           />
           <CheckBox
-            label={t("analysis.algo.loops")}
+            label={t("graphSteps.algo.loops")}
             checked={step.loops !== false}
             onChange={(on) => set("loops", on ? undefined : false)}
           />
           <CheckBox
-            label={t("analysis.algo.mergeTypes")}
+            label={t("graphSteps.algo.mergeTypes")}
             checked={step.mergeTypes === true}
             onChange={(on) => set("mergeTypes", on ? true : undefined)}
           />
-          {hint(t("analysis.algo.fields.mergeNodes"))}
+          {hint(t("graphSteps.algo.fields.mergeNodes"))}
         </>
       );
       break;
@@ -584,11 +588,11 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
       fields = (
         <>
           <Choice
-            label={t("analysis.algo.along")}
+            label={t("graphSteps.algo.along")}
             value={along}
             options={[
-              ["neighbours", t("analysis.algo.along.neighbours")],
-              ["paths", t("analysis.algo.along.paths")],
+              ["neighbours", t("graphSteps.algo.along.neighbours")],
+              ["paths", t("graphSteps.algo.along.paths")],
             ]}
             onChange={(a) => {
               const {
@@ -605,7 +609,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           />
           {along === "paths" ? (
             <Choice
-              label={t("analysis.algo.of")}
+              label={t("graphSteps.algo.of")}
               value={step.of ?? "nodes"}
               options={[
                 ["nodes", t("analysis.graph.rows.nodes")],
@@ -618,13 +622,13 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
               {labelChoice()}
               {edgeTypes()}
               {direction("out")}
-              {number("depth", t("analysis.algo.depth"), 1, 1, ALGO_LIMITS.maxDepth)}
+              {number("depth", t("graphSteps.algo.depth"), 1, 1, ALGO_LIMITS.maxDepth)}
             </>
           )}
           <Choice
-            label={t("analysis.algo.aggregateOp")}
+            label={t("graphSteps.algo.aggregateOp")}
             value={step.op}
-            options={ALONG_OPS.map((op) => [op, t(`analysis.algo.op.${op}`)])}
+            options={ALONG_OPS.map((op) => [op, t(`graphSteps.algo.op.${op}`)])}
             onChange={(op) => {
               const next = op as AlongOp;
               const { property: _, ...rest } = step;
@@ -637,7 +641,7 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           />
           {step.op === "count" ? null : (
             <Choice
-              label={t("analysis.algo.aggregateProperty")}
+              label={t("graphSteps.algo.aggregateProperty")}
               value={step.property ?? ""}
               options={withCurrent(sources, [step.property ?? ""]).map((k) => [k, k])}
               onChange={(p) => set("property", p)}
@@ -651,8 +655,8 @@ export function AlgoStepForm({ step, graph, frameChoice, onChange }: AlgoStepFor
           {hint(
             t(
               along === "paths"
-                ? "analysis.algo.fields.alongPaths"
-                : "analysis.algo.fields.alongNeighbours",
+                ? "graphSteps.algo.fields.alongPaths"
+                : "graphSteps.algo.fields.alongNeighbours",
             ),
           )}
         </>

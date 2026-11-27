@@ -177,5 +177,7 @@
   "graphCanvas.quick.close": "Schließen",
   "graphCanvas.quick.suggested": "Dazu {count} vorgeschlagene Kanten; sie zählen nicht mit und sind nicht in der Datenbank.",
   "graphCanvas.quick.showSuggested": "Vorschläge zeigen",
-  "graphCanvas.quick.hideSuggested": "Vorschläge ausblenden"
+  "graphCanvas.quick.hideSuggested": "Vorschläge ausblenden",
+  "graphCanvas.quick.running": "Rechnet…",
+  "graphCanvas.quick.useSize": "Als Größe zeigen"
 }

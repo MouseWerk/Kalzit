@@ -50,11 +50,11 @@ export function AlgoOutcome({ step, outcome, onServer, onFilterBefore, onUse }: 
       {sentence === null ? null : <p className="algo-outcome__sentence">{sentence}</p>}
       {reason === null ? null : <p className="field__hint">{reason}</p>}
       {variant?.varies === true && outcome?.ranIn === "database" ? (
-        <p className="field__hint">{t("analysis.algo.varies")}</p>
+        <p className="field__hint">{t("graphSteps.algo.varies")}</p>
       ) : null}
       {error === "steps.algorithm_answer" ? (
         <button type="button" className="button button--secondary button--small" onClick={onServer}>
-          {t("analysis.algo.computeOnServer")}
+          {t("graphSteps.algo.computeOnServer")}
         </button>
       ) : null}
       {error !== undefined && SMALLER_HELPS.has(error) ? (
@@ -64,10 +64,10 @@ export function AlgoOutcome({ step, outcome, onServer, onFilterBefore, onUse }: 
             className="button button--secondary button--small"
             onClick={onFilterBefore}
           >
-            {t("analysis.algo.filterBefore")}
+            {t("graphSteps.algo.filterBefore")}
           </button>
           {error === "steps.algorithm_too_large" ? (
-            <p className="field__hint">{t("analysis.algo.limitAdmin")}</p>
+            <p className="field__hint">{t("graphSteps.algo.limitAdmin")}</p>
           ) : null}
         </>
       ) : null}
@@ -80,14 +80,14 @@ export function AlgoOutcome({ step, outcome, onServer, onFilterBefore, onUse }: 
                 className="button button--ghost button--small"
                 onClick={() => onUse("size", property)}
               >
-                {t("analysis.algo.useSize")}
+                {t("graphSteps.algo.useSize")}
               </button>
               <button
                 type="button"
                 className="button button--ghost button--small"
                 onClick={() => onUse("color", property)}
               >
-                {t("analysis.algo.useColor")}
+                {t("graphSteps.algo.useColor")}
               </button>
             </>
           ) : null}
@@ -97,7 +97,7 @@ export function AlgoOutcome({ step, outcome, onServer, onFilterBefore, onUse }: 
               className="button button--ghost button--small"
               onClick={() => onUse("groups", property)}
             >
-              {t("analysis.algo.useGroups")}
+              {t("graphSteps.algo.useGroups")}
             </button>
           ) : null}
         </div>

@@ -525,7 +525,7 @@ export function QuickSheet({
                 className="button button--ghost button--small"
                 onClick={() => onSize(state.measure)}
               >
-                {t("analysis.algo.useSize")}
+                {t("graphCanvas.quick.useSize")}
               </button>
             )}
           </>
@@ -543,7 +543,7 @@ export function QuickSheet({
       <h3 className="graph-quick__title" id={titleId}>
         {title}
       </h3>
-      {quick.pending ? <p className="field__hint">{t("analysis.algo.running")}</p> : null}
+      {quick.pending ? <p className="field__hint">{t("graphCanvas.quick.running")}</p> : null}
       {quick.failure === null ? null : <p className="steps__error">{quick.failure}</p>}
       {body}
       <p className="field__hint">{t("graphCanvas.quick.honest")}</p>
