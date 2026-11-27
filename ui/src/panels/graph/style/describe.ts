@@ -77,6 +77,14 @@ export function targetText(
     case "label":
     case "badge":
       return t("graphStyle.quoted", { name, text: String(value) });
+    case "sizeBy": {
+      const by = value as { property: string; min: number; max: number };
+      return t("graphStyle.sizeBy.text", {
+        property: by.property,
+        min: String(by.min),
+        max: String(by.max),
+      });
+    }
     default:
       return `${name} ${String(value)}`;
   }

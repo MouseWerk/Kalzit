@@ -162,5 +162,11 @@
   "graphStyle.sheet.viewOnly": "Changes here apply only for you and only in this view. They are saved in edit mode.",
   "graphStyle.sheet.reset": "Reset",
   "graphStyle.table.hint": "For node and edge tables made from a graph: color as a dot before the value, icon and badge at the label, a label rule replaces the text. An edge table takes only the color. The table needs the column @labels or @type for it.",
-  "graphStyle.table.ruleWins": "Column {column}: rule {rule} applies before the color scheme, thresholds and value mappings of this column. They stay saved and apply again when the rule is off."
+  "graphStyle.table.ruleWins": "Column {column}: rule {rule} applies before the color scheme, thresholds and value mappings of this column. They stay saved and apply again when the rule is off.",
+  "graphStyle.target.sizeBy": "Size by value",
+  "graphStyle.sizeBy.text": "Size by {property}, from {min} to {max}",
+  "graphStyle.sizeBy.property": "Number property",
+  "graphStyle.sizeBy.min": "Smallest node",
+  "graphStyle.sizeBy.max": "Largest node",
+  "graphStyle.sizeBy.hint": "Value range from the result. The area grows with the value; nodes without a number keep their size."
 }

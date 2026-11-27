@@ -10,6 +10,7 @@ import {
   MAX_VALUE_COLORS,
   type NodeTargets,
   PALETTE_COLORS,
+  type SizeByValue,
   type StyleColor,
   type StyleRule,
 } from "./schema";
@@ -431,6 +432,12 @@ export function evaluateRules(
     }
     report.matched = hits.length;
     if (!rule.on) return;
+    // A size by value rests like a rule whose property the result lacks (a step turned off).
+    const sizes = sizeByValue(rule.set.sizeBy, hits, items);
+    if (sizes === null) {
+      report.state = "dormant";
+      return;
+    }
     // "Is missing" matches exactly the items without the property, so it never rests.
     const asksForAbsence = when.kind === "condition" && when.op === "missing";
     if (!present && !asksForAbsence) {
@@ -449,6 +456,11 @@ export function evaluateRules(
         const badge = fillTemplate(set.badge, item.properties, MAX_BADGE_CHARS);
         if (badge === "") delete set.badge;
         else set.badge = badge;
+      }
+      if (set.sizeBy !== undefined) {
+        delete set.sizeBy;
+        const size = sizes.get(i);
+        if (size !== undefined) set.size = size;
       }
       apply(i, r, set);
     }
@@ -471,6 +483,35 @@ export function evaluateRules(
   });
 
   return { styles, rules: reports };
+}
+
+/**
+ * The sizes a size by value gives the items `hits`: their number property mapped onto `min` to
+ * `max` over the smallest and largest value among them, by the square root (the area grows with
+ * the value). Items without a number keep their size; equal values all take the middle. An
+ * empty map without a size by value, null when no item has a number of the property.
+ */
+export function sizeByValue(
+  sizeBy: SizeByValue | undefined,
+  hits: readonly number[],
+  items: readonly StyleItem[],
+): Map<number, number> | null {
+  const out = new Map<number, number>();
+  if (sizeBy === undefined) return out;
+  const values = new Map<number, number>();
+  for (const i of hits) {
+    const v = readNumber((items[i] as StyleItem).properties[sizeBy.property]);
+    if (v !== null) values.set(i, v);
+  }
+  if (values.size === 0) return null;
+  const all = [...values.values()];
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  for (const [i, v] of values) {
+    const share = hi === lo ? 0.5 : Math.sqrt((v - lo) / (hi - lo));
+    out.set(i, Math.round((sizeBy.min + (sizeBy.max - sizeBy.min) * share) * 10) / 10);
+  }
+  return out;
 }
 
 /**

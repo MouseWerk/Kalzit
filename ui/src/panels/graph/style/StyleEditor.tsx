@@ -709,6 +709,8 @@ function defaultOf(key: TargetKey): unknown {
       return "chart-1";
     case "size":
       return RULE_SIZE.default;
+    case "sizeBy":
+      return { property: "", min: 5, max: 17 };
     case "width":
       return RULE_WIDTH.default;
     case "shape":
@@ -1068,6 +1070,36 @@ function TargetField({
           max={bounds.max}
           onChange={onChange}
         />
+      );
+      break;
+    }
+    case "sizeBy": {
+      const by = value as { property: string; min: number; max: number };
+      control = (
+        <fieldset className="graph-style-size-by">
+          <legend className="field__label">{name}</legend>
+          <TextField
+            label={t("graphStyle.sizeBy.property")}
+            value={by.property}
+            mono
+            onChange={(property) => onChange({ ...by, property })}
+          />
+          <RangeField
+            label={t("graphStyle.sizeBy.min")}
+            value={by.min}
+            min={RULE_SIZE.min}
+            max={RULE_SIZE.max}
+            onChange={(min) => onChange({ ...by, min, max: Math.max(min, by.max) })}
+          />
+          <RangeField
+            label={t("graphStyle.sizeBy.max")}
+            value={by.max}
+            min={RULE_SIZE.min}
+            max={RULE_SIZE.max}
+            onChange={(max) => onChange({ ...by, max, min: Math.min(max, by.min) })}
+          />
+          <p className="field__hint">{t("graphStyle.sizeBy.hint")}</p>
+        </fieldset>
       );
       break;
     }

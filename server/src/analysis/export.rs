@@ -405,6 +405,8 @@ pub fn graph_part(graph: &GraphSet, ids: &[String]) -> GraphSet {
         schema: graph.schema.clone(),
         truncated: graph.truncated.clone(),
         notices: graph.notices.clone(),
+        // Suggested edges are no data of the source: an export of a part leaves them out too.
+        suggested: None,
     }
 }
 
@@ -1522,7 +1524,7 @@ mod tests {
                     properties: props(vec![]),
                 },
             ],
-            paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+            paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()], values: None }]),
             ..GraphSet::default()
         }
     }

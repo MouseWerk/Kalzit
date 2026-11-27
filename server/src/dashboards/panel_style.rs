@@ -107,12 +107,23 @@ enum When {
     },
 }
 
+/// A size from a node's number property, from `min` to `max` px (board Graph082, decision 1).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SizeBy {
+    property: String,
+    min: u32,
+    max: u32,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct NodeTargets {
     color: Option<StyleColor>,
     size: Option<u32>,
+    #[serde(rename = "sizeBy")]
+    size_by: Option<SizeBy>,
     shape: Option<RuleShape>,
     icon: Option<String>,
     border: Option<RuleBorder>,
@@ -249,6 +260,17 @@ pub fn check(at: &str, style: &GraphStyle) -> Result<(), String> {
         let at = format!("{at}.nodes[{i}]");
         check_rule(&at, rule, &mut ids)?;
         check_range(&format!("{at}.set.size"), rule.set.size, MIN_RULE_SIZE, MAX_RULE_SIZE)?;
+        if let Some(by) = &rule.set.size_by {
+            if by.property.is_empty() {
+                return Err(format!("{at}.set.sizeBy.property must not be empty"));
+            }
+            check_text(&format!("{at}.set.sizeBy.property"), &by.property)?;
+            check_range(&format!("{at}.set.sizeBy.min"), Some(by.min), MIN_RULE_SIZE, MAX_RULE_SIZE)?;
+            check_range(&format!("{at}.set.sizeBy.max"), Some(by.max), MIN_RULE_SIZE, MAX_RULE_SIZE)?;
+            if by.min > by.max {
+                return Err(format!("{at}.set.sizeBy.min must not be above max"));
+            }
+        }
         if let Some(icon) = &rule.set.icon
             && !is_icon_name(icon)
         {
@@ -313,6 +335,7 @@ mod tests {
                 rule("r3", condition("number", "gte"), json!({ "badge": "Top", "size": 40, "shape": "hexagon" })),
                 rule("r4", condition("date", "lastDays"), json!({ "border": "dashed", "label": "{name} (gekündigt)", "color": "critical" })),
                 rule("r5", condition("boolean", "false"), json!({ "color": "neutral", "size": 2, "border": "none" })),
+                rule("r7", json!({ "kind": "always" }), json!({ "sizeBy": { "property": "pagerank", "min": 5, "max": 17 } })),
                 rule("r6", condition("text", "startsWith"), json!({ "shape": "triangle", "color": "neutral-strong" })),
             ],
             "edges": [
@@ -382,6 +405,22 @@ mod tests {
                 "options.style.nodes[0].set.size",
             ),
             (nodes(json!([rule("r1", always(), json!({ "size": 1 }))])), "options.style.nodes[0].set.size"),
+            (
+                nodes(json!([rule("r1", always(), json!({ "sizeBy": { "property": "", "min": 5, "max": 9 } }))])),
+                "options.style.nodes[0].set.sizeBy.property",
+            ),
+            (
+                nodes(json!([rule("r1", always(), json!({ "sizeBy": { "property": "p", "min": 9, "max": 5 } }))])),
+                "options.style.nodes[0].set.sizeBy.min",
+            ),
+            (
+                nodes(json!([rule("r1", always(), json!({ "sizeBy": { "property": "p", "min": 1, "max": 5 } }))])),
+                "options.style.nodes[0].set.sizeBy.min",
+            ),
+            (
+                edges(json!([rule("e1", always(), json!({ "sizeBy": { "property": "p", "min": 5, "max": 9 } }))])),
+                "unknown field",
+            ),
             (nodes(json!([rule("r1", always(), json!({ "shape": "star" }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "../x" }))])), "options.style.nodes[0].set.icon"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "User" }))])), "options.style.nodes[0].set.icon"),
