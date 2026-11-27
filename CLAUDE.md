@@ -75,7 +75,13 @@ where it is more specific.
 - Every query result keeps its native shape (`frame`, `documents`, `graph`, and `trace` from
   0.7.5); conversions are
   explicit, visible projection steps in the query, never implicit in the backend.
-- Data sources are read-only by default; write queries are rejected server-side.
+- Data sources are read-only by default; write queries are rejected server-side. One narrow
+  exception (owner decision 2026-11-27, board Graph083 D16): Kalzit may install its own shipped,
+  reviewed, read-only GSQL queries (`kalzit_…`) in TigerGraph through a separate install access
+  per source (only those who may edit the data source, secret store, off by default, refused when
+  it may write data or schema; never without confirmation showing the exact text; aborts on a
+  name it did not create and removes only its own; checksum before every run; audited); the query
+  access stays read-only.
 - Windows and Linux servers are both first-class: CI, e2e and releases run on both.
 - Frontend uses the current stack as of October 2026 (React 19 with React Compiler, TypeScript 7,
   Vite 8, TanStack Router and Query, Biome, Vitest, Playwright) and modern CSS without a framework.

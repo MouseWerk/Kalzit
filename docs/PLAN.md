@@ -1286,8 +1286,21 @@ Algorithmen und Pfade im Einzelnen:
   Vervollständigung filtert danach); Memgraph über eine feste Schema-Abfrage von Kalzit, wenn der
   Server mit Schema-Info läuft, sonst Stichprobe wie bisher.
 - TigerGraph: Explorer (Nachbarn mit Typ und Richtung über erzeugtes GSQL), Ausführung von
-  Schritten in der Datenbank, Algorithmen über vom Admin installierte, nur lesende Varianten der
-  Bibliotheksabfragen (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server;
+  Schritten in der Datenbank, Algorithmen über nur lesende GSQL-Abfragen, die Kalzit selbst
+  mitbringt (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server. Diese Abfragen
+  installiert Kalzit über einen eigenen Installations-Zugang je Quelle (Entscheidung des
+  Inhabers vom 27.11.2026, Board Graph083, D16): standardmäßig aus, nur von denen gesetzt, die
+  die Datenquelle bearbeiten dürfen, im verschlüsselten Secret Store; ein Zugang mit
+  Schreibrechten auf Daten oder Schema wird abgelehnt. Kalzit legt nur eigene `kalzit_…`-Abfragen
+  an, bricht ab, wenn der Name schon von anderer Hand existiert, und entfernt nur, was es selbst
+  installiert hat. Nie ohne Bestätigung: jede Installation, Aktualisierung und Entfernung zeigt
+  den exakten GSQL-Text und fragt vorher, auch nach einem Kalzit-Update; nichts geschieht
+  automatisch. Vor jeder Ausführung vergleicht Kalzit die Prüfsumme des installierten Texts, den
+  der Installations-Zugang liest (nur lesend), mit der gespeicherten; weicht sie ab, läuft der
+  Schritt auf dem Kalzit-Server. Installation, Aktualisierung, Entfernung, das Speichern des
+  Zugangs und das Einschalten stehen im Audit-Log; der Abfrage-Zugang bleibt nur lesend und
+  führt die Abfragen aus, die Prüfung auf `graphUpdate` gilt weiter. Ohne Installations-Zugang
+  erkennt Kalzit vom Datenbank-Admin installierte Abfragen;
   GSQL-Vervollständigung (Vertex- und Kantentypen, Attribute, Richtungen, Akkumulator-Typen);
   nächtliche CI auch gegen 3.10, sofern ein frei nutzbares Image verfügbar ist, sonst
   Fake-Tests.
