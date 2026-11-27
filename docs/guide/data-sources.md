@@ -396,7 +396,9 @@ source gets "not found". See [Administration](administration.md#roles-and-permis
 
 **Delete...** moves a data source to the **Trash** (**Data sources** > **Trash**). Dashboards that
 use it show an error until you **Restore** it. Only members who may change data sources see the
-trash.
+trash. A source stays in the trash with its stored passwords for 30 days, then it is deleted for
+good; a server admin sets the number of days under **Settings > Storage and retention** ("Data
+source trash (days)", 1 to 3650). Each row of the trash shows the day its source goes.
 
 **Delete for good...** in the trash removes a data source and its stored passwords and keys for
 good, after you confirm. It does not work while a dashboard (also one in the trash) or a library

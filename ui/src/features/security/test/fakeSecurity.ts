@@ -36,6 +36,12 @@ export interface FakeSecurity {
   freshSignInUntil: number | null;
   /** Until when the session's provider sign-in stands in for the password. */
   providerSignInUntil: number | null;
+  /** The OpenID Connect provider the session signs in again at, if any. */
+  reauthProvider: { slug: string; name: string } | null;
+  /** Until when the session's sign-in again at its provider confirms the first factor. */
+  providerConfirmedUntil: number | null;
+  /** The bodies of `POST /me/security/confirm/provider`. */
+  reauthStarts: unknown[];
   /** Resets an admin made, by path, with their body. */
   resets: { path: string; body: unknown }[];
   /** The recent sign-ins every list answers, and the paths that asked for them. */
@@ -63,6 +69,9 @@ export function fakeSecurityState(): FakeSecurity {
     linked: [],
     freshSignInUntil: null,
     providerSignInUntil: null,
+    reauthProvider: null,
+    providerConfirmedUntil: null,
+    reauthStarts: [],
     resets: [],
     signIns: [],
     signInRequests: [],
@@ -238,14 +247,22 @@ export function handleSecurityRoute(
   // The first factor needs the password, the others the factor, confirmed in the last minutes.
   const signInFresh = s.freshSignInUntil !== null && s.freshSignInUntil > now;
   const providerFresh = s.providerSignInUntil !== null && s.providerSignInUntil > now;
-  const mayEnroll = has ? fresh : s.hasPassword ? passwordFresh || providerFresh : signInFresh;
+  const confirmedAtProvider = s.providerConfirmedUntil !== null && s.providerConfirmedUntil > now;
+  const mayEnroll = has
+    ? fresh
+    : confirmedAtProvider ||
+      (s.hasPassword ? passwordFresh || providerFresh : s.reauthProvider === null && signInFresh);
   const enrollRefused = () =>
     has
       ? fail(403, "confirmation_required")
       : fail(
           403,
           "confirmation_required",
-          s.hasPassword ? "second_factor.confirm_password" : "second_factor.sign_in_again",
+          s.hasPassword
+            ? "second_factor.confirm_password"
+            : s.reauthProvider === null
+              ? "second_factor.sign_in_again"
+              : "second_factor.reauthenticate",
         );
   if (path === "/api/me/security" && method === "GET") {
     return json(200, {
@@ -262,10 +279,22 @@ export function handleSecurityRoute(
       passwordConfirmedUntil: passwordFresh ? s.passwordConfirmedUntil : null,
       freshSignInUntil: signInFresh ? s.freshSignInUntil : null,
       providerSignInUntil: providerFresh ? s.providerSignInUntil : null,
+      providerConfirmedUntil: confirmedAtProvider ? s.providerConfirmedUntil : null,
+      reauthProvider: s.reauthProvider,
       lockedUntil: s.lockedUntil !== null && s.lockedUntil > now ? s.lockedUntil : null,
       hasPassword: s.hasPassword,
       linked: s.linked,
     });
+  }
+  if (path === "/api/me/security/confirm/provider" && method === "POST") {
+    if (has) {
+      return fail(409, "conflict", "second_factor.has_factor");
+    }
+    if (s.reauthProvider === null) {
+      return fail(409, "conflict", "second_factor.no_reauth_provider");
+    }
+    s.reauthStarts.push(input);
+    return json(200, { url: "https://idp.example/authorize?max_age=0&prompt=login" });
   }
   if (path === "/api/me/security/confirm" && method === "POST") {
     const refused = proofOk();

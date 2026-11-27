@@ -30,9 +30,19 @@ Passwort allein niemanden mehr an: Nach dem Passwort fragt Kalzit nach einer die
 Deine erste Methode fragt zuerst nach deinem Passwort, damit niemand, der einen deiner
 angemeldeten Browser übernommen hat, einen eigenen zweiten Faktor einrichten kann. Meldest du dich
 nur über einen Anbieter oder einen Verzeichnisdienst an und hast kein Passwort, bittet sie dich
-zuerst, dich erneut anzumelden, außer du hast dich in den letzten fünf Minuten angemeldet. Das
-Einrichten meldet dich auf allen anderen Geräten und Browsern ab; melde dich dort mit dem neuen
-zweiten Faktor wieder an.
+zuerst, dich erneut anzumelden, außer du hast dich in den letzten fünf Minuten angemeldet. Ist
+dieser Anbieter ein OpenID-Connect-Anbieter (etwa Keycloak, Entra ID oder Authentik), wähle stattdessen
+**Bei … anmelden** mit dem Namen des Anbieters: Der Anbieter fragt erneut nach deiner Anmeldung,
+auch wenn du dort noch angemeldet bist, und schickt dich zurück auf diese Seite; danach hast du fünf
+Minuten, um die Methode einzurichten. Ein Browser, der beim Anbieter angemeldet geblieben ist,
+reicht nicht. Das Einrichten meldet dich auf allen anderen Geräten und Browsern ab; melde dich dort
+mit dem neuen zweiten Faktor wieder an.
+
+Gibt jemand in einem angemeldeten Browser dein Passwort dreimal hintereinander falsch ein (beim
+Ändern des Passworts oder beim Bestätigen für einen zweiten Faktor), schreibt Kalzit das ins
+Audit-Log und sagt es dir per Mail, wenn es Mails senden kann. Warst du das nicht, beende unter
+**Einstellungen > Anmeldung und Sicherheit** die Sitzungen, die du nicht kennst, und ändere dein
+Passwort.
 
 Eine Methode entfernen, neue Wiederherstellungscodes erstellen, eine weitere Methode hinzufügen
 und dein Passwort ändern verlangen zuerst eine Bestätigung mit einer Methode, die du hast (einem

@@ -6,6 +6,7 @@ import type enApps from "./en/apps.json";
 import type enGraphCanvas from "./en/graphCanvas.json";
 import type enGraphStyle from "./en/graphStyle.json";
 import type enHandbook from "./en/handbook.json";
+import type enMap from "./en/map.json";
 import type enProvisioning from "./en/provisioning.json";
 import type enReports from "./en/reports.json";
 import type enServerAdmin from "./en/serverAdmin.json";
@@ -20,7 +21,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enApps &
   typeof enGraphStyle &
   typeof enGraphCanvas &
-  typeof enHandbook;
+  typeof enHandbook &
+  typeof enMap;
 
 export const DEFERRED_AREAS = [
   "sharing",
@@ -38,6 +40,8 @@ export const DEFERRED_AREAS = [
   "graphCanvas",
   // The built-in handbook: its page, the search and the article's parts (src/handbook).
   "handbook",
+  // The map panel: its texts, options and hints load with the first map.
+  "map",
 ] as const;
 export type DeferredArea = (typeof DEFERRED_AREAS)[number];
 
@@ -82,5 +86,9 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   handbook: {
     de: () => import("./de/handbook.json").then(pick),
     en: () => import("./en/handbook.json").then(pick),
+  },
+  map: {
+    de: () => import("./de/map.json").then(pick),
+    en: () => import("./en/map.json").then(pick),
   },
 };

@@ -38,6 +38,7 @@ export const BUILTIN_AREAS: readonly AreaDef[] = [
     detail: "shortcuts.area.graphDetail",
     focus: ".graph__stage",
   },
+  { id: "map", title: "shortcuts.area.map", detail: "shortcuts.area.mapDetail", focus: ".map" },
   {
     id: "graphStyle",
     title: "shortcuts.area.graphStyle",
@@ -497,6 +498,12 @@ export const BUILTIN_SHORTCUTS = [
     keys: [combo("Alt", "ArrowDown")],
     partOf: "graphStyle.move",
   },
+
+  // Map, with the focus on the map; the arrow keys read the places as in every chart
+  { id: "map.zoom", area: "map", keys: [keySet([], "+", "-", "0")], label: "shortcuts.map.zoom" },
+  { id: "map.zoomIn", area: "map", keys: [combo("+"), combo("=")], partOf: "map.zoom" },
+  { id: "map.zoomOut", area: "map", keys: [combo("-")], partOf: "map.zoom" },
+  { id: "map.zoomReset", area: "map", keys: [combo("0")], partOf: "map.zoom" },
 
   // Traces, with the focus on the waterfall
   {

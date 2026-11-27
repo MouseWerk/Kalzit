@@ -36,6 +36,37 @@ Aktualisierungen, den Katalog und ob unsignierte Plugins erlaubt sind. **Alle**,
   Versuchs, **Angehalten** nach wiederholten Fehlern, **Nicht geladen** mit dem Grund (zum Beispiel
   ein Linux-Server ohne Landlock) und **Angehalten: Schlüssel nicht vertraut**.
 
+## Plugin-Ordner
+
+Installierte Plugins liegen im Ordner `plugins` im Datenordner. Sollen sie woanders liegen (etwa
+auf einer größeren Platte), setze den Ordner in `kalzit.toml` oder in der Umgebung und starte Kalzit
+neu:
+
+```toml
+[paths]
+plugins_dir = "/srv/kalzit/plugins"   # Windows: 'D:\Kalzit\plugins'
+```
+
+oder `KALZIT_PATHS_PLUGINS_DIR=/srv/kalzit/plugins`. Ein relativer Pfad zählt ab dem Ordner von
+`kalzit.toml` (aus der Umgebung: ab dem Arbeitsordner, mit einer Warnung). Kalzit startet nicht mit
+einem Ordner, der ein Systempfad ist (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, die Wurzel eines
+Laufwerks, `C:\Windows`, `C:\Program Files` und ähnliche), der Datenordner selbst, ein Ordner
+darüber, ein anderer Ordner darin oder der Ordner von `kalzit.toml`. Der Ordner muss fehlen, leer
+sein oder nur Kalzits eigene Ordner enthalten (`packages`, `run`, `uploads`): einen allgemeinen Ordner
+mit anderen Dateien darin (etwa `D:\Tools`) lehnen der Start, die Sicherung und die Wiederherstellung ab.
+Dateien, die der Dateimanager des Systems von selbst anlegt (`desktop.ini`, `Thumbs.db`,
+`.DS_Store`), zählen nicht.
+
+Beim nächsten Start zieht ein vorhandener Ordner `plugins` im Datenordner an den neuen Ort um. Das
+geht nur auf demselben Laufwerk oder Dateisystem; sonst hält der Start an und sagt es: Verschiebe
+den Ordner bei gestopptem Kalzit von Hand (kopieren und den alten löschen) oder lass die Einstellung
+weg. Liegen in beiden Ordnern Dateien, nutzt Kalzit den neuen und schreibt ins Log, dass der alte
+nicht mehr genutzt wird; lösche ihn, sobald die Plugins laufen. Der Ordner muss dem Konto gehören,
+unter dem Kalzit läuft, und für alle anderen gesperrt sein (unter Linux Modus 0700), denn Kalzit
+startet die Programme darin; ein fehlender Ordner wird so angelegt. Sicherungen nehmen die Plugins
+aus diesem Ordner, und eine Wiederherstellung legt sie dorthin zurück. **Einstellungen > Speicher
+und Aufbewahrung** zeigt den genutzten Ordner.
+
 ## Aus Datei installieren
 
 **Aus Datei installieren…** funktioniert ohne Internet, für jedes Plugin. Zieh das Paket (eine

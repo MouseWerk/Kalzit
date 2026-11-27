@@ -846,6 +846,30 @@ const PROPERTY_OPTIONS: &[&str] = &["colorProperty", "sizeBy", "edgeWidthBy", "t
 /// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
 const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
 
+/// The map panel (`ui/src/panels/map`): of a graph it shows a node's name and place and nothing
+/// else, so a link's visitors get no other property, whatever its options say.
+const MAP_PANEL: &str = "map";
+/// The names the map takes for latitude and longitude when a layer names none, the earliest
+/// first, in lower case (`LAT_NAMES` and `LON_NAMES` in `ui/src/panels/map/suggest.ts`). `y` and
+/// `x` are only taken as a pair, and only when no other name is there.
+const MAP_LAT_NAMES: &[&str] = &["lat", "latitude", "breite", "breitengrad"];
+const MAP_LON_NAMES: &[&str] = &["lon", "lng", "long", "longitude", "länge", "laenge", "längengrad"];
+/// The names under which the map looks for a point value (`POINT_NAMES` there).
+const MAP_POINT_NAMES: &[&str] = &["location", "standort", "point", "position", "coordinates", "geo", "ort"];
+/// The names under which the map looks for a geohash (`GEOHASH_NAMES` there).
+const MAP_GEOHASH_NAMES: &[&str] = &["geohash", "geohash_grid", "hash", "zelle", "cell"];
+/// Reference systems the map takes a typed point in (WGS 84 in two and three dimensions).
+const MAP_GEOGRAPHIC_SRIDS: &[f64] = &[4326.0, 4979.0];
+/// The map's limits on stored layers (`MAX_LAYERS`, `MAX_FIELD_CHARS` in
+/// `ui/src/panels/map/options.ts`) and on a geohash (`MAX_GEOHASH_CHARS`).
+const MAP_MAX_LAYERS: usize = 4;
+const MAP_MAX_FIELD_CHARS: usize = 100;
+const MAP_MAX_GEOHASH_CHARS: usize = 12;
+const MAP_GEOHASH_ALPHABET: &str = "0123456789bcdefghjkmnpqrstuvwxyz";
+/// How deep a typed number or a list is followed into for a value's text; the UI follows any
+/// depth, real values are one or two levels deep.
+const MAP_MAX_DEPTH: usize = 8;
+
 /// Sets the flag when the request that runs steps goes away, so the blocking run stops.
 struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -857,11 +881,12 @@ impl Drop for CancelOnDrop {
 
 /// What a panel shows of an answer (owner decision D2), worked out on the server: the panel's
 /// enabled steps run here (graph steps that already ran with their query are not run again),
-/// answers of hidden queries are left out, and a graph panel without property details keeps only
-/// the properties its options name and each node's caption. Errors keep their place; a step that
-/// fails, or does not even parse, answers a neutral error for every shown query. The visitor's
-/// page then draws the answers without steps. Runs hold one of `Sharing`'s step slots and stop
-/// when the request goes away.
+/// answers of hidden queries are left out, a graph panel without property details keeps only
+/// the properties its options name and each node's caption, and a map keeps of a graph's nodes
+/// only each points layer's caption text and the place it reads, in their smallest form. Errors
+/// keep their place; a step that fails, or does not even parse, answers a neutral error for every
+/// shown query. The visitor's page then draws the answers without steps. Runs hold one of
+/// `Sharing`'s step slots and stop when the request goes away.
 ///
 /// The flag says whether the answer may be kept for other visitors: only when every shown query
 /// answered. An error (a busy server, a failed or timed-out step, a source that failed) is sent
@@ -1008,6 +1033,20 @@ fn shown(
             }
         }
     }
+    if panel.kind == MAP_PANEL {
+        let layers = map_points_layers(&panel.options);
+        for outcome in results.values_mut() {
+            if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
+                for node in &mut graph.nodes {
+                    node.properties = map_node_properties(&layers, &node.properties);
+                }
+                for edge in &mut graph.edges {
+                    edge.properties.clear();
+                }
+                prune_schema(graph);
+            }
+        }
+    }
     QueryResponse { results }
 }
 
@@ -1038,6 +1077,11 @@ fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, capt
     for edge in &mut graph.edges {
         edge.properties.retain(|k, _| named.contains(k.as_str()));
     }
+    prune_schema(graph);
+}
+
+/// The schema lists only the property keys a node or an edge still has.
+fn prune_schema(graph: &mut crate::shapes::GraphSet) {
     let kept: BTreeSet<String> = graph
         .nodes
         .iter()
@@ -1048,6 +1092,275 @@ fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, capt
     for keys in graph.schema.property_keys.values_mut() {
         keys.retain(|k| kept.contains(k));
     }
+}
+
+/// A number as the map reads one (`readNumber` in `ui/src/panels/graph/adapter.ts`): a finite
+/// number, a decimal text, or a typed `int64` or `decimal`.
+fn map_number(value: &Value) -> Option<f64> {
+    let mut value = value;
+    for _ in 0..MAP_MAX_DEPTH {
+        match value {
+            Value::Number(n) => return n.as_f64().filter(|f| f.is_finite()),
+            Value::String(s) => {
+                let digits = s.strip_prefix('-').unwrap_or(s);
+                let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
+                let all = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+                return (all(int) && frac.is_none_or(all))
+                    .then(|| s.parse().ok())
+                    .flatten()
+                    .filter(|f: &f64| f.is_finite());
+            }
+            Value::Object(o) if matches!(o.get("$type").and_then(Value::as_str), Some("int64" | "decimal")) => {
+                value = o.get("value")?;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// A latitude and a longitude that make a place on the map (`latLon` there).
+fn map_lat_lon(lat: Option<&Value>, lon: Option<&Value>) -> Option<(f64, f64)> {
+    let (lat, lon) = (map_number(lat?)?, map_number(lon?)?);
+    (lat.abs() <= 90.0 && lon.abs() <= 180.0).then_some((lat, lon))
+}
+
+/// The place in one value as the map reads it (`readPoint` there): a typed `point` in WGS 84, a
+/// GeoJSON point, an object with latitude and longitude, or a `POINT(lon lat)` text.
+fn map_point(value: &Value) -> Option<(f64, f64)> {
+    if let Some(text) = value.as_str() {
+        let upper = text.trim().to_ascii_uppercase();
+        let inner = upper.strip_prefix("POINT")?.trim_start().strip_prefix('(')?.strip_suffix(')')?;
+        let mut parts = inner.split_whitespace();
+        let (lon, lat) = (parts.next()?, parts.next()?);
+        if parts.next().is_some() {
+            return None;
+        }
+        return map_lat_lon(Some(&Value::String(lat.into())), Some(&Value::String(lon.into())));
+    }
+    let o = value.as_object()?;
+    if o.get("$type").and_then(Value::as_str) == Some("point") {
+        let srid = o.get("srid").and_then(map_number)?;
+        return if MAP_GEOGRAPHIC_SRIDS.contains(&srid) { map_lat_lon(o.get("y"), o.get("x")) } else { None };
+    }
+    // A GeoJSON point needs its list of coordinates; without one it reads as an object.
+    if o.get("type").and_then(Value::as_str) == Some("Point")
+        && let Some(c) = o.get("coordinates").and_then(Value::as_array)
+    {
+        return map_lat_lon(c.get(1), c.first());
+    }
+    // `latitude ?? lat`: a missing or null value takes the next name.
+    let first = |names: &[&str]| names.iter().find_map(|k| o.get(*k).filter(|v| !v.is_null()));
+    map_lat_lon(first(&["latitude", "lat"]), first(&["longitude", "lon", "lng"]))
+}
+
+/// A value as JavaScript's `String()` writes it, as far as a property value goes.
+fn map_js_string(value: &Value, depth: usize) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => map_js_number(n),
+        Value::String(s) => s.clone(),
+        Value::Array(items) if depth < MAP_MAX_DEPTH => items
+            .iter()
+            .map(|v| if v.is_null() { String::new() } else { map_js_string(v, depth + 1) })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Array(_) => String::new(),
+        Value::Object(_) => "[object Object]".into(),
+    }
+}
+
+/// A number as JavaScript writes it: whole numbers without a decimal point.
+fn map_js_number(n: &serde_json::Number) -> String {
+    match n.as_f64() {
+        Some(f) if !n.is_i64() && !n.is_u64() && f.fract() == 0.0 && f.abs() < 1e21 => format!("{f:.0}"),
+        _ => n.to_string(),
+    }
+}
+
+/// A property value as the text a node is shown with (`propertyText` in
+/// `ui/src/panels/graph/adapter.ts`).
+fn map_property_text(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s.clone(),
+        Some(v @ (Value::Number(_) | Value::Bool(_))) => map_js_string(v, 0),
+        Some(Value::Object(o)) if o.get("$type").is_some_and(Value::is_string) && o.contains_key("value") => {
+            map_js_string(&o["value"], 0)
+        }
+        Some(v) => v.to_string(),
+    }
+}
+
+/// A geohash as the map reads one: the value as text, trimmed, 1 to 12 characters of the
+/// geohash alphabet (`isGeohash` in `ui/src/panels/map/geohash.ts`).
+fn map_geohash(value: &Value) -> Option<String> {
+    let text = match value {
+        Value::String(s) => s.trim().to_string(),
+        Value::Number(_) | Value::Bool(_) => map_js_string(value, 0),
+        _ => return None,
+    };
+    let ok = (1..=MAP_MAX_GEOHASH_CHARS).contains(&text.chars().count())
+        && text.chars().all(|c| MAP_GEOHASH_ALPHABET.contains(c.to_ascii_lowercase()));
+    ok.then_some(text)
+}
+
+/// The first key with one of `names`, the earliest name first; case does not matter (`named`).
+fn map_named<'a>(properties: &'a BTreeMap<String, Value>, names: &[&str]) -> Option<&'a str> {
+    names.iter().find_map(|name| properties.keys().find(|k| k.to_lowercase() == *name).map(String::as_str))
+}
+
+/// Where a points layer takes a node's place from (`PlaceMode`; a graph node is not looked up by
+/// code, so "lookup" reads as automatic).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MapPlace {
+    Auto,
+    Coords,
+    Geohash,
+}
+
+/// What of a stored map layer decides a graph node's name and place (`parseLayer` in
+/// `ui/src/panels/map/options.ts`): fields trimmed and cut as the UI cuts them.
+struct MapPointsLayer {
+    place: MapPlace,
+    lat: String,
+    lon: String,
+    point: String,
+    geohash: String,
+    caption: String,
+}
+
+/// The points layers of a map panel as the UI reads its options (`parseMapOptions`): the first
+/// four stored layers, or one automatic points layer when none is stored. Areas layers read rows,
+/// never a graph's nodes.
+fn map_points_layers(options: &Value) -> Vec<MapPointsLayer> {
+    let field = |layer: &Value, key: &str| -> String {
+        layer
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|s| s.trim().chars().take(MAP_MAX_FIELD_CHARS).collect())
+            .unwrap_or_default()
+    };
+    let stored: Vec<&Value> = options
+        .get("layers")
+        .and_then(Value::as_array)
+        .map(|layers| layers.iter().take(MAP_MAX_LAYERS).collect())
+        .unwrap_or_default();
+    let default = Value::Object(serde_json::Map::new());
+    let stored = if stored.is_empty() { vec![&default] } else { stored };
+    stored
+        .into_iter()
+        .filter(|layer| layer.get("kind").and_then(Value::as_str) != Some("areas"))
+        .map(|layer| MapPointsLayer {
+            place: match layer.get("place").and_then(Value::as_str) {
+                Some("coords") => MapPlace::Coords,
+                Some("geohash") => MapPlace::Geohash,
+                _ => MapPlace::Auto,
+            },
+            lat: field(layer, "latField"),
+            lon: field(layer, "lonField"),
+            point: field(layer, "pointField"),
+            geohash: field(layer, "geohashField"),
+            caption: field(layer, "caption"),
+        })
+        .collect()
+}
+
+/// The keys a points layer reads a node's place from (`resolveKeys` in
+/// `ui/src/panels/map/points.ts`).
+enum MapKeys {
+    Coords { point: Option<String>, pair: Option<(String, String)> },
+    Geohash(String),
+}
+
+fn map_coords_keys(layer: &MapPointsLayer, properties: &BTreeMap<String, Value>) -> Option<MapKeys> {
+    let pair = if !layer.lat.is_empty() && !layer.lon.is_empty() {
+        Some((layer.lat.clone(), layer.lon.clone()))
+    } else {
+        match (map_named(properties, MAP_LAT_NAMES), map_named(properties, MAP_LON_NAMES)) {
+            (Some(lat), Some(lon)) => Some((lat.to_string(), lon.to_string())),
+            // `x` and `y` only as a pair, and only when no other name is there.
+            (None, None) => map_named(properties, &["y"])
+                .zip(map_named(properties, &["x"]))
+                .map(|(y, x)| (y.to_string(), x.to_string())),
+            _ => None,
+        }
+    };
+    let point = if layer.point.is_empty() {
+        // A usual point name counts only when its value reads as a place.
+        map_named(properties, MAP_POINT_NAMES).filter(|k| map_point(&properties[*k]).is_some()).map(str::to_string)
+    } else {
+        Some(layer.point.clone())
+    };
+    if point.is_none() && pair.is_none() {
+        // A point value under another name, never a text.
+        let found = properties.iter().find(|(_, v)| !v.is_string() && map_point(v).is_some())?;
+        return Some(MapKeys::Coords { point: Some(found.0.clone()), pair: None });
+    }
+    Some(MapKeys::Coords { point, pair })
+}
+
+fn map_geohash_keys(layer: &MapPointsLayer, properties: &BTreeMap<String, Value>) -> Option<MapKeys> {
+    let key = if layer.geohash.is_empty() {
+        map_named(properties, MAP_GEOHASH_NAMES)?.to_string()
+    } else {
+        layer.geohash.clone()
+    };
+    Some(MapKeys::Geohash(key))
+}
+
+/// The properties a node is shown with on a public map, each in its smallest form: per points
+/// layer the caption's text (the layer's caption property, else the first usual name property,
+/// as `nodeCaption` picks it) and the place the layer finds (`locate` in
+/// `ui/src/panels/map/points.ts`): a point as a GeoJSON point, a latitude and a longitude as two
+/// numbers, a geohash as its text. A coordinate without its partner, values that are no place,
+/// keys inside a value and every other property are left out.
+fn map_node_properties(layers: &[MapPointsLayer], properties: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    for layer in layers {
+        let caption = (!layer.caption.is_empty())
+            .then(|| (layer.caption.as_str(), map_property_text(properties.get(&layer.caption))))
+            .filter(|(_, text)| !text.is_empty())
+            .or_else(|| {
+                CAPTION_KEYS
+                    .iter()
+                    .map(|k| (*k, map_property_text(properties.get(*k))))
+                    .find(|(_, text)| !text.is_empty())
+            });
+        if let Some((key, text)) = caption {
+            out.entry(key.to_string()).or_insert(Value::String(text));
+        }
+    }
+    // Places last: when a caption property also holds the place, the place is kept.
+    for layer in layers {
+        let keys = match layer.place {
+            MapPlace::Coords => map_coords_keys(layer, properties),
+            MapPlace::Geohash => map_geohash_keys(layer, properties),
+            MapPlace::Auto => map_coords_keys(layer, properties).or_else(|| map_geohash_keys(layer, properties)),
+        };
+        match keys {
+            Some(MapKeys::Coords { point, pair }) => {
+                if let Some(key) = point
+                    && let Some((lat, lon)) = properties.get(&key).and_then(map_point)
+                {
+                    out.insert(key, serde_json::json!({ "type": "Point", "coordinates": [lon, lat] }));
+                } else if let Some((lat_key, lon_key)) = pair
+                    && let Some((lat, lon)) = map_lat_lon(properties.get(&lat_key), properties.get(&lon_key))
+                {
+                    out.insert(lat_key, serde_json::json!(lat));
+                    out.insert(lon_key, serde_json::json!(lon));
+                }
+            }
+            Some(MapKeys::Geohash(key)) => {
+                if let Some(hash) = properties.get(&key).and_then(map_geohash) {
+                    out.insert(key, Value::String(hash));
+                }
+            }
+            None => {}
+        }
+    }
+    out
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
@@ -1719,6 +2032,191 @@ mod tests {
         assert_eq!(g["nodes"][0]["properties"], json!({ "name": "Ana", "team": "A" }));
         let full = with(true, "");
         assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    /// The properties each node keeps on a public map panel with `options`.
+    fn on_public_map(options: Value, nodes: Vec<Value>) -> Vec<Value> {
+        let nodes: Vec<Value> = nodes
+            .into_iter()
+            .enumerate()
+            .map(|(at, properties)| json!({ "id": format!("n{at}"), "labels": ["Lager"], "properties": properties }))
+            .collect();
+        let graph = json!({ "shape": "graph", "graph": {
+            "nodes": nodes,
+            "edges": [ { "id": "e", "type": "LIEFERT", "from": "n0", "to": "n0", "properties": { "kosten": 3 } } ],
+            "schema": { "labels": ["Lager"], "edgeTypes": ["LIEFERT"],
+                        "propertyKeys": { "Lager": ["name", "umsatz", "lat", "lon"], "LIEFERT": ["kosten"] } } } });
+        let p = panel(json!({
+            "id": "p", "type": "map", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+            "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
+            "options": options
+        }));
+        let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(graph))]) };
+        let shown = serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap();
+        let g = &shown["results"]["A"]["result"]["graph"];
+        assert_eq!(g["edges"][0]["properties"], json!({}));
+        let keys = g["schema"]["propertyKeys"].to_string();
+        assert!(!keys.contains("umsatz") && !keys.contains("kosten"), "{keys}");
+        g["nodes"].as_array().unwrap().iter().map(|n| n["properties"].clone()).collect()
+    }
+
+    fn geo(lon: f64, lat: f64) -> Value {
+        json!({ "type": "Point", "coordinates": [lon, lat] })
+    }
+
+    #[test]
+    fn a_map_reads_places_as_the_ui_does() {
+        assert_eq!(map_point(&json!({ "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55 })), Some((53.55, 9.99)));
+        assert_eq!(map_point(&json!({ "$type": "point", "srid": 7203, "x": 9.99, "y": 53.55 })), None);
+        assert_eq!(map_point(&json!({ "type": "Point", "coordinates": [9.99, 53.55] })), Some((53.55, 9.99)));
+        // Without a list of coordinates a GeoJSON point reads as an object with lat and lon.
+        assert_eq!(
+            map_point(&json!({ "type": "Point", "coordinates": "9.99 53.55", "lat": 1.5, "lon": 2.5 })),
+            Some((1.5, 2.5))
+        );
+        assert_eq!(map_point(&json!({ "type": "Point", "coordinates": { "0": 9.99 } })), None);
+        // A null latitude takes the next name, as `??` does.
+        assert_eq!(map_point(&json!({ "latitude": null, "lat": 53.55, "lng": 9.99 })), Some((53.55, 9.99)));
+        assert_eq!(map_point(&json!({ "lat": 53.55 })), None, "an object with a latitude alone");
+        assert_eq!(map_point(&json!({ "lat": 153.55, "lon": 9.99 })), None, "out of range");
+        assert_eq!(map_point(&json!(" point( 9.99  53.55 ) ")), Some((53.55, 9.99)));
+        assert_eq!(map_point(&json!("POINT(9.99)")), None);
+        assert_eq!(map_point(&json!("POINT(9.99 53.55 7)")), None);
+        assert_eq!(map_point(&json!(53.55)), None);
+        assert_eq!(map_number(&json!("-53.5")), Some(-53.5));
+        assert_eq!(map_number(&json!({ "$type": "int64", "value": "7", "geheim": "x" })), Some(7.0));
+        assert_eq!(map_number(&json!("1e3")), None);
+        assert_eq!(map_number(&json!("53.")), None);
+        assert_eq!(map_geohash(&json!(" u33DB ")), Some("u33DB".into()));
+        assert_eq!(map_geohash(&json!("u33db!")), None);
+        assert_eq!(map_geohash(&json!("u33dbu33dbu33")), None, "longer than twelve");
+        assert_eq!(map_geohash(&json!(123)), Some("123".into()));
+        assert_eq!(map_geohash(&json!({ "hash": "u33" })), None);
+        assert_eq!(map_property_text(Some(&json!(12.0))), "12");
+        assert_eq!(map_property_text(Some(&json!({ "$type": "int64", "value": "42" }))), "42");
+        assert_eq!(map_property_text(Some(&json!({ "a": 1 }))), r#"{"a":1}"#);
+        assert_eq!(map_property_text(Some(&Value::Null)), "");
+    }
+
+    #[test]
+    fn a_map_keeps_only_the_place_its_layers_read_in_its_smallest_form() {
+        let options = json!({ "layers": [
+            { "kind": "points", "place": "coords", "latField": " breite2 ", "lonField": "laenge2" },
+            { "kind": "points", "place": "auto" },
+            // An areas layer reads rows, never a graph: its fields stay out.
+            { "kind": "areas", "keyField": "land", "valueField": "umsatz", "latField": "lat", "lonField": "x" } ] });
+        let shown = on_public_map(
+            options,
+            vec![
+                json!({ "name": "Nord", "umsatz": 12_480, "email": "lager@example.de", "lat": 1.0,
+                    "standort": { "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55, "z": 4, "geheim": "s" } }),
+                json!({ "name": "Ost", "breite2": { "$type": "decimal", "value": "53.5", "geheim": "s" }, "laenge2": "10", "umsatz": 3 }),
+                json!({ "name": "Sued", "lat": 48.1, "Lon": 11.6 }),
+                json!({ "name": "West", "x": 6.9, "y": 50.9 }),
+                json!({ "name": "Kiste", "x": 120 }),
+                json!({ "name": "Regal", "lat": 53.5, "y": 2 }),
+                json!({ "name": "Halle", "lat": 153.5, "lon": 10.0, "geo": { "lat": 1 } }),
+                json!({ "name": "Tor", "ort": { "type": "Point", "coordinates": [7.1, 50.7],
+                    "properties": { "geheim": "s" }, "bbox": [0, 0, 1, 1] } }),
+            ],
+        );
+        // The point value places the node, as a bare GeoJSON point; the stray latitude goes.
+        assert_eq!(shown[0], json!({ "name": "Nord", "standort": geo(9.99, 53.55) }));
+        // The pair the first layer names, as plain numbers.
+        assert_eq!(shown[1], json!({ "name": "Ost", "breite2": 53.5, "laenge2": 10.0 }));
+        // A latitude with its longitude found by name (case does not matter); x with y.
+        assert_eq!(shown[2], json!({ "name": "Sued", "lat": 48.1, "Lon": 11.6 }));
+        assert_eq!(shown[3], json!({ "name": "West", "x": 6.9, "y": 50.9 }));
+        // An x without its y, a latitude without a longitude (a y does not pair with it).
+        assert_eq!(shown[4], json!({ "name": "Kiste" }));
+        assert_eq!(shown[5], json!({ "name": "Regal" }));
+        // A pair that is no place and an object with a latitude alone.
+        assert_eq!(shown[6], json!({ "name": "Halle" }));
+        // A GeoJSON point keeps no other member.
+        assert_eq!(shown[7], json!({ "name": "Tor", "ort": geo(7.1, 50.7) }));
+    }
+
+    #[test]
+    fn a_map_without_stored_layers_reads_places_as_one_automatic_points_layer() {
+        let node = || json!({ "name": "Nord", "lat": 53.5, "lon": 10.0, "umsatz": 5 });
+        let want = json!({ "name": "Nord", "lat": 53.5, "lon": 10.0 });
+        for options in [json!({}), json!({ "layers": [] }), json!({ "layers": "points" }), json!({ "layers": [7] })] {
+            assert_eq!(on_public_map(options.clone(), vec![node()]), std::slice::from_ref(&want), "{options}");
+        }
+        // Only areas layers: no layer draws the graph's nodes, so they keep nothing.
+        assert_eq!(on_public_map(json!({ "layers": [{ "kind": "areas" }] }), vec![node()]), [json!({})]);
+        // A fifth layer is not read.
+        let five = json!({ "layers": [{ "kind": "areas" }, { "kind": "areas" }, { "kind": "areas" }, { "kind": "areas" },
+                                     { "kind": "points" }] });
+        assert_eq!(on_public_map(five, vec![node()]), [json!({})]);
+    }
+
+    #[test]
+    fn a_map_reads_geohashes_and_never_looks_graph_nodes_up_by_code() {
+        let shown = on_public_map(
+            json!({ "layers": [{ "kind": "points", "place": "geohash", "geohashField": "zelle2" }] }),
+            vec![
+                json!({ "name": "A", "zelle2": " u33db ", "lat": 53.5, "lon": 10.0 }),
+                json!({ "name": "B", "zelle2": "u33db!" }),
+                json!({ "name": "C", "zelle2": { "hash": "u33db", "geheim": "s" } }),
+            ],
+        );
+        assert_eq!(shown, [json!({ "name": "A", "zelle2": "u33db" }), json!({ "name": "B" }), json!({ "name": "C" })]);
+        // Automatic: coordinates first, a geohash only when no coordinate key is found at all.
+        let shown = on_public_map(
+            json!({ "layers": [{ "kind": "points", "place": "auto" }] }),
+            vec![
+                json!({ "name": "A", "geohash": "u33db", "land": "DE" }),
+                json!({ "name": "B", "geohash": "u33db", "lat": 153.5, "lon": 10.0 }),
+            ],
+        );
+        assert_eq!(shown, [json!({ "name": "A", "geohash": "u33db" }), json!({ "name": "B" })]);
+        // "lookup" reads a graph node automatically; a code alone places nothing.
+        let shown = on_public_map(
+            json!({ "layers": [{ "kind": "points", "place": "lookup", "keyField": "land" }] }),
+            vec![json!({ "name": "A", "land": "DE" }), json!({ "name": "B", "land": "DE", "lat": 1.0, "lon": 2.0 })],
+        );
+        assert_eq!(shown, [json!({ "name": "A" }), json!({ "name": "B", "lat": 1.0, "lon": 2.0 })]);
+    }
+
+    #[test]
+    fn a_map_keeps_each_layers_caption_as_text() {
+        let options = json!({ "layers": [
+            { "kind": "points", "caption": "kurz" },
+            { "kind": "points", "caption": "nummer", "place": "geohash" },
+            { "kind": "points", "caption": "fehlt", "place": "geohash" } ] });
+        let shown = on_public_map(
+            options,
+            vec![json!({
+            "kurz": { "a": 1 }, "nummer": { "$type": "int64", "value": "42", "geheim": "s" }, "name": "",
+            "title": "Chefin", "label": "L", "lat": 1.0, "lon": 2.0 })],
+        );
+        // Objects become their text; a caption without text falls back to the first usual name
+        // with text (here `title`, as `name` is empty); other name properties go.
+        assert_eq!(shown, [json!({ "kurz": r#"{"a":1}"#, "nummer": "42", "title": "Chefin", "lat": 1.0, "lon": 2.0 })]);
+    }
+
+    #[test]
+    fn a_map_survives_hostile_values() {
+        let huge = "9".repeat(1 << 20);
+        let mut deep = json!("53.5");
+        for _ in 0..100 {
+            deep = json!({ "$type": "decimal", "value": deep });
+        }
+        let mut nested = json!({ "lat": 1.0, "lon": 2.0 });
+        for _ in 0..100 {
+            nested = json!({ "inner": nested });
+        }
+        let shown = on_public_map(
+            json!({}),
+            vec![
+                json!({ "name": "A", "lat": deep, "lon": 10.0, "notiz": huge.clone(), "tief": nested }),
+                json!({ "name": "B", "geo": format!("POINT({huge} 1)"), "ort": format!("POINT(1 {huge}") }),
+                json!({ "name": "C", "geohash": huge }),
+            ],
+        );
+        // Too deep a typed number is no number; nothing else of them is kept.
+        assert_eq!(shown, [json!({ "name": "A" }), json!({ "name": "B" }), json!({ "name": "C" })]);
     }
 
     #[test]

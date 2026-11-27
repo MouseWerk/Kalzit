@@ -339,10 +339,10 @@ pub struct PluginHost {
 }
 
 impl PluginHost {
-    /// The host on `<data_dir>/plugins`. Nothing runs until `load`.
-    pub fn new(data_dir: &Path) -> Self {
+    /// The host on the plugin folder `root` (`Config::plugins_dir`). Nothing runs until `load`.
+    pub fn new(root: &Path) -> Self {
         Self {
-            root: data_dir.join("plugins"),
+            root: root.to_path_buf(),
             options: RwLock::new(Options::default()),
             kalzit_keys: RwLock::new(package::kalzit_keys()),
             running: Arc::default(),
@@ -364,7 +364,7 @@ impl PluginHost {
         // Without this host in it: the state the connector reads must not keep the plugins (and
         // with them their processes) alive once the server lets go of them.
         let mut detached = state;
-        detached.plugins = Arc::new(PluginHost::new(&detached.config.paths.data_dir));
+        detached.plugins = Arc::new(PluginHost::new(&detached.config.plugins_dir()));
         *self.lookup.state.write_or_recover() = Some(detached);
     }
 
@@ -1764,7 +1764,7 @@ api = 1
 
     #[test]
     fn only_generated_package_dir_names_are_accepted() {
-        let host = PluginHost::new(Path::new("data"));
+        let host = PluginHost::new(&Path::new("data").join("plugins"));
         let name = format!("{}", uuid::Uuid::now_v7().simple());
         assert!(is_package_dir_name(&name));
         assert_eq!(host.package_path(&name).unwrap(), host.dir("packages").join(&name));
