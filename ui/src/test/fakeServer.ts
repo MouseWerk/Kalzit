@@ -24,6 +24,7 @@ import {
 } from "../features/security/test/fakeSecurity";
 import { fake075, handle075Route } from "../features/settings/test/fake075";
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
+import { handleMapRoute, mapFake } from "../features/settings/test/fakeMap";
 import { handleSharingPublicRoute, sharingFake } from "../features/sharing/test/fakeSharing";
 import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
 import { shellFake } from "../shell/test/fakeShell";
@@ -157,6 +158,8 @@ const AREA_FAKES = {
   usage: usageFake,
   // CORS, registration, backups and app plugins (0.7.5).
   server075: fake075,
+  // Map images: Verwaltung > Karte and what a map asks (server routes only).
+  map: mapFake,
   sso: ssoFake,
   serviceAccounts: serviceAccountsFake,
 };
@@ -665,6 +668,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     }
     return (
       handle075Route(areaStates.server075, path, method, input) ??
+      handleMapRoute(areaStates.map, path, method, input) ??
       handleSharingPublicRoute(areaStates.sharing, path.split("?")[0] ?? path, method, input) ??
       handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handleAcmeRoute(areaStates.acme, path, method, input) ??

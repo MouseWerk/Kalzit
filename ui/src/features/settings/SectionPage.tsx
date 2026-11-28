@@ -57,6 +57,11 @@ const RegistrationSection = lazy(() =>
     .then(() => import("./RegistrationSection"))
     .then((m) => ({ default: m.RegistrationSection })),
 );
+const MapSection = lazy(() =>
+  loadArea("map")
+    .then(() => import("./MapSection"))
+    .then((m) => ({ default: m.MapSection })),
+);
 const BackupsSection = lazy(() =>
   loadArea("serverAdmin")
     .then(() => import("./BackupsSection"))
@@ -236,6 +241,12 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <LazySection>
           <BackupsSection />
+        </LazySection>
+      );
+    case "map":
+      return (
+        <LazySection>
+          <MapSection />
         </LazySection>
       );
     case "appsOrg":

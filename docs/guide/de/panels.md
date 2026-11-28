@@ -238,8 +238,8 @@ Warnung; und down, error, failed, failure und critical als kritisch.
 
 ## Karte
 
-Orte auf einer Karte, gezeichnet über Länder- und Regionsumrisse, die mit Kalzit mitkommen: Die
-Karte braucht kein Netz und fragt keinen Kartendienst. Sie liest Zeilen, Dokumente und Graphen,
+Orte auf einer Karte, gezeichnet über Länder- und Regionsumrisse, die mit Kalzit mitkommen: Von
+Haus aus braucht die Karte kein Netz und fragt keinen Kartendienst. Sie liest Zeilen, Dokumente und Graphen,
 wie sie sind.
 
 - **Ebenen**: bis zu vier, die oberste liegt vorn. **Punkte** zeichnen Orte, Größe und Farbe nach
@@ -261,8 +261,11 @@ wie sie sind.
 - Ziehen verschiebt die Karte, Rad und Knöpfe zoomen, **An die Daten anpassen** stellt den
   Ausschnitt zurück. Mit dem Fokus auf der Karte lesen die Pfeiltasten die Orte von West nach Ost,
   Plus und Minus zoomen, 0 passt an. **Karte / Tabelle** zeigt dieselben Orte als Tabelle.
-- Kartenbilder (Kacheln eines Kartendienstes) gehören nicht zu dieser Version; die Karte zeichnet
-  immer die Umrisse und ein Gradnetz.
+- **Kartenbilder** (Kacheln eines Kartendienstes) sind aus, bis ein Server-Admin unter
+  **Verwaltung > Karte** eine Quelle einträgt (siehe [Verwaltung](administration.md#karte)). Dann
+  liegen die Bilder blass unter den Ebenen, und die Quellenangabe steht in der Ecke. Dein Browser
+  fragt dafür nur Kalzit, nie den Kartendienst. Laden sie nicht, zeichnet die Karte die Umrisse und
+  sagt es; deine Daten sind so oder so vollständig.
 
 ## Text
 
@@ -451,18 +454,21 @@ den nächsten Nachbarn eines Knotens weiter. **Als Abfrage in Explore öffnen** 
 Gezeigten eine lesende Cypher-Abfrage im Editor von Explore. Nachbarn zu laden braucht
 Abfragezugriff auf die Datenquelle; für TigerGraph-Quellen gibt es den Explorer nicht.
 
-Das Menü **Layout** eines Netzwerks bietet Kräfte, Hierarchie und fünf weitere Layouts, jedes mit
+Das Menü **Layout** eines Netzwerks bietet Kräfte, Hierarchie und sechs weitere Layouts, jedes mit
 einem kurzen Satz dazu, was es tut oder warum es für dieses Ergebnis nicht geht: **Radial** (Ringe
 um die gewählten Knoten oder, wenn nichts gewählt ist, um den Knoten mit den meisten Kanten),
-**Kreis**, **Raster**, **Koordinaten** (zwei Zahl-Properties oder eine `point`-Property) und
-**Zeitachse** (Knoten nach einer Zeit-Property, eine Bahn je Label oder eine für alle). Kreis und
+**Kreis**, **Raster**, **Koordinaten** (zwei Zahl-Properties oder eine `point`-Property), **Karte**
+(Knoten an ihrem Ort auf derselben Karte wie im Karten-Panel, nach einem `point` oder nach
+**Breite** und **Länge**, ohne Wahl an Namen wie `lat` und `lon` gefunden; Ziehen verschiebt die
+Karte, nicht einen Knoten, und die Stilregeln gelten wie überall) und **Zeitachse** (Knoten nach
+einer Zeit-Property, eine Bahn je Label oder eine für alle). Kreis und
 Raster ordnen die Knoten nach Label, Name oder Anzahl der Kanten. Alle Layouts rechnen in einem
 Web Worker, zeigen den Fortschritt mit **Abbrechen** und kommen bei gleichem Ergebnis immer gleich
 heraus. **Neu anordnen** (Umschalt+L) gibt es, wo das Ergebnis anders ausfallen kann: Kräfte
 beginnen an einer anderen Stelle, und Radial ordnet um die jetzt gewählten Knoten an; die anderen
 Layouts stehen durch ihre Eingabe fest. Ruhige Linien hinter dem Graphen zeigen Ringe, Achsen und
-Bahnen, und Knoten, für die ein Layout keinen Platz hat (kein Wert, keine Zeit), stehen in einem
-eigenen Streifen mit ihrer Zahl und dem Grund. Die Hilfslinien sind eine Sehhilfe: Sie gehören
+Bahnen, und Knoten, für die ein Layout keinen Platz hat (kein Wert, keine Zeit, kein Ort), stehen
+in einem eigenen Streifen mit ihrer Zahl und dem Grund. Die Hilfslinien sind eine Sehhilfe: Sie gehören
 nicht zu einem exportierten Bild. Zeiten werden als Unix-Zeit oder aus Datumstext gelesen: Ein
 Datum allein (2021-03-14) gilt als Mitternacht UTC, ein Datum mit Uhrzeit, aber ohne Zone als Zeit
 in der Zone deines Browsers. Ein Ergebnis, das für die Hierarchie zu groß ist, bietet **Gruppen

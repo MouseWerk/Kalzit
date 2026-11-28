@@ -136,6 +136,7 @@ catalog.
 | XY-Diagramm | XY chart | Panel, das zwei Zahlfelder gegeneinander stellt: jede Zeile ein Punkt, wahlweise verbunden. | |
 | Ebene (Karte) | Layer (map) | Eine Art, Orte auf der Karte zu zeichnen: Punkte, Dichte, Flächen, Linien (Points, Density, Areas, Lines); höchstens vier je Karte. | |
 | Ort (Karte) | Place (map) | Woher die Karte die Lage einer Zeile nimmt: Koordinaten, Geohash oder Nachschlagen eines Länder- oder Regionscodes; Zeilen „ohne Ort“ werden gezählt und genannt. | |
+| Kartenbild | Map image | Ein Bild eines Kartendienstes, das Karten (Karten-Panel, Graph-Layout „Karte“) blass unter ihre Daten legen; optional und standardmäßig aus, immer über den Kalzit-Server geladen. Ohne Kartenbilder zeichnet die Karte die mitgelieferten Umrisse. | Kachel |
 | Felder ordnen und umbenennen | Arrange and rename fields | Schritt: Reihenfolge und Namen der Felder, ein- und ausblenden. | |
 | Felder nach Name filtern | Filter fields by name | Schritt: nur Felder behalten, deren Name passt. | |
 | Typ umwandeln | Convert type | Schritt: Text zu Zahl, Zeit oder Wahrheitswert. | |

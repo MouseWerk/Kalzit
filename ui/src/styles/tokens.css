@@ -88,6 +88,12 @@
     --scrollbar-track: transparent;
 
     /*
+     * Map images lie pale under the data (board Graph081, frame 16): a veil of the surface over
+     * them, so points, nodes and edges stay in front in every theme and scheme.
+     */
+    --map-tile-veil: color-mix(in oklch, var(--bg-surface) 45%, transparent);
+
+    /*
      * Typography: the website's faces, bundled with the app (see the @font-face rules at the end of
      * this file), so nothing is fetched from another host; system fonts stand in while they load.
      */

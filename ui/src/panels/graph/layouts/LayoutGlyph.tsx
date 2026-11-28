@@ -90,6 +90,16 @@ const DRAWINGS: Record<LayoutMode, ReactNode> = {
       ])}
     </>
   ),
+  map: (
+    <>
+      <path d="M4 7l5-2 6 2 5-2v12l-5 2-6-2-5 2zM9 5v12M15 7v12" />
+      {dots([
+        [6.5, 11],
+        [12, 13],
+        [17.5, 9],
+      ])}
+    </>
+  ),
   timeline: (
     <>
       <path d="M3 8h18M3 16h18" />

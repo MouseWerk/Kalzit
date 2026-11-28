@@ -1,7 +1,14 @@
-import { memo, useEffect, useState } from "react";
-import { useI18n } from "../../../i18n/i18n";
+import { lazy, memo, Suspense, useEffect, useState } from "react";
+import { loadArea, useI18n } from "../../../i18n/i18n";
 import type { LayoutGuide } from "../layoutProtocol";
 import "./layouts.css";
+
+/** The map under the layout "Karte": loads with the map panel's texts, on the first map only. */
+const MapBackdrop = lazy(() =>
+  loadArea("map")
+    .then(() => import("../../map/MapBackdrop"))
+    .then((m) => ({ default: m.MapBackdrop })),
+);
 
 /** Maps a point of the layout (graph units) to the stage (px from its top left). */
 export type Project = (x: number, y: number) => { x: number; y: number };
@@ -54,6 +61,7 @@ function formatValue(value: number, locale: string, time: boolean): string {
  * lines and muted text only. It is decoration for the eyes: what it says is also said above the
  * graph (placedText) and in the table, so it is hidden from assistive technology. Drawn under the
  * canvas, which is transparent, in the canvas' own coordinates (the canvas hands over `project`).
+ * Under the layout "Karte" the map lies beneath the lines (MapBackdrop), with its attribution.
  */
 export const GuideLayer = memo(function GuideLayer({
   guides,
@@ -93,6 +101,7 @@ export const GuideLayer = memo(function GuideLayer({
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
   if (project === null || guides.length === 0) return null;
+  const map = guides.find((guide) => guide.kind === "map");
   const drawn = guides.map((guide, index) => {
     const id = `${guide.kind}:${index}`;
     switch (guide.kind) {
@@ -150,7 +159,11 @@ export const GuideLayer = memo(function GuideLayer({
         return (
           <g key={id}>
             <rect
-              className="graph-guides__strip"
+              className={
+                map === undefined
+                  ? "graph-guides__strip"
+                  : "graph-guides__strip graph-guides__strip--on-map"
+              }
               x={x}
               y={y}
               width={Math.abs(b.x - a.x)}
@@ -166,9 +179,22 @@ export const GuideLayer = memo(function GuideLayer({
         return null;
     }
   });
+  let backdrop = null;
+  if (map !== undefined) {
+    const northWest = project(map.x, map.y);
+    const northEast = project(map.x + map.side, map.y);
+    backdrop = (
+      <Suspense fallback={null}>
+        <MapBackdrop northWest={northWest} worldPx={northEast.x - northWest.x} />
+      </Suspense>
+    );
+  }
   return (
-    <svg className="graph-guides" aria-hidden="true" focusable="false">
-      {drawn}
-    </svg>
+    <>
+      {backdrop}
+      <svg className="graph-guides" aria-hidden="true" focusable="false">
+        {drawn}
+      </svg>
+    </>
   );
 });

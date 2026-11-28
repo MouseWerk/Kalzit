@@ -234,7 +234,7 @@ The **Sign-in page** can show your own **Welcome text** (up to 280 characters) a
 
 Under **Network, HTTPS and proxy**, **Outbound proxy** sends Kalzit's own requests to the internet
 through an HTTP or HTTPS proxy, such as `http://proxy.example.com:3128`: the plugin catalog,
-update checks and downloads, Let's Encrypt (ACME), the AI providers and alert webhooks.
+update checks and downloads, Let's Encrypt (ACME), the AI providers, alert webhooks and map images.
 **Without proxy** lists hosts, domains (`.example.com`), addresses and networks that are reached
 directly; put webhook receivers in your own network there, since the proxy refuses private
 addresses (see below). If the proxy
@@ -276,6 +276,25 @@ proxy, or for receivers listed under **Without proxy**, Kalzit connects to the c
 itself and this gap does not exist.
 
 Details: [settings and dashboards](../api/settings-dashboards.md#outbound-proxy).
+
+### Map
+
+**Map** sets the source of map images for every map on the server: the map panel and graphs laid
+out as **Map**. It is off after installation; then maps draw their places on country and region
+outlines that ship with Kalzit, and nothing is asked of a map service. Switching it on opens one
+form: **Address of the map images** (an `https://` address with `{z}`, `{x}` and `{y}`, and
+`{key}` where the service wants an access key; plain `http` only to this computer),
+**Attribution** (required, shown on every map), **Highest zoom level**, an optional **Access
+key** (stored encrypted, never sent to a browser), and the size and duration of the cache.
+**Test map images** loads one picture; **Save** tests again and stores only when that picture
+loaded. Switching off applies at once, with undo, and empties the cache.
+
+Browsers only ever ask Kalzit (`/api/map/tiles/{z}/{x}/{y}`), with a session or a working public
+link that shows a map; the Kalzit server checks the numbers against the highest zoom level, takes
+the picture from its cache or fetches it, through the [outbound proxy](#outbound-proxy) when one
+is set, and limits how many pictures one person or one public link may make it fetch. When the
+source fails, maps draw the outlines and say so, and this page shows the last failure. Details:
+[map images](../api/map.md).
 
 ### Export and import settings
 

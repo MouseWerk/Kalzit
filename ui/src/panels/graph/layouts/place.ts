@@ -3,6 +3,7 @@ import type { LayoutGuide, LayoutRequest } from "../layoutProtocol";
 import { circularLayout } from "./circular";
 import { coordinateLayout } from "./coordinates";
 import { gridLayout } from "./grid";
+import { mapLayout } from "./map";
 import { radialLayout } from "./radial";
 import type { Work } from "./shared";
 import { timelineLayout } from "./timeline";
@@ -34,6 +35,8 @@ export function placeLayout(request: LayoutRequest, work?: Work): Placed {
       return { ...gridLayout(request), reversed: 0 };
     case "coordinates":
       return { ...coordinateLayout(request), reversed: 0 };
+    case "map":
+      return { ...mapLayout(request), reversed: 0 };
     case "timeline":
       return { ...timelineLayout(request), reversed: 0 };
     case "force":

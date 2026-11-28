@@ -93,6 +93,70 @@
     cursor: grabbing;
   }
 
+  /*
+   * Map images (board Graph081.dc.html, frame 16): drawn through this server, pale under the data,
+   * so points, nodes and edges stay in front. They take no pointer: dragging moves the map.
+   */
+  .map__tiles {
+    pointer-events: none;
+  }
+
+  .map__veil {
+    fill: var(--map-tile-veil);
+  }
+
+  /* The map images do not load now: one quiet line at the top, the outlines carry the map. */
+  .map__notice {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline: var(--space-2);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+  }
+
+  .map__notice b {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /*
+   * The map under a graph laid out as "Karte": behind the transparent graph canvas, which takes
+   * every pointer. The attribution (and the note when the map images do not load) sits at the top
+   * right, where the canvas has no tools; the minimap holds the bottom right corner.
+   */
+  .graph-map {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .graph-map__svg {
+    display: block;
+  }
+
+  .graph-map__corner {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-end: var(--space-2);
+    display: grid;
+    justify-items: end;
+    gap: var(--space-1);
+    max-width: 50%;
+  }
+
+  .graph-map__corner .map__notice {
+    position: static;
+  }
+
   /* Outline paths are in world units and scaled by the view; their lines keep one width. */
   .map__land,
   .map__lake,

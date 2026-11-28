@@ -32,6 +32,7 @@ pub mod live;
 #[cfg(test)]
 mod live_tests;
 pub mod mail;
+pub mod map;
 pub mod me;
 pub mod members;
 pub mod orgs;
@@ -133,6 +134,8 @@ pub fn all() -> Vec<table::RouteDef> {
         usage::routes(),
         // Public links and snapshots (docs/api/sharing.md).
         sharing::routes(),
+        // Map images for map panels and graphs laid out on a map (docs/api/map.md).
+        map::routes(),
     ]
     .into_iter()
     .flatten()
@@ -448,6 +451,9 @@ mod access_guard {
         // and every token that does not work answers alike.
         "GET /public/dashboards/{token}",
         "POST /public/dashboards/{token}/panels/{panelId}/query",
+        // Map images for a public link that shows a map (`routes::map`).
+        "GET /public/dashboards/{token}/map",
+        "GET /public/dashboards/{token}/map/tiles/{z}/{x}/{y}",
         "GET /public/snapshots/{token}",
         "GET /auth/password-reset",
         "POST /auth/password-reset",
@@ -467,6 +473,9 @@ mod access_guard {
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
         "GET /about",
+        // Whether map images are on, and the images themselves (`routes::map`).
+        "GET /map",
+        "GET /map/tiles/{z}/{x}/{y}",
         "GET /me",
         "PATCH /me",
         "POST /me/password",

@@ -26,7 +26,8 @@ describe("the layout options of a graph panel", () => {
 
   it("reads every layout and falls back from anything else", () => {
     for (const mode of LAYOUT_MODES) expect(parseGraphOptions({ layout: mode }).layout).toBe(mode);
-    expect(parseGraphOptions({ layout: "map" }).layout).toBe("");
+    expect(parseGraphOptions({ layout: "map" }).layout).toBe("map");
+    expect(parseGraphOptions({ layout: "spiral" }).layout).toBe("");
     expect(parseGraphOptions({ layoutOrder: "size" }).layoutOrder).toBe("label");
     expect(parseGraphOptions({ layoutLanes: "none" }).layoutLanes).toBe("label");
     expect(parseGraphOptions({ layoutAxes: false }).layoutAxes).toBe(false);

@@ -840,8 +840,17 @@ pub enum Linked {
 /// only the properties their options name.
 const GRAPH_PANELS: &[&str] = &["network", "hierarchy", "path"];
 /// Options of a graph panel that name a node or edge property (the caption is picked per node,
-/// `caption_of`).
-const PROPERTY_OPTIONS: &[&str] = &["colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty"];
+/// `caption_of`); the layout's own properties included, so a graph keeps its place.
+const PROPERTY_OPTIONS: &[&str] = &[
+    "colorProperty",
+    "sizeBy",
+    "edgeWidthBy",
+    "timeProperty",
+    "variableProperty",
+    "layoutX",
+    "layoutY",
+    "layoutPoint",
+];
 /// The properties a node is shown with when its caption property has no text, the first one with
 /// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
 const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
@@ -1027,9 +1036,24 @@ fn shown(
         let named: BTreeSet<&str> =
             PROPERTY_OPTIONS.iter().filter_map(|k| panel.options.get(*k)?.as_str()).filter(|v| !v.is_empty()).collect();
         let caption = panel.options.get("caption").and_then(Value::as_str).unwrap_or_default();
+        // On the layout "Karte" a node keeps the properties the map finds its place in when the
+        // panel names none (`mapChoice` in `ui/src/panels/graph/layouts/inputs.ts`).
+        let on_map = crate::map::shows_map(&panel.kind, &panel.options);
+        let auto = map_points_layers(&Value::Object(serde_json::Map::new()));
         for outcome in results.values_mut() {
             if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
-                prune_graph(graph, &named, caption);
+                let keep_place = |properties: &BTreeMap<String, Value>| -> BTreeSet<String> {
+                    if !on_map {
+                        return BTreeSet::new();
+                    }
+                    // Places only: a caption comes back as text, and the map layout reads no geohash.
+                    map_node_properties(&auto, properties)
+                        .into_iter()
+                        .filter(|(_, v)| !v.is_string())
+                        .map(|(k, _)| k)
+                        .collect()
+                };
+                prune_graph(graph, &named, caption, keep_place);
             }
         }
     }
@@ -1069,10 +1093,17 @@ fn caption_of<'a>(properties: &'a BTreeMap<String, Value>, caption: &str) -> Opt
 
 /// Keeps the properties `named` and the one each node is shown with (`caption_of`); the schema
 /// lists only what is left.
-fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, caption: &str) {
+fn prune_graph(
+    graph: &mut crate::shapes::GraphSet,
+    named: &BTreeSet<&str>,
+    caption: &str,
+    also: impl Fn(&BTreeMap<String, Value>) -> BTreeSet<String>,
+) {
     for node in &mut graph.nodes {
         let shown = caption_of(&node.properties, caption).map(str::to_string);
-        node.properties.retain(|k, _| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()));
+        let extra = also(&node.properties);
+        node.properties
+            .retain(|k, _| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()) || extra.contains(k));
     }
     for edge in &mut graph.edges {
         edge.properties.retain(|k, _| named.contains(k.as_str()));
@@ -2032,6 +2063,41 @@ mod tests {
         assert_eq!(g["nodes"][0]["properties"], json!({ "name": "Ana", "team": "A" }));
         let full = with(true, "");
         assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    #[test]
+    fn graphs_on_the_map_layout_without_details_keep_their_place() {
+        let graph = json!({ "shape": "graph", "graph": {
+            "nodes": [
+                { "id": "1", "labels": ["Lager"], "properties": {
+                    "name": "Nord", "lat": 53.55, "lon": 9.99, "umsatz": 12, "pos": { "$type": "point", "srid": 4326, "x": 9.9, "y": 53.5 } } },
+                { "id": "2", "labels": ["Lager"], "properties": { "name": "Sued", "breite": 48.1, "laenge": 11.6, "umsatz": 7 } }
+            ],
+            "edges": [],
+            "schema": { "labels": ["Lager"], "edgeTypes": [],
+                        "propertyKeys": { "Lager": ["name", "lat", "lon", "umsatz", "pos", "breite", "laenge"] } } } });
+        let with = |options: Value| {
+            let p = panel(json!({
+                "id": "p", "type": "network", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+                "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
+                "options": options
+            }));
+            let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(graph.clone()))]) };
+            let shown = serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap();
+            let nodes = shown["results"]["A"]["result"]["graph"]["nodes"].as_array().unwrap().clone();
+            nodes.into_iter().map(|n| n["properties"].clone()).collect::<Vec<_>>()
+        };
+        // Found by their names, as the map layout finds them; nothing else beyond the caption.
+        let found = with(json!({ "clickDetails": false, "layout": "map" }));
+        assert_eq!(found[0], json!({ "name": "Nord", "lat": 53.55, "lon": 9.99 }));
+        assert_eq!(found[1], json!({ "name": "Sued", "breite": 48.1, "laenge": 11.6 }));
+        // Named by the panel: those are kept, on the map and for the coordinates alike.
+        let named = with(json!({ "clickDetails": false, "layout": "coordinates", "layoutPoint": "pos" }));
+        assert_eq!(named[0]["pos"]["$type"], "point");
+        assert!(named[0].get("umsatz").is_none() && named[0].get("lat").is_none(), "{named:?}");
+        // Another layout keeps no place it does not name.
+        let other = with(json!({ "clickDetails": false, "layout": "grid" }));
+        assert_eq!(other[0], json!({ "name": "Nord" }));
     }
 
     /// The properties each node keeps on a public map panel with `options`.

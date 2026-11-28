@@ -430,6 +430,7 @@ choice!(GraphLayout {
     Grid = "grid",
     Coordinates = "coordinates",
     Timeline = "timeline",
+    Map = "map",
 });
 choice!(LayoutOrder { Label = "label", Name = "name", Degree = "degree" });
 choice!(LayoutOrderDirection { Asc = "asc", Desc = "desc" });

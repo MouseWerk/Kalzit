@@ -27,7 +27,7 @@ import { type Cluster, clusterEdges, clusterPoints, clusterRadius } from "./clus
 import { type CountryIndex, countryName, loadCountries } from "./countries";
 import { toneClass } from "./graphStyle";
 import { MAX_ALIASES, type MapLayer, type MapOptions } from "./options";
-import { loadOutlines, OUTLINE_UNITS, type OutlinePaths } from "./outlines";
+import { OUTLINE_UNITS } from "./outlines";
 import {
   type LayerData,
   MAX_POINTS,
@@ -52,6 +52,9 @@ import {
   worldView,
   zoomAt,
 } from "./projection";
+import { type MapInfo, useMapInfo } from "./source";
+import { TileLayer, visibleTiles } from "./tiles";
+import { useOutlines } from "./useOutlines";
 import "./map.css";
 
 /** Region borders join the outlines from this zoom on; below, they would be a grey mass. */
@@ -65,15 +68,21 @@ const TABLE_ROWS = 1000;
 /** Places named in a bundle's tooltip, the largest first (board frame 5). */
 const BUNDLE_NAMED = 3;
 const EMPTY_INDEX: CountryIndex = { countries: [], byCode: new Map() };
+/** With map images a map zooms this far past the source's highest zoom (the pictures grow). */
+const ZOOM_PAST_TILES = 2;
+/** Map images go no closer than this, whatever the source offers. */
+const MAX_TILE_VIEW_ZOOM = 20;
 
 type Mode = "map" | "table";
 
 /**
  * The map panel (board XYMapTrend.dc.html, frames 3 to 5 and 8): up to four layers over the
  * outlines that ship with Kalzit. Points come from coordinates, a point value, a geohash or a
- * country code; areas fill countries by their code. No request leaves this server: there are no
- * map images in this version, only the bundled outlines and a graticule. Every row without a
- * place is counted with its reason, and the table view is the equal way to read the same places.
+ * country code; areas fill countries by their code. When a server administrator set a source of
+ * map images (Verwaltung > Karte, board Graph081.dc.html, frame 16), its pictures lie pale under
+ * the layers, fetched through this server; without them, or while they fail, the map draws the
+ * bundled outlines and a graticule. Every row without a place is counted with its reason, and the
+ * table view is the equal way to read the same places.
  */
 export function MapPanel({
   frames,
@@ -86,6 +95,8 @@ export function MapPanel({
 }: PanelProps<MapOptions>) {
   const { t, language } = useI18n();
   const [mode, setMode] = useState<Mode>("map");
+  const info = useMapInfo();
+  const [tilesFailed, setTilesFailed] = useState(false);
   const input = { frames, documents, graphs: graphs?.map((g) => g.graph) };
   const countries = useCountries(needsCountries(options.layers, input));
   const layers = mapLayers(
@@ -119,6 +130,9 @@ export function MapPanel({
     );
   }
 
+  // The server says when its source failed lately: the map then draws outlines at once.
+  const tilesDown = info.tiles && (!info.available || tilesFailed);
+  const tilesOn = info.tiles && !tilesDown;
   const missing = layers.flatMap((l) => l.missing);
   const counts = layers.map((l) => layerStatus(t, number, l)).join(" · ");
   const notes = [
@@ -129,7 +143,7 @@ export function MapPanel({
       ? t("map.status.cut", { max: number.format(MAX_POINTS) })
       : null,
     countries === "failed" ? t("map.status.countriesFailed") : null,
-    t("map.status.noTiles"),
+    t(tilesOn ? "map.status.tiles" : "map.status.noTiles"),
   ].filter((note) => note !== null);
 
   return (
@@ -169,6 +183,10 @@ export function MapPanel({
             options={options}
             fieldConfig={fieldConfig}
             title={title}
+            info={info}
+            tilesOn={tilesOn}
+            tilesDown={tilesDown}
+            onTilesFailed={() => setTilesFailed(true)}
           />
         ) : (
           <MapTable layers={layers} fieldConfig={fieldConfig} />
@@ -597,39 +615,6 @@ function tableRows(
   ]);
 }
 
-function useOutlines(wanted: boolean, regions: boolean) {
-  const [world, setWorld] = useState<OutlinePaths | null>(null);
-  const [regionPaths, setRegionPaths] = useState<OutlinePaths | null>(null);
-  useEffect(() => {
-    if (!wanted) return;
-    let current = true;
-    loadOutlines("world").then(
-      (paths) => {
-        if (current) setWorld(paths);
-      },
-      // Without outlines the graticule still carries the points.
-      () => undefined,
-    );
-    return () => {
-      current = false;
-    };
-  }, [wanted]);
-  useEffect(() => {
-    if (!wanted || !regions) return;
-    let current = true;
-    loadOutlines("regions").then(
-      (paths) => {
-        if (current) setRegionPaths(paths);
-      },
-      () => undefined,
-    );
-    return () => {
-      current = false;
-    };
-  }, [wanted, regions]);
-  return { world: wanted ? world : null, regions: wanted && regions ? regionPaths : null };
-}
-
 /** Degrees between two lines of the graticule at a zoom. */
 function graticuleStep(zoom: number): number {
   if (zoom < 2) return 30;
@@ -692,13 +677,26 @@ function MapCanvas({
   options,
   fieldConfig,
   title,
+  info,
+  tilesOn,
+  tilesDown,
+  onTilesFailed,
 }: {
   layers: readonly LayerData[];
   options: MapOptions;
   fieldConfig: FieldConfig;
   title: string;
+  info: MapInfo;
+  /** Map images lie under the layers. */
+  tilesOn: boolean;
+  /** The server has map images, but they do not load now: outlines and a short note. */
+  tilesDown: boolean;
+  onTilesFailed: () => void;
 }) {
   const { t, language } = useI18n();
+  const maxZoom = tilesOn
+    ? Math.max(MAX_ZOOM, Math.min(MAX_TILE_VIEW_ZOOM, info.maxZoom + ZOOM_PAST_TILES))
+    : MAX_ZOOM;
   const boxRef = useRef<HTMLDivElement>(null);
   const size = useElementSize(boxRef);
   const [moved, setMoved] = useState<View | null>(null);
@@ -721,7 +719,8 @@ function MapCanvas({
     viewRef.current = view;
   });
 
-  const showOutlines = options.outlines !== "none";
+  // Map images show land and water themselves; the outlines are the way without them.
+  const showOutlines = !tilesOn && options.outlines !== "none";
   const outlines = useOutlines(
     showOutlines,
     options.outlines === "regions" && view.zoom >= REGIONS_FROM_ZOOM,
@@ -736,7 +735,7 @@ function MapCanvas({
       if (box === undefined) return;
       event.preventDefault();
       const anchor = { x: event.clientX - box.left, y: event.clientY - box.top };
-      setMoved(zoomAt(view, size, anchor, -event.deltaY / 240, MAX_ZOOM));
+      setMoved(zoomAt(view, size, anchor, -event.deltaY / 240, maxZoom));
     };
   });
   useEffect(() => {
@@ -818,7 +817,7 @@ function MapCanvas({
   });
 
   const centre = { x: size.width / 2, y: size.height / 2 };
-  const zoom = (delta: number) => setView(zoomAt(view, size, centre, delta, MAX_ZOOM));
+  const zoom = (delta: number) => setView(zoomAt(view, size, centre, delta, maxZoom));
   const showAll = () => setMoved(null);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -854,7 +853,7 @@ function MapCanvas({
       pending.frame = requestAnimationFrame(() => {
         const { dx: x, dy: y } = panPending.current;
         panPending.current = { dx: 0, dy: 0, frame: 0 };
-        setMoved(panBy(viewRef.current, x, y, MAX_ZOOM));
+        setMoved(panBy(viewRef.current, x, y, maxZoom));
       });
     }
   }
@@ -866,6 +865,7 @@ function MapCanvas({
   const scale = worldPixels(view.zoom) / OUTLINE_UNITS;
   const origin = toScreen({ x: 0, y: 0 }, view, size);
   const outlineTransform = `translate(${origin.x} ${origin.y}) scale(${scale})`;
+  const tiles = tilesOn ? visibleTiles(origin, worldPixels(view.zoom), size, info.maxZoom) : [];
   const bar = scaleBar(view);
   const missing = layers.flatMap((l) => l.missing.map((row) => ({ ...row, layer: l.index })));
   const missingTitle = t(
@@ -907,13 +907,21 @@ function MapCanvas({
                   drag.current = null;
                 }}
               >
+                {tiles.length > 0 ? (
+                  <TileLayer
+                    tiles={tiles}
+                    width={size.width}
+                    height={size.height}
+                    onFailed={onTilesFailed}
+                  />
+                ) : null}
                 {outlines.world === null ? null : (
                   <g transform={outlineTransform} data-testid="map-outlines">
                     <path className="map__land" d={outlines.world.land} />
                     <path className="map__lake" d={outlines.world.lake} />
                   </g>
                 )}
-                <Graticule view={view} size={size} />
+                {tilesOn ? null : <Graticule view={view} size={size} />}
                 {back.map((layer) =>
                   layer.areas.length === 0 ? null : (
                     <g
@@ -1000,7 +1008,7 @@ function MapCanvas({
                             // A bundle opens by zooming into it.
                             if (!single) {
                               setView(
-                                zoomAt(view, size, { x: cluster.x, y: cluster.y }, 2, MAX_ZOOM),
+                                zoomAt(view, size, { x: cluster.x, y: cluster.y }, 2, maxZoom),
                               );
                             }
                           }}
@@ -1075,10 +1083,20 @@ function MapCanvas({
             {t("map.missing.strip", { count: number.format(missingRows(layers)) })}
           </button>
         )}
-        {showOutlines ? (
+        {tilesOn ? (
+          <Attribution text={info.attribution} short={t("map.tiles.short")} />
+        ) : showOutlines ? (
           <Attribution text={t("map.outlines.note")} short={t("map.outlines.short")} />
         ) : null}
       </div>
+      {tilesDown ? (
+        <p className="map__notice" role="status">
+          <Icon name="alert" />
+          <span>
+            <b>{t("map.tiles.failedTitle")}</b> {t("map.tiles.failedText")}
+          </span>
+        </p>
+      ) : null}
       {listOpen && missing.length > 0 ? (
         <section id={listId} className="map__missing-list" aria-label={missingTitle}>
           <div className="map__missing-head">

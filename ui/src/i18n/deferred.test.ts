@@ -203,7 +203,14 @@ describe("keys of a deferred area", () => {
       "panels/graph/canvas/ToolStrip.tsx",
     ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
-    map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
+    map: [
+      "panels/map/MapPanel.tsx",
+      "panels/map/MapEditor.tsx",
+      // The map under a graph laid out as "Karte" (behind the graph panel's guides).
+      "panels/map/MapBackdrop.tsx",
+      // Verwaltung > Karte, the source of the map images.
+      "features/settings/MapSection.tsx",
+    ],
   };
 
   /**
@@ -223,8 +230,9 @@ describe("keys of a deferred area", () => {
     graphCanvas: 6,
     // The handbook is one page behind one gate.
     handbook: 1,
-    // The map's panel and its editor.
-    map: 2,
+    // The map's panel and its editor, the map under the graph layout "Karte" and Verwaltung >
+    // Karte.
+    map: 4,
   };
 
   const files = sources(SRC).map((path) => ({

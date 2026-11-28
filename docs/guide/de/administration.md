@@ -247,8 +247,8 @@ Die **Anmeldeseite** kann einen eigenen **Begrüßungstext** (bis zu 280 Zeichen
 
 Unter **Netzwerk, HTTPS und Proxy** schickt **Ausgehender Proxy** Kalzits eigene Anfragen ins
 Internet über einen HTTP- oder HTTPS-Proxy, etwa `http://proxy.example.com:3128`: den
-Plugin-Katalog, Update-Prüfungen und Downloads, Let's Encrypt (ACME), die KI-Anbieter und die
-Webhooks des Alertings. **Ohne Proxy** listet Hosts, Domains (`.example.com`), Adressen und Netze,
+Plugin-Katalog, Update-Prüfungen und Downloads, Let's Encrypt (ACME), die KI-Anbieter, die
+Webhooks des Alertings und die Kartenbilder. **Ohne Proxy** listet Hosts, Domains (`.example.com`), Adressen und Netze,
 die direkt erreicht werden; trag Webhook-Empfänger in deinem eigenen Netz dort ein, denn der Proxy
 lehnt private Adressen ab (siehe unten). Wenn
 der Proxy eine Anmeldung verlangt, gib den **Proxy-Benutzernamen** ein und setze darunter das
@@ -283,6 +283,27 @@ http_access deny CONNECT to_private
 ```
 
 Details: [settings and dashboards](../../api/settings-dashboards.md#outbound-proxy).
+
+### Karte
+
+**Karte** legt die Quelle der Kartenbilder für jede Karte des Servers fest: das Karten-Panel und
+Graphen im Layout **Karte**. Nach der Installation ist sie aus; dann zeichnen Karten ihre Orte auf
+Länder- und Regionsumrisse, die mit Kalzit mitkommen, und kein Kartendienst wird gefragt. Das
+Einschalten öffnet ein Formular: **Adresse der Kartenbilder** (eine `https://`-Adresse mit `{z}`,
+`{x}` und `{y}`, dazu `{key}`, wo der Dienst einen Zugangsschlüssel will; einfaches `http` nur für
+diesen Computer), **Quellenangabe** (Pflicht, steht auf jeder Karte), **Höchste Zoomstufe**, ein
+optionaler **Zugangsschlüssel** (verschlüsselt gespeichert, nie im Browser zu sehen) sowie Größe
+und Dauer des Caches. **Kartenbilder testen** lädt ein Bild; **Speichern** testet noch einmal und
+speichert nur, wenn dieses Bild geladen wurde. Ausschalten wirkt sofort, mit Rückgängig, und leert
+den Cache.
+
+Browser fragen immer nur Kalzit (`/api/map/tiles/{z}/{x}/{y}`), mit einer Anmeldung oder einem
+gültigen öffentlichen Link, der eine Karte zeigt; der Kalzit-Server prüft die Zahlen gegen die
+höchste Zoomstufe, nimmt das Bild aus seinem Cache oder holt es, über den
+[ausgehenden Proxy](#ausgehender-proxy), wenn einer gesetzt ist, und begrenzt, wie viele Bilder
+eine Person oder ein öffentlicher Link ihn holen lassen kann. Fällt die Quelle aus, zeichnen
+Karten die Umrisse und sagen es, und diese Seite zeigt den letzten Fehler. Details:
+[Kartenbilder](../../api/map.md).
 
 ### Einstellungen exportieren und importieren
 

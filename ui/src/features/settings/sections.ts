@@ -18,6 +18,8 @@ export type SectionKind =
   | "cors"
   | "registration"
   | "backups"
+  /** Verwaltung > Karte: the source of the map images (`MapSection`, board Graph081, frame 17). */
+  | "map"
   /** Verwaltung > Apps: the organization's block and least role per app. */
   | "appsOrg"
   /** The mail server (`MailSection`, docs/design/blueprint/Identity.dc.html frame 6). */
@@ -291,6 +293,16 @@ export const SECTIONS: readonly SectionDef[] = [
       "datasources.algorithm_max_top_k",
       "datasources.algorithm_max_suggestions",
     ],
+    visible: serverAdmin,
+  },
+  {
+    // Board Graph081.dc.html, frame 17 (docs/api/map.md): after the data sources, as drawn.
+    id: "map",
+    group: "server",
+    kind: "map",
+    label: "settings.section.map.label",
+    lead: "settings.section.map.lead",
+    keywords: "settings.section.map.keywords",
     visible: serverAdmin,
   },
   {

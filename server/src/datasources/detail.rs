@@ -117,6 +117,8 @@ mod tests {
         "acme",
         // The mail server, invitations and password links (docs/api/mail.md).
         "mail",
+        // Map images (docs/api/map.md).
+        "map",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
         // Members joining and leaving organizations (docs/api/access.md).
@@ -272,6 +274,9 @@ mod tests {
         "backup.target_changed",
         // The zip a backup is made in before it is encrypted.
         "backup.zip",
+        // The stored source of the map images and its audit action.
+        "map.tiles",
+        "map.tiles_changed",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
@@ -422,6 +427,7 @@ mod tests {
             "provisioning.md",
             "reports.md",
             "sharing.md",
+            "map.md",
         ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
