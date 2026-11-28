@@ -1291,5 +1291,9 @@
   "admin.settings.datasources.algorithm_max_top_k.label": "Most similar nodes per node",
   "admin.settings.datasources.algorithm_max_top_k.description": "The top k of similarity steps. At most 100.",
   "admin.settings.datasources.algorithm_max_suggestions.label": "Most suggested edges per step",
-  "admin.settings.datasources.algorithm_max_suggestions.description": "For link prediction; also the default of the step. At most 500."
+  "admin.settings.datasources.algorithm_max_suggestions.description": "For link prediction; also the default of the step. At most 500.",
+  "admin.settings.datasources.pattern_max_values.label": "Most values per pasted list",
+  "admin.settings.datasources.pattern_max_values.description": "In graph patterns, such as pasted ids. Repeats and empty entries are left out first. At most 100,000.",
+  "admin.settings.datasources.pattern_max_hops.label": "Longest path in a pattern (edges)",
+  "admin.settings.datasources.pattern_max_hops.description": "The most steps one edge of a graph pattern may stand for. At most 20."
 }

@@ -12,6 +12,15 @@
 //! visualization and title, and reading the dashboard authorizes running them. Whoever adds a link must be able to read the
 //! analysis and query its sources (its queries count as the dashboard's own). An analysis that
 //! dashboards link cannot go to the trash (`409`, reason `analysis.in_use`).
+//!
+//! An analysis with `parameters` is a search template ("Kunden von $firma"): whoever may read it
+//! runs it with their own values for those parameters and nothing else. Each value takes the
+//! declared type first (`pattern::coerce`) and then reaches the queries as any variable does in
+//! that query language: as a bound parameter in SQL, Cypher, GSQL and graph patterns, and as
+//! escaped text where a language has no parameters (PromQL, LogQL; docs/api/datasources.md,
+//! "Variables"). The parameters of a graph pattern target count as declared too. A parameter
+//! may offer its choices ("Auswahl aus Werten", `pattern::Choices`): the values of one property,
+//! read with a fixed query of the template, at most `pattern::MAX_CHOICES`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,6 +30,7 @@ use sqlx::AnyPool;
 
 use crate::authz::{self, OrgCtx, Permission, Resource};
 use crate::dashboards::model::{self, DashboardModel, Target, TimeRange};
+use crate::datasources::pattern::{self, Pattern, PatternParameter};
 use crate::error::{ApiError, ApiResult};
 
 /// The model version this server writes. Version 1 holds the steps in the form of dashboard model
@@ -56,6 +66,9 @@ pub struct AnalysisModel {
     #[serde(default)]
     pub steps: Vec<Value>,
     pub visualization: Visualization,
+    /// The parameters of a search template, asked for when it runs (`$name` in its queries).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<PatternParameter>,
 }
 
 /// How the result is shown: a panel type with its options and field options.
@@ -74,7 +87,55 @@ fn empty_object() -> Value {
     Value::Object(Default::default())
 }
 
+/// The graph pattern of a target (`{"pattern": {...}}`), if it is one.
+fn target_pattern(t: &Target) -> Option<Result<Pattern, serde_json::Error>> {
+    t.query.get("pattern").map(|p| serde_json::from_value(p.clone()))
+}
+
 impl AnalysisModel {
+    /// The template's parameters: those declared, then those of its pattern targets not declared.
+    pub fn template_parameters(&self) -> Vec<PatternParameter> {
+        let mut out = self.parameters.clone();
+        for t in &self.targets {
+            if let Some(Ok(p)) = target_pattern(t) {
+                for param in p.parameters {
+                    if !out.iter().any(|o| o.name == param.name) {
+                        out.push(param);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The given values of the template's parameters in their declared types (pasted lists split);
+    /// a value that does not fit is `422` on `variables`.
+    pub fn typed_values(&self, variables: &mut BTreeMap<String, Value>, max_values: usize) -> ApiResult<()> {
+        for p in self.template_parameters() {
+            if let Some(v) = variables.get_mut(&p.name) {
+                *v = pattern::coerce(&p.name, p.ty, v, max_values).map_err(|d| {
+                    ApiError::validation(d.message).with_field("variables").with_reason(d.reason, d.params)
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The data source a parameter's choices are read from: the pattern target that declares the
+    /// parameter, else the target its `choices.refId` names. Never a guess.
+    pub fn choices_source(&self, name: &str) -> Option<&str> {
+        let declaring = self
+            .targets
+            .iter()
+            .find(|t| matches!(target_pattern(t), Some(Ok(p)) if p.parameters.iter().any(|p| p.name == name)));
+        let named = || {
+            let p = self.parameters.iter().find(|p| p.name == name)?;
+            let ref_id = p.choices.as_ref()?.ref_id.as_deref()?;
+            self.targets.iter().find(|t| t.ref_id == ref_id)
+        };
+        declaring.or_else(named).map(|t| t.datasource_id.as_str())
+    }
+
     /// The analysis as a dashboard with one panel (`PANEL_ID`), for the dashboard's checks and
     /// query routes.
     pub fn as_dashboard(&self) -> ApiResult<DashboardModel> {
@@ -104,11 +165,24 @@ impl AnalysisModel {
         if let Some(description) = &self.description {
             panel["description"] = json!(description);
         }
+        // The template's parameters are free values (text boxes): bound, never names.
+        let variables: Vec<Value> = self
+            .template_parameters()
+            .into_iter()
+            .map(|p| {
+                let mut v = json!({ "name": p.name, "type": "textbox" });
+                if let Some(label) = p.label {
+                    v["label"] = json!(label);
+                }
+                v
+            })
+            .collect();
         json!({
             "schemaVersion": model::SCHEMA_VERSION,
             "title": self.title,
             // Without a range of its own the checks need one; it is never stored or run.
             "timeRange": self.time_range.clone().unwrap_or(TimeRange { from: "now-6h".into(), to: "now".into() }),
+            "variables": variables,
             "panels": [panel],
         })
     }
@@ -140,8 +214,54 @@ pub fn parse(raw: Value) -> Result<AnalysisModel, String> {
     if analysis.targets.len() < MIN_TARGETS {
         return Err("model.targets needs at least one query".into());
     }
+    check_parameters(&analysis)?;
     model::parse(analysis.dashboard_json()).map_err(rename)?;
     Ok(analysis)
+}
+
+/// Template parameters: valid, distinct names, at most `pattern::MAX_PARAMETERS`; every pattern
+/// target valid, its parameters of the type the analysis declares for them.
+fn check_parameters(analysis: &AnalysisModel) -> Result<(), String> {
+    if analysis.parameters.len() > pattern::MAX_PARAMETERS {
+        return Err(format!("model.parameters has more than {} entries", pattern::MAX_PARAMETERS));
+    }
+    for (i, p) in analysis.parameters.iter().enumerate() {
+        if !pattern::is_alias(&p.name) {
+            return Err(format!(
+                "model.parameters[{i}].name must be letters, digits and _, starting with a letter, not a keyword"
+            ));
+        }
+        if analysis.parameters[..i].iter().any(|o| o.name == p.name) {
+            return Err(format!("model.parameters[{i}].name {} is declared twice", p.name));
+        }
+        if let Some(c) = &p.choices {
+            c.check().map_err(|d| format!("model.parameters[{i}].choices: {}", d.message))?;
+            // The values come from one named source: a pattern target that declares the
+            // parameter, or the target `refId` names.
+            let declared = analysis
+                .targets
+                .iter()
+                .any(|t| matches!(target_pattern(t), Some(Ok(pat)) if pat.parameters.iter().any(|x| x.name == p.name)));
+            let named = c.ref_id.as_deref().is_some_and(|r| analysis.targets.iter().any(|t| t.ref_id == r));
+            if !declared && !named {
+                return Err(format!(
+                    "model.parameters[{i}].choices.refId must name the target whose data source holds the values"
+                ));
+            }
+        }
+    }
+    for (i, t) in analysis.targets.iter().enumerate() {
+        let Some(parsed) = target_pattern(t) else { continue };
+        let place = format!("model.targets[{i}].query.pattern");
+        let p = parsed.map_err(|e| format!("{place}: {e}"))?;
+        p.check().map_err(|d| format!("{place}: {}", d.message))?;
+        for param in &p.parameters {
+            if analysis.parameters.iter().any(|o| o.name == param.name && o.ty != param.ty) {
+                return Err(format!("{place}: the parameter {} has another type in model.parameters", param.name));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Checks the visualization's options and field options, unless they are the same as in

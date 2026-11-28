@@ -1,6 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord } from "../../api/client";
-import type { Page, PanelQueryRequest, QueryResponse } from "../../api/generated/shapes";
+import type {
+  Page,
+  PanelQueryRequest,
+  PatternParameter,
+  QueryResponse,
+} from "../../api/generated/shapes";
 import type { Target } from "../dashboards/model";
 import type { TextRange } from "../dashboards/timeRange";
 import { orgPath, send } from "../datasources/api";
@@ -30,6 +35,11 @@ export interface AnalysisModel {
   targets: Target[];
   steps: unknown[];
   visualization: Visualization;
+  /**
+   * A search template's inputs (`$name` in its queries), asked for when it runs. A pattern
+   * target declares its own; these are the ones of typed queries (docs/api/analyses.md).
+   */
+  parameters?: PatternParameter[] | undefined;
 }
 
 export interface AnalysisAccess {
@@ -128,7 +138,42 @@ export function parseAnalysisModel(value: unknown): AnalysisModel {
   if (typeof model.description === "string" && model.description !== "") {
     parsed.description = model.description;
   }
+  const parameters = Array.isArray(model.parameters)
+    ? model.parameters.filter(
+        (p): p is PatternParameter =>
+          isRecord(p) && typeof p.name === "string" && typeof p.type === "string",
+      )
+    : [];
+  if (parameters.length > 0) {
+    parsed.parameters = parameters;
+  }
   return parsed;
+}
+
+/**
+ * The inputs of a search template: those the analysis declares, then those its pattern targets
+ * declare (as the server reads them, `AnalysisModel::template_parameters`). None for an analysis
+ * that is no template.
+ */
+export function templateParameters(model: AnalysisModel): PatternParameter[] {
+  const out = [...(model.parameters ?? [])];
+  for (const target of model.targets) {
+    const query = target.query;
+    if (!isRecord(query) || !isRecord(query.pattern)) continue;
+    const declared = query.pattern.parameters;
+    if (!Array.isArray(declared)) continue;
+    for (const p of declared) {
+      if (
+        isRecord(p) &&
+        typeof p.name === "string" &&
+        typeof p.type === "string" &&
+        !out.some((o) => o.name === p.name)
+      ) {
+        out.push(p as unknown as PatternParameter);
+      }
+    }
+  }
+  return out;
 }
 
 /** The model as the server takes it: no empty description, the range only when kept. */
@@ -143,6 +188,9 @@ export function modelBody(model: AnalysisModel): Record<string, unknown> {
   };
   if (model.description !== undefined && model.description.trim() !== "") {
     body.description = model.description;
+  }
+  if (model.parameters !== undefined && model.parameters.length > 0) {
+    body.parameters = model.parameters;
   }
   return body;
 }
@@ -415,6 +463,8 @@ export async function runAnalysis(
   id: string,
   body: Omit<PanelQueryRequest, "variables" | "cursors"> & {
     cursors?: Record<string, string>;
+    /** A search template's inputs, and only those (docs/api/analyses.md). */
+    variables?: Record<string, unknown>;
   },
   signal?: AbortSignal,
 ): Promise<QueryResponse> {

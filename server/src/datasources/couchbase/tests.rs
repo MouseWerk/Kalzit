@@ -131,6 +131,7 @@ fn req(sqlpp: &str, variables: Value) -> SourceQuery {
             timeout: Duration::from_secs(5),
             max_rows: 1000,
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
+            pattern: Default::default(),
         },
         cursor: None,
         filters: Vec::new(),

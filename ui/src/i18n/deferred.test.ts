@@ -204,6 +204,16 @@ describe("keys of a deferred area", () => {
     ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
     map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
+    graphPatterns: [
+      "features/graphPatterns/PatternBuilder.tsx",
+      "features/graphPatterns/PatternDrawing.tsx",
+      "features/graphPatterns/ElementPanel.tsx",
+      "features/graphPatterns/PasteValuesDialog.tsx",
+      "features/graphPatterns/GraphSchemaView.tsx",
+      "features/graphPatterns/PlanView.tsx",
+      "features/graphPatterns/TemplateInputs.tsx",
+      "features/graphPatterns/sentence.ts",
+    ],
   };
 
   /**
@@ -225,6 +235,10 @@ describe("keys of a deferred area", () => {
     handbook: 1,
     // The map's panel and its editor.
     map: 2,
+    // The builder and the stale pattern in the query editor, schema and plan in Explore, a
+    // template's inputs and "Über diese Suche", and the inputs in the save dialog.
+    // (and the help on the way back into the builder)
+    graphPatterns: 8,
   };
 
   const files = sources(SRC).map((path) => ({

@@ -443,6 +443,7 @@ pub(crate) mod test_support {
                 timeout: std::time::Duration::from_secs(20),
                 max_rows,
                 budget: ResponseBudget::new(1 << 20),
+                pattern: Default::default(),
             },
             cursor: None,
             filters: Vec::new(),

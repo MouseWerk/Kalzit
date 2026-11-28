@@ -415,6 +415,10 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   if (typeof query.helper === "string" && (kind === undefined || kind === "prometheus")) {
     return true;
   }
+  // A graph pattern (docs/api/datasources.md, "Graph patterns") runs once it has a node.
+  if (isRecord(query.pattern)) {
+    return Array.isArray(query.pattern.nodes) && query.pattern.nodes.length > 0;
+  }
   const family = kind === undefined ? undefined : familyOf(kind);
   if (family === "search") {
     return isSearchQuery(query);

@@ -95,6 +95,9 @@ mod tests {
         "expression",
         "export",
         "graph",
+        // Graph patterns and query plans (docs/api/datasources.md).
+        "pattern",
+        "plan",
         "cypher",
         "gsql",
         "bolt",
@@ -272,6 +275,8 @@ mod tests {
         "backup.target_changed",
         // The zip a backup is made in before it is encrypted.
         "backup.zip",
+        // The file an update's install plan is kept in.
+        "plan.json",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of

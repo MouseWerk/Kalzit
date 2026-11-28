@@ -1291,5 +1291,9 @@
   "admin.settings.datasources.algorithm_max_top_k.label": "Höchstens ähnliche Knoten je Knoten",
   "admin.settings.datasources.algorithm_max_top_k.description": "Das Top-k der Ähnlichkeits-Schritte. Höchstens 100.",
   "admin.settings.datasources.algorithm_max_suggestions.label": "Höchstens vorgeschlagene Kanten je Schritt",
-  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500."
+  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500.",
+  "admin.settings.datasources.pattern_max_values.label": "Höchstens Werte je eingefügter Liste",
+  "admin.settings.datasources.pattern_max_values.description": "In Graph-Mustern, etwa eingefügte Ids. Doppelte und leere Einträge werden vorher entfernt. Höchstens 100.000.",
+  "admin.settings.datasources.pattern_max_hops.label": "Längster Pfad im Muster (Kanten)",
+  "admin.settings.datasources.pattern_max_hops.description": "So viele Schritte darf eine Kante eines Graph-Musters höchstens umfassen. Höchstens 20."
 }

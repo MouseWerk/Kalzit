@@ -309,6 +309,8 @@ on_both_databases! {
     team_spaces_and_team_ownership,
     saving_rechecks_the_query_right,
     readers_run_the_stored_queries_only,
+    search_templates_run_with_typed_values,
+    graph_routes_need_the_query_right,
     distributions_follow_the_stored_query_rule,
     folder_trash_takes_analyses_along,
     other_organizations_see_nothing,
@@ -833,6 +835,197 @@ async fn readers_run_the_stored_queries_only(t: TestApp) {
     // Running records nothing in the Explore history.
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM explore_history").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(n, 0);
+}
+
+/// A search template ("Umsatz von $land"): readers run the stored query with their own values for
+/// its declared parameters only, converted to the declared type and bound, never written into
+/// the query; they still cannot run the query as a free query.
+async fn search_templates_run_with_typed_values(t: TestApp) {
+    let source = t.source("shop").await;
+    let sql = "SELECT country, SUM(amount) AS amount FROM orders WHERE country = $land GROUP BY country \
+               HAVING SUM(amount) >= $mindest ORDER BY country";
+    let mut m = model("Umsatz von $land", &source, sql);
+    m["steps"] = json!([]);
+    m["parameters"] = json!([
+        { "name": "land", "type": "string", "label": "Land" },
+        { "name": "mindest", "type": "integer" }
+    ]);
+    let id = id_of(t.post("~/analyses", json!({ "model": m }), &t.owner).await);
+    let (_, vera) = t.member("Vera", "viewer").await;
+    let path = format!("~/analyses/{id}/query");
+    let body = |variables: Value| json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "variables": variables });
+    let r = t.post(&path, body(json!({ "land": "DE", "mindest": "20" })), &vera).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let fields = &r.body["results"]["A"]["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!(["DE"]), "{}", r.body);
+    // A value written to break out of the query stays one value and matches nothing.
+    for attack in ["DE' OR '1'='1", "DE\" OR 1=1 --", "DE'; DROP TABLE orders; --"] {
+        let r = t.post(&path, body(json!({ "land": attack, "mindest": 0 })), &vera).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let values = &r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"];
+        assert_eq!(values.as_array().map_or(0, Vec::len), 0, "{attack}: {}", r.body);
+    }
+    let r = t.post(&path, body(json!({ "land": "AT", "mindest": 0 })), &vera).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["AT"]), "{}", r.body);
+    // A value that does not fit the declared type is refused before anything runs.
+    let r = t.post(&path, body(json!({ "land": "DE", "mindest": "zwanzig" })), &vera).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "pattern.parameter_type", "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "variables", "{}", r.body);
+    // Only the template's parameters may be sent: no other variable, none of Kalzit's own names.
+    for extra in [json!({ "tabelle": "orders" }), json!({ "kz_v0": "x" }), json!({ "__timeFrom": 1 })] {
+        let mut variables = json!({ "land": "DE", "mindest": 1 });
+        variables.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let r = t.post(&path, body(variables), &vera).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{extra}: {}", r.body);
+    }
+    // The field distribution of a template takes the same typed values.
+    let dist = |mindest: Value| {
+        json!({ "refId": "A", "path": ["country"], "timeRange": { "from": T0 - DAY, "to": T0 },
+                "variables": { "land": "DE", "mindest": mindest } })
+    };
+    let r = t.post(&format!("~/analyses/{id}/distribution"), dist(json!("zwanzig")), &vera).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::UNPROCESSABLE_ENTITY, json!("pattern.parameter_type")),
+        "{}",
+        r.body
+    );
+    let r = t.post(&format!("~/analyses/{id}/distribution"), dist(json!("5")), &vera).await;
+    assert_ne!(r.body["error"]["reason"], "pattern.parameter_type", "{}", r.body);
+    // The same query as a free query is not the viewer's to run.
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": source, "query": { "sql": sql } }],
+        "timeRange": { "from": T0 - DAY, "to": T0 }, "variables": { "land": "DE", "mindest": 0 }
+    });
+    let r = t.post("~/query", free, &vera).await;
+    let code = r.body["results"]["A"]["error"]["code"].as_str();
+    assert!(matches!(code, Some("forbidden" | "not_found")), "{}", r.body);
+    // Choices: the template names the target their values come from; a reader may ask for them
+    // without any right on the data source (here a SQLite source, which has no graph to read them
+    // from, refused past the rights), an unknown parameter or one without choices is not found,
+    // and so is a template the caller may not read.
+    let mut m = model("Umsatz von $land", &source, sql);
+    m["steps"] = json!([]);
+    m["parameters"] = json!([
+        { "name": "land", "type": "string", "choices": { "label": "Land", "property": "code", "refId": "A" } },
+        { "name": "mindest", "type": "integer" }
+    ]);
+    let with_choices = id_of(t.post("~/analyses", json!({ "model": m.clone() }), &t.owner).await);
+    let choices = |name: &str| format!("~/analyses/{with_choices}/parameters/{name}/choices");
+    let r = t.post(&choices("land"), json!({ "search": "a" }), &vera).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::UNPROCESSABLE_ENTITY, json!("pattern.unsupported_source")),
+        "{}",
+        r.body
+    );
+    assert_eq!(t.post(&choices("mindest"), json!({}), &vera).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.post(&choices("gibtsnicht"), json!({}), &vera).await.status, StatusCode::NOT_FOUND);
+    let secret = t.folder("Geheim", true).await;
+    let hidden = t.post("~/analyses", json!({ "folderId": secret, "model": m.clone() }), &t.owner).await;
+    let hidden = id_of(hidden);
+    let r = t.post(&format!("~/analyses/{hidden}/parameters/land/choices"), json!({}), &vera).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    // Without a pattern target that declares the parameter, `refId` must name a target.
+    m["parameters"][0]["choices"]["refId"] = json!("Z");
+    let r = t.post("~/analyses", json!({ "model": m }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert!(
+        r.body["error"]["message"].as_str().unwrap().starts_with("model.parameters[0].choices.refId"),
+        "{}",
+        r.body
+    );
+    // Nor may the viewer save a template of their own.
+    let mut own = model("Eigen", &source, sql);
+    own["parameters"] = json!([{ "name": "land", "type": "string" }]);
+    assert_eq!(t.post("~/analyses", json!({ "model": own }), &vera).await.status, StatusCode::FORBIDDEN);
+    // Parameters and pattern targets are checked when saved.
+    let pattern = json!({ "pattern": {
+        "nodes": [{ "id": "f", "conditions": [{ "property": "name", "op": "eq", "value": { "param": "firma" } }] }],
+        "parameters": [{ "name": "firma", "type": "string" }]
+    } });
+    for (parameters, query, place) in [
+        (json!([{ "name": "1land", "type": "string" }]), json!({ "sql": sql }), "model.parameters[0].name"),
+        (
+            json!([{ "name": "land", "type": "string" }, { "name": "land", "type": "integer" }]),
+            json!({ "sql": sql }),
+            "model.parameters[1].name",
+        ),
+        (json!([]), json!({ "pattern": { "nodes": [] } }), "model.targets[0].query.pattern"),
+        (json!([{ "name": "firma", "type": "integer" }]), pattern, "model.targets[0].query.pattern"),
+    ] {
+        let mut m = model("Falsch", &source, sql);
+        m["parameters"] = parameters;
+        m["targets"][0]["query"] = query;
+        m["steps"] = json!([]);
+        let r = t.post("~/analyses", json!({ "model": m }), &t.owner).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{place}: {}", r.body);
+        let message = r.body["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with(place), "{place}: {message}");
+    }
+}
+
+/// The graph routes of a data source (schema as a graph, counts, plans, patterns) need the right
+/// to query it, as its schema and free queries do: a viewer is refused, a query grant on the
+/// source lets them in, and another organization's source is not found. A SQLite source answers
+/// past the check that it has no graph schema, plan or patterns.
+async fn graph_routes_need_the_query_right(t: TestApp) {
+    let source = t.source("shop").await;
+    let (vera_id, vera) = t.member("Vera", "viewer").await;
+    let pattern = json!({ "nodes": [{ "id": "a" }] });
+    let routes = [
+        ("GET", "graph-schema".to_string(), Value::Null),
+        ("POST", "graph-schema/count".to_string(), json!({ "label": "Kunde" })),
+        ("POST", "plan".to_string(), json!({ "query": { "sql": SQL }, "mode": "explain" })),
+        ("POST", "patterns/compile".to_string(), json!({ "pattern": pattern })),
+        ("POST", "patterns/parse".to_string(), json!({ "text": "MATCH (a) RETURN a" })),
+    ];
+    let app = &t;
+    let call = |method: &'static str, route: String, body: Value, org: String, cookie: String| {
+        let path = format!("/orgs/{org}/datasources/{source}/{route}");
+        async move { if method == "GET" { app.get(&path, &cookie).await } else { app.post(&path, body, &cookie).await } }
+    };
+    for (method, route, body) in routes.clone() {
+        // A viewer may not query the source, which is hidden from them: refused as not found.
+        let r = call(method, route.clone(), body, t.org.clone(), vera.clone()).await;
+        assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{route}: {}", r.body);
+        assert!(r.body["error"].is_object() && r.body["available"].is_null(), "{route}: {}", r.body);
+    }
+    t.grant("user", &vera_id, "datasource", &source, "query").await;
+    let expected = [
+        (StatusCode::UNPROCESSABLE_ENTITY, "graph.schema_unsupported"),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+        (StatusCode::OK, ""),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+        (StatusCode::UNPROCESSABLE_ENTITY, "pattern.unsupported_source"),
+    ];
+    for ((method, route, body), (status, reason)) in routes.clone().into_iter().zip(expected) {
+        let r = call(method, route.clone(), body, t.org.clone(), vera.clone()).await;
+        assert_eq!(r.status, status, "{route}: {}", r.body);
+        if reason.is_empty() {
+            assert_eq!(
+                (r.body["available"].clone(), r.body["reason"].clone()),
+                (json!(false), json!("plan.unsupported"))
+            );
+        } else {
+            assert_eq!(r.body["error"]["reason"], reason, "{route}: {}", r.body);
+        }
+    }
+    // Another organization's member reaches nothing here, through their own organization either.
+    let (stranger_id, stranger) = t.member("Fremd", "admin").await;
+    let other =
+        id_of(t.post("/admin/orgs", json!({ "name": "Andere GmbH", "ownerUserId": stranger_id }), &t.owner).await);
+    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(&t.org)
+        .bind(&stranger_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    for (method, route, body) in routes {
+        let r = call(method, route.clone(), body, other.clone(), stranger.clone()).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{route}: {}", r.body);
+    }
 }
 
 /// Field distributions of an analysis follow its query route: readers ask for the stored

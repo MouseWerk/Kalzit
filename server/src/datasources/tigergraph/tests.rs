@@ -338,6 +338,7 @@ fn req(query: Value, variables: Value) -> SourceQuery {
             timeout: Duration::from_secs(5),
             max_rows: 1000,
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
+            pattern: Default::default(),
         },
         cursor: None,
         filters: Vec::new(),
@@ -692,4 +693,42 @@ async fn variables_stay_typed_parameters() {
         .await;
     assert!(r.is_ok());
     assert_eq!(fake.last_query.lock().unwrap().as_str(), "p=1%26tiefe%3D99&tiefe=2");
+}
+
+#[tokio::test]
+async fn patterns_run_as_checked_interpreted_queries_with_typed_parameters() {
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let pattern = json!({
+        "nodes": [
+            { "id": "s", "labels": ["Person"], "conditions": [{ "property": "name", "op": "eq", "value": { "param": "name" } }] },
+            { "id": "t", "labels": ["Person"], "conditions": [{ "property": "age", "op": "ge", "value": { "value": 30 } }] }
+        ],
+        "edges": [{ "id": "e", "from": "s", "to": "t", "types": ["Friend"] }],
+        "parameters": [{ "name": "name", "type": "string" }]
+    });
+    let value = "Ana Ö\" OR TRUE";
+    TigerGraph.query(&conn, req(json!({ "pattern": pattern }), json!({ "name": value }))).await.unwrap();
+    let body = fake.last_body.lock().unwrap().clone();
+    assert!(body.starts_with("INTERPRET QUERY (INT kz_v0, STRING name) FOR GRAPH social SYNTAX v2 {"), "{body}");
+    assert!(body.contains("FROM Person:s -(Friend>:e)- Person:t"), "{body}");
+    assert!(!body.contains("Ana"), "{body}");
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&kz_v0=30&name=Ana%20%C3%96%22%20OR%20TRUE");
+    // A pattern stands alone, and GSQL refuses what it cannot say.
+    let both = json!({ "pattern": pattern, "gsql": "INTERPRET QUERY () FOR GRAPH social { PRINT 1; }" });
+    assert_eq!(reason(TigerGraph.query(&conn, req(both, json!({ "name": "x" }))).await), "query.invalid_form");
+    let mut optional = pattern.clone();
+    optional["edges"][0]["optional"] = json!(true);
+    let refused = TigerGraph.query(&conn, req(json!({ "pattern": optional }), json!({ "name": "x" }))).await;
+    assert_eq!(reason(refused), "pattern.gsql_optional");
+    // The schema as a graph from the catalog, without counts.
+    let s = TigerGraph.graph_schema(&conn).await.unwrap();
+    assert_eq!(s.source, crate::datasources::graph_schema::GraphSchemaSource::Catalog);
+    assert_eq!(s.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["Person"]);
+    assert!(s.labels[0].count.is_none());
+    assert_eq!(s.edge_types[0].properties[0].name, "since");
+    // No plan for GSQL, said plainly.
+    let mode = crate::datasources::plan::PlanMode::Explain;
+    let plan = TigerGraph.plan(&conn, req(json!({ "gsql": "x" }), json!({})), mode).await.unwrap();
+    assert_eq!((plan.available, plan.reason.as_deref()), (false, Some("plan.not_available_gsql")));
 }

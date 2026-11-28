@@ -6,6 +6,7 @@
 import { de as deStart } from "./de";
 import deApps from "./de/apps.json";
 import deGraphCanvas from "./de/graphCanvas.json";
+import deGraphPatterns from "./de/graphPatterns.json";
 import deGraphStyle from "./de/graphStyle.json";
 import deHandbook from "./de/handbook.json";
 import deMap from "./de/map.json";
@@ -17,6 +18,7 @@ import deTraces from "./de/traces.json";
 import { en as enStart } from "./en";
 import enApps from "./en/apps.json";
 import enGraphCanvas from "./en/graphCanvas.json";
+import enGraphPatterns from "./en/graphPatterns.json";
 import enGraphStyle from "./en/graphStyle.json";
 import enHandbook from "./en/handbook.json";
 import enMap from "./en/map.json";
@@ -38,6 +40,7 @@ export const de = {
   ...deGraphCanvas,
   ...deHandbook,
   ...deMap,
+  ...deGraphPatterns,
 };
 export const en = {
   ...enStart,
@@ -51,4 +54,5 @@ export const en = {
   ...enGraphCanvas,
   ...enHandbook,
   ...enMap,
+  ...enGraphPatterns,
 };

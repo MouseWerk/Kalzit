@@ -4,7 +4,7 @@ export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_fo
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "dashboards:public" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "reports:read" | "reports:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "datasources.trash_retention_days" | "datasources.algorithm_timeout_secs" | "datasources.algorithm_max_nodes" | "datasources.algorithm_max_memory_bytes" | "datasources.algorithm_max_parallel" | "datasources.algorithm_max_results" | "datasources.algorithm_max_length" | "datasources.algorithm_max_top_k" | "datasources.algorithm_max_suggestions" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "reports.enabled" | "reports.max_reports_per_org" | "reports.max_runs_per_org_hour" | "reports.max_recipients" | "reports.max_attachment_bytes" | "reports.history_retention_days" | "reports.org_enabled" | "reports.allow_external_recipients" | "reports.external_domains" | "sharing.public_enabled" | "sharing.max_expiry_days" | "sharing.snapshot_max_bytes" | "sharing.snapshots_per_org" | "sharing.snapshot_bytes_per_org" | "sharing.org_public_enabled" | "paths.plugins_dir" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "appearance.default_theme_light" | "appearance.default_theme_dark" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "mail.mark_image" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "appearance.handbook" | "signin.organization" | "signin.server_name" | "signin.product_line" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks" | "cors.enabled" | "cors.allowed_origins" | "cors.allowed_methods" | "cors.allowed_headers" | "cors.allow_credentials" | "cors.max_age_secs" | "registration.enabled" | "registration.allowed_domains" | "registration.default_org" | "registration.default_role" | "registration.require_approval" | "registration.max_per_ip_hour" | "registration.max_per_email_day" | "registration.max_per_server_day" | "backups.schedule_enabled" | "backups.interval_hours" | "backups.keep_count" | "backups.encrypt" | "backups.allowed_dirs";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "datasources.trash_retention_days" | "datasources.algorithm_timeout_secs" | "datasources.algorithm_max_nodes" | "datasources.algorithm_max_memory_bytes" | "datasources.algorithm_max_parallel" | "datasources.algorithm_max_results" | "datasources.algorithm_max_length" | "datasources.algorithm_max_top_k" | "datasources.algorithm_max_suggestions" | "datasources.pattern_max_values" | "datasources.pattern_max_hops" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "reports.enabled" | "reports.max_reports_per_org" | "reports.max_runs_per_org_hour" | "reports.max_recipients" | "reports.max_attachment_bytes" | "reports.history_retention_days" | "reports.org_enabled" | "reports.allow_external_recipients" | "reports.external_domains" | "sharing.public_enabled" | "sharing.max_expiry_days" | "sharing.snapshot_max_bytes" | "sharing.snapshots_per_org" | "sharing.snapshot_bytes_per_org" | "sharing.org_public_enabled" | "paths.plugins_dir" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "appearance.default_theme_light" | "appearance.default_theme_dark" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "mail.mark_image" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "appearance.handbook" | "signin.organization" | "signin.server_name" | "signin.product_line" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks" | "cors.enabled" | "cors.allowed_origins" | "cors.allowed_methods" | "cors.allowed_headers" | "cors.allow_credentials" | "cors.max_age_secs" | "registration.enabled" | "registration.allowed_domains" | "registration.default_org" | "registration.default_role" | "registration.require_approval" | "registration.max_per_ip_hour" | "registration.max_per_email_day" | "registration.max_per_server_day" | "backups.schedule_enabled" | "backups.interval_hours" | "backups.keep_count" | "backups.encrypt" | "backups.allowed_dirs";
 
 export type Shape = "frame" | "documents" | "graph" | "trace";
 
@@ -1005,3 +1005,248 @@ allowExternalRecipients: boolean,
 externalDomains: Array<string>, limits: ReportLimits, reports: number, };
 
 export type SendNow = { run: ReportRun, };
+
+export type Direction = "out" | "in" | "both";
+
+export type Match = "all" | "any";
+
+export type Choices = { label: string, property: string, 
+/**
+ * The template's target whose data source the values come from. A pattern target that
+ * declares the parameter names its own; a parameter of the analysis names one here.
+ */
+refId?: string, };
+
+export type ListReport = { name: string, values: number, duplicates: number, empty: number, };
+
+export type CountRequest = { 
+/**
+ * The label whose nodes to count, or
+ */
+label?: string, 
+/**
+ * the edge type whose edges to count.
+ */
+edgeType?: string, };
+
+export type CountAnswer = { count: number, };
+
+export type ChoicesRequest = { 
+/**
+ * Only values that contain this text, without regard to case.
+ */
+search?: string, };
+
+export type ChoicesAnswer = { 
+/**
+ * At most `pattern::MAX_CHOICES`, in order.
+ */
+values: unknown[], 
+/**
+ * More values match than are listed; a search narrows them.
+ */
+more: boolean, };
+
+export type Operator = "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "contains" | "startsWith" | "endsWith" | "in" | "isNull" | "isNotNull";
+
+export type LiteralOperand = { value: unknown, };
+
+export type ParamOperand = { param: string, };
+
+export type Operand = LiteralOperand | ParamOperand;
+
+export type Condition = { property: string, op: Operator, value?: Operand, };
+
+export type PatternNode = { 
+/**
+ * The node's name in the query (`a`): letters, digits and `_`.
+ */
+id: string, 
+/**
+ * One of these labels; TigerGraph takes at most one vertex type.
+ */
+labels?: Array<string>, conditions?: Array<Condition>, 
+/**
+ * All conditions (the default) or any one of them.
+ */
+matches?: Match, 
+/**
+ * Only these nodes, by the database's own id (Neo4j element id, Memgraph id, TigerGraph
+ * primary id): a list, or a parameter of type `idList` (pasted ids).
+ */
+ids?: Operand, };
+
+export type PatternEdge = { id: string, from: string, to: string, 
+/**
+ * Any of these types; any type when empty.
+ */
+types?: Array<string>, direction: Direction, 
+/**
+ * The path length, 1 to the server's longest path (`PatternLimits::max_hops`); both 1 (the
+ * default) is one edge.
+ */
+minHops?: number, maxHops?: number, 
+/**
+ * Matches also where this edge (and nodes only it reaches) is missing (Cypher only).
+ */
+optional?: boolean, 
+/**
+ * Conditions on the edge's properties; only for one edge (no path length).
+ */
+conditions?: Array<Condition>, matches?: Match, };
+
+export type ParameterType = "string" | "integer" | "float" | "boolean" | "stringList" | "integerList" | "floatList" | "idList";
+
+export type PatternParameter = { name: string, type: ParameterType, 
+/**
+ * What the field is called where the template asks for it ("Firma").
+ */
+label?: string, 
+/**
+ * "Auswahl aus Werten": the template offers the values of this property, read with a fixed
+ * query of the template (at most `MAX_CHOICES`, with a search), instead of a free field.
+ */
+choices?: Choices, };
+
+export type Pattern = { nodes: Array<PatternNode>, edges?: Array<PatternEdge>, 
+/**
+ * The most matches; `DEFAULT_LIMIT` when left out.
+ */
+limit?: number, 
+/**
+ * The template parameters the conditions use (`{"param": name}`), with their types.
+ */
+parameters?: Array<PatternParameter>, 
+/**
+ * Counts the matches instead of returning them ("Treffer zählen"): a frame with `matches`.
+ */
+count?: boolean, };
+
+export type Compiled = { text: string, 
+/**
+ * By parameter name: the literals (`kz_v0`, ...) and the template parameters that had a
+ * value. GSQL declares each with its type in the query's header.
+ */
+parameters: Record<string, unknown>, 
+/**
+ * The limit the text has: the pattern's, capped at the data source's row limit; none for a
+ * count.
+ */
+limit?: number, 
+/**
+ * Lists given as pasted text: how many values they hold after empty parts and repeats were
+ * left out.
+ */
+lists?: Array<ListReport>, };
+
+export type Parsed = { representable: boolean, pattern?: Pattern, 
+/**
+ * `pattern.not_representable` (or another `pattern.*` reason) when it is not.
+ */
+reason?: string, params?: { [key in string]: string }, message?: string, };
+
+export type GraphSchemaSource = "schemaInfo" | "procedures" | "sample" | "catalog";
+
+export type PropertySchema = { name: string, 
+/**
+ * The value types seen or declared (`string`, `integer`, `float`, `boolean`, `date`,
+ * `dateTime`, `localDateTime`, `time`, `localTime`, `duration`, `point`, `list`, `map`,
+ * `bytes`, `enum`; another type in lower case as the source names it).
+ */
+types: Array<string>, 
+/**
+ * Whether every element of the label or type has it, where the source says.
+ */
+mandatory?: boolean, };
+
+export type ElementSchema = { name: string, count?: number, properties: Array<PropertySchema>, };
+
+export type SchemaLink = { from: string, type: string, to: string, count?: number, };
+
+export type GraphSourceSchema = { source: GraphSchemaSource, sampleSize?: number, labels: Array<ElementSchema>, edgeTypes: Array<ElementSchema>, 
+/**
+ * Which label connects to which through which edge type, in the edge's direction.
+ */
+links: Array<SchemaLink>, 
+/**
+ * More labels, types or links than `MAX_ENTRIES`; the rest is left out.
+ */
+truncated: boolean, 
+/**
+ * When the source was read, Unix milliseconds.
+ */
+readAt: number, };
+
+export type PlanMode = "explain" | "profile";
+
+export type PlanOperator = { 
+/**
+ * The operator's name (`NodeByLabelScan`, `ScanAllByLabel`, `Expand`).
+ */
+operator: string, 
+/**
+ * What it works on, as the engine writes it (`n:Person`, `(n :Person)`).
+ */
+details?: string, identifiers?: Array<string>, 
+/**
+ * Neo4j's estimate.
+ */
+estimatedRows?: number, 
+/**
+ * `PROFILE`: rows the operator produced (Memgraph: its hits).
+ */
+rows?: number, 
+/**
+ * `PROFILE`: database hits (Neo4j).
+ */
+dbHits?: number, 
+/**
+ * `PROFILE`: time spent in the operator, in milliseconds, where the engine measures it.
+ */
+timeMs?: number, 
+/**
+ * `PROFILE` (Memgraph): the operator's share of the whole time, in percent.
+ */
+timeShare?: number, children: Array<PlanOperator>, };
+
+export type QueryPlan = { mode: PlanMode, available: boolean, 
+/**
+ * Why there is no plan (`plan.not_available_gsql`, `plan.unsupported`).
+ */
+reason?: string, message?: string, 
+/**
+ * The query text the plan is of (a pattern's compiled Cypher, for instance).
+ */
+query?: string, root?: PlanOperator, 
+/**
+ * `PROFILE`: the database hits of all operators together, where the engine counts them.
+ */
+totalDbHits?: number, };
+
+export type PlanRequest = { 
+/**
+ * The query in the source's own form (`{"cypher": ...}` or `{"pattern": ...}`).
+ */
+query: Record<string, unknown>, mode: PlanMode, 
+/**
+ * For the time macros; the last hour when left out.
+ */
+timeRange?: TimeRange, variables?: Record<string, unknown>, };
+
+export type CompilePatternRequest = { pattern: Pattern, 
+/**
+ * Values of the template parameters; a parameter without one is left out of the answer's
+ * values and named in its query text.
+ */
+variables?: Record<string, unknown>, };
+
+export type ParsePatternRequest = { 
+/**
+ * Cypher (Neo4j, Memgraph) or GSQL (TigerGraph).
+ */
+text: string, 
+/**
+ * The values a compiled pattern came with: `kz_v...` parameters with a value read back as
+ * those literals.
+ */
+parameters?: Record<string, unknown>, };

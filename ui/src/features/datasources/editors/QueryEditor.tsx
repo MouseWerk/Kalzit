@@ -23,6 +23,7 @@ import {
 } from "./completion";
 import { FileQueryEditor } from "./FileQueryEditor";
 import { GraphiteQueryEditor, RedisQueryEditor } from "./GraphiteRedisQueryEditors";
+import { GraphModes } from "./GraphModes";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
 import { JsonField } from "./JsonField";
@@ -59,6 +60,14 @@ export interface QueryEditorProps {
    * outside (a filter by click) would replace that text, and waits instead.
    */
   onPendingText?: ((pending: boolean) => void) | undefined;
+  /**
+   * Graph patterns in Explore: a sample value per pattern parameter, sent with the run. Without
+   * them (the panel editor) a parameter takes the dashboard variable of the same name.
+   */
+  samples?: Readonly<Record<string, unknown>> | undefined;
+  onSamples?: ((samples: Record<string, unknown>) => void) | undefined;
+  /** "Als Suchvorlage speichern" in the pattern builder, where the page can save. */
+  onSaveTemplate?: (() => void) | undefined;
 }
 
 /** The editor for a data source's query form, chosen by the data source kind. */
@@ -184,8 +193,26 @@ function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: Qu
   );
 }
 
-/** Cypher for Neo4j and Memgraph, completed from the labels, edge types and keys of the source. */
-function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
+/**
+ * Cypher for Neo4j and Memgraph, completed from the labels, edge types and keys of the source;
+ * or a pattern drawn in the builder (GraphModes).
+ */
+function CypherQueryEditor(props: QueryEditorProps) {
+  const value = parseCypherQuery(props.query);
+  return (
+    <GraphModes
+      {...props}
+      language="Cypher"
+      text={value.cypher}
+      textQuery={(cypher) => ({ cypher })}
+      drawable
+    >
+      <CypherTextEditor {...props} />
+    </GraphModes>
+  );
+}
+
+function CypherTextEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
   const { t } = useI18n();
   const hintId = useId();
   const { schema, failed } = useSchema(orgId, datasource.id);

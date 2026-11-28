@@ -148,6 +148,7 @@ fn source_query(q: &pb::QueryRequest) -> Result<SourceQuery, Status> {
             timeout: Duration::from_millis(limits.timeout_ms),
             max_rows: usize::try_from(limits.max_rows).unwrap_or(usize::MAX),
             budget: ResponseBudget::new(usize::try_from(limits.max_response_bytes).unwrap_or(usize::MAX)),
+            pattern: Default::default(),
         },
         cursor: q.cursor.clone(),
         filters: Vec::new(),

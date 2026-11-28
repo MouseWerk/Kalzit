@@ -18,6 +18,7 @@
   "explore.tab.inspect": "Inspect",
   "explore.tab.documents": "Documents",
   "explore.tab.schema": "Schema",
+  "explore.tab.plan": "Plan",
   "explore.tab.table": "Table (projection)",
   "explore.size.documentsOne": "{count} document",
   "explore.size.documentsMany": "{count} documents",
