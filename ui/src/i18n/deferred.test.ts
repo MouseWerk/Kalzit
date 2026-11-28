@@ -203,6 +203,28 @@ describe("keys of a deferred area", () => {
       "panels/graph/canvas/ToolStrip.tsx",
     ],
     handbook: ["handbook/HandbookPage.tsx", "handbook/HandbookSearch.tsx", "handbook/Article.tsx"],
+    map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
+  };
+
+  /**
+   * The ways into each area (`loadArea("<area>").then(() => import(...))`), counted exactly: a
+   * new one is added here, and one that went away is noticed.
+   */
+  const GATES: Record<(typeof DEFERRED_AREAS)[number], number> = {
+    sharing: 7,
+    provisioning: 5,
+    reports: 4,
+    traces: 4,
+    serverAdmin: 5,
+    apps: 5,
+    // The graph panels, their editor and toolbar, and the table panel's rule code.
+    graphStyle: 8,
+    // The graph panels' canvas, behind the same gates as the style rules.
+    graphCanvas: 6,
+    // The handbook is one page behind one gate.
+    handbook: 1,
+    // The map's panel and its editor.
+    map: 2,
   };
 
   const files = sources(SRC).map((path) => ({
@@ -238,18 +260,6 @@ describe("keys of a deferred area", () => {
     expect(offenders).toEqual([]);
   });
 
-  const GATE_FLOOR: Record<(typeof DEFERRED_AREAS)[number], number> = {
-    sharing: 7,
-    provisioning: 5,
-    reports: 4,
-    traces: 4,
-    serverAdmin: 5,
-    apps: 5,
-    handbook: 1,
-    graphStyle: 8,
-    graphCanvas: 6,
-  };
-
   it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
     const gated = new Set(GATED[area]);
     for (const name of gated) {
@@ -283,8 +293,7 @@ describe("keys of a deferred area", () => {
       }
     }
     expect(offenders).toEqual([]);
-    // The walk found the gates, so it is not vacuous: at least as many as each area had when
-    // this was written (the handbook is one page behind one gate).
-    expect(gates).toBeGreaterThanOrEqual(GATE_FLOOR[area]);
+    // The walk found every gate, so it is not vacuous.
+    expect(gates).toBe(GATES[area]);
   });
 });

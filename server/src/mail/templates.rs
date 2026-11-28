@@ -996,6 +996,43 @@ pub fn second_factor_notice(
             ),
             not_you(lang),
         ),
+        Notice::WrongPasswords => (
+            de_en(
+                lang,
+                "Dein Passwort wurde mehrmals falsch eingegeben",
+                "Your password was entered wrongly several times",
+            ),
+            de_en(
+                lang,
+                format!(
+                    "In einer Sitzung, die bei deinem Konto bei {product} angemeldet ist, wurde dein Passwort \
+                     mehrmals hintereinander falsch eingegeben. Unter Konto > Anmeldung und Sicherheit siehst du \
+                     deine Sitzungen und beendest die, die du nicht kennst."
+                ),
+                format!(
+                    "In a session signed in to your account at {product}, your password was entered wrongly several \
+                     times in a row. Under Account > Sign-in and security you see your sessions and end the ones you \
+                     do not know."
+                ),
+            ),
+            not_you(lang),
+        ),
+    };
+    let why = match notice {
+        Notice::WrongPasswords => de_en(
+            lang,
+            "Du bekommst diese Mail, wenn in einer Sitzung deines Kontos das Passwort mehrmals falsch eingegeben \
+             wird; sie lässt sich nicht abbestellen.",
+            "You get this mail when the password is entered wrongly several times in a session of your account; it \
+             cannot be turned off.",
+        ),
+        _ => de_en(
+            lang,
+            "Du bekommst diese Mail bei allem, was den zweiten Faktor deines Kontos betrifft; sie lässt sich nicht \
+             abbestellen.",
+            "You get this mail for everything that concerns the second factor of your account; it cannot be turned \
+             off.",
+        ),
     };
     Mail {
         lang,
@@ -1006,13 +1043,7 @@ pub fn second_factor_notice(
         facts: vec![(de_en(lang, "Wann", "When"), at.to_string())],
         button: None,
         note: Some(note),
-        why: de_en(
-            lang,
-            "Du bekommst diese Mail bei allem, was den zweiten Faktor deines Kontos betrifft; sie lässt sich nicht \
-             abbestellen.",
-            "You get this mail for everything that concerns the second factor of your account; it cannot be turned \
-             off.",
-        ),
+        why,
         org: None,
     }
     .render(brand)
@@ -1396,7 +1427,9 @@ mod tests {
             out.push(("reset-admin", password_reset(lang, brand, &by_admin)));
             out.push(("elsewhere", password_elsewhere(lang, brand, Some("Müller <SSO>"))));
             out.push(("elsewhere-plain", password_elsewhere(lang, brand, None)));
-            for notice in [Notice::Locked, Notice::RecoveryCodeUsed, Notice::Changed, Notice::Reset] {
+            for notice in
+                [Notice::Locked, Notice::RecoveryCodeUsed, Notice::Changed, Notice::Reset, Notice::WrongPasswords]
+            {
                 out.push(("second-factor", second_factor_notice(lang, brand, notice, "5. November 2026, 14:20")));
             }
             let audit = format!("{PUBLIC}/admin/audit");
@@ -1600,7 +1633,8 @@ mod tests {
 
     #[test]
     fn security_mails_say_what_to_do_when_it_was_not_you() {
-        for notice in [Notice::Locked, Notice::RecoveryCodeUsed, Notice::Changed, Notice::Reset] {
+        for notice in [Notice::Locked, Notice::RecoveryCodeUsed, Notice::Changed, Notice::Reset, Notice::WrongPasswords]
+        {
             let c = second_factor_notice(Lang::De, &brand(), notice, "5. November 2026, 14:20");
             assert!(c.text.contains("Warst du das nicht?"), "{}", c.text);
             assert!(c.text.contains("  Wann: 5. November 2026, 14:20"));

@@ -156,7 +156,7 @@ impl AppState {
             async move { own.resolve().await }
         });
         let plugins = Arc::new(
-            crate::plugins::host::PluginHost::new(&config.paths.data_dir)
+            crate::plugins::host::PluginHost::new(&config.plugins_dir())
                 .with_own_endpoints(own_endpoints)
                 .with_exposed_secrets(crate::plugins::host::exposed_secrets(&config)),
         );

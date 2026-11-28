@@ -286,6 +286,20 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         tracing::warn!("{warning}");
     }
     crate::data_dir::prepare(&config.paths.data_dir)?;
+    match crate::data_dir::prepare_plugins_dir(&config)? {
+        crate::data_dir::PluginsMove::Nothing => {}
+        crate::data_dir::PluginsMove::Moved => tracing::info!(
+            "moved the plugin folder from {} to {} (paths.plugins_dir)",
+            config.paths.data_dir.join("plugins").display(),
+            config.plugins_dir().display()
+        ),
+        crate::data_dir::PluginsMove::LeftBehind(old) => tracing::warn!(
+            "the plugin folder is {} (paths.plugins_dir); {} holds files too and is no longer used: check that \
+             the plugins are complete in the new folder, then delete the old one",
+            config.plugins_dir().display(),
+            old.display()
+        ),
+    }
     if let Some(warning) = db::ambiguity(&config.database_url()) {
         tracing::warn!("{warning}");
     }

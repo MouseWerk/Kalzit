@@ -1600,6 +1600,9 @@ pub enum Notice {
     RecoveryCodeUsed,
     Changed,
     Reset,
+    /// The password was entered wrongly several times in one signed-in session
+    /// (`routes::me::WRONG_PASSWORDS_NOTICE`).
+    WrongPasswords,
 }
 
 /// Tells the person about a change of their second factor by mail, when the server can send

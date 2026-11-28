@@ -8,7 +8,10 @@
 //! factor of an account with a password needs a fresh confirmation of the password
 //! (`POST /me/security/confirm/password`) or, for an account that also signs in through a provider
 //! or directory, a sign-in through it within the last minutes, so a stolen session cannot plant a
-//! factor of its own; it ends the account's other sessions.
+//! factor of its own; it ends the account's other sessions. An account without a password whose
+//! session signed in through an OpenID Connect provider signs in there again first
+//! (`POST /me/security/confirm/provider`, with `max_age=0`), so a browser left signed in at the
+//! provider is not enough.
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -33,6 +36,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/me/security/confirm", Authenticated, confirm),
         route(Method::POST, "/me/security/confirm/passkey", Authenticated, confirm_passkey_options),
         route(Method::POST, "/me/security/confirm/password", Authenticated, confirm_password),
+        route(Method::POST, "/me/security/confirm/provider", Authenticated, confirm_provider),
         route(Method::POST, "/me/security/totp/setup", Authenticated, totp_setup),
         route(Method::POST, "/me/security/totp", Authenticated, totp_save),
         route(Method::DELETE, "/me/security/totp", Authenticated, totp_remove),
@@ -78,6 +82,12 @@ pub struct Status {
     /// Until when this session's sign-in through a provider or directory the account has a
     /// confirmed identity at stands in for the password's confirmation of the first factor.
     provider_sign_in_until: Option<i64>,
+    /// Until when this session's sign-in again at its OpenID Connect provider (`max_age=0`)
+    /// confirms the first factor.
+    provider_confirmed_until: Option<i64>,
+    /// The OpenID Connect provider this session signs in again at (`POST
+    /// /me/security/confirm/provider`); without a password the first factor needs it.
+    reauth_provider: Option<ReauthProvider>,
     /// Wrong codes locked the second step until then.
     locked_until: Option<i64>,
     /// The account has a local password.
@@ -85,6 +95,14 @@ pub struct Status {
     /// The providers and directories the account signs in through, in the order of the sign-in
     /// page.
     linked: Vec<Linked>,
+}
+
+/// The provider of `Status::reauth_provider`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReauthProvider {
+    slug: String,
+    name: String,
 }
 
 /// A provider or directory the account is linked to, with its name for the person there.
@@ -116,6 +134,10 @@ async fn status(
         password_confirmed_until: password_confirmed_until(&state, &hash, now).await?,
         fresh_sign_in_until: fresh_sign_in_until(&state, &hash, now).await?,
         provider_sign_in_until: provider_sign_in_until(&state, &user.id, &hash, now).await?,
+        provider_confirmed_until: provider_confirmed_until(&state, &user.id, &hash, now).await?,
+        reauth_provider: super::sso::reauth_provider(&state, &user.id, &hash)
+            .await?
+            .map(|(_, slug, name)| ReauthProvider { slug, name }),
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         has_password: password.is_some(),
         linked: sqlx::query_as(
@@ -201,13 +223,70 @@ async fn confirm_password(
     if password.is_none() {
         return Err(conflict("the account has no password; sign in again instead").because("second_factor.no_password"));
     }
-    super::me::check_own_password(&state, &user, proof.password, "password").await?;
+    super::me::check_own_password(&state, &user, &info, Some(&hash), proof.password, "password").await?;
     sqlx::query("UPDATE sessions SET password_confirmed_at = $1 WHERE token_hash = $2")
         .bind(now)
         .bind(&hash)
         .execute(&state.db)
         .await?;
     Ok(Json(PasswordConfirmed { password_confirmed_until: now + sf::CONFIRMATION_TTL_MS }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProviderConfirmRequest {
+    /// The page to come back to, a path of this server.
+    #[serde(default)]
+    return_to: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ProviderConfirmStart {
+    /// The provider's sign-in page, for the browser to go to.
+    url: String,
+}
+
+/// Starts a sign-in again at the OpenID Connect provider this session signed in through, with
+/// `max_age=0` and `prompt=login`: the provider checks the person now, even with a session of its
+/// own. The callback marks this session as confirmed at the provider when the provider's
+/// `auth_time` is after the start and the person is the account's confirmed identity there
+/// (`routes::sso::confirm_reauth`), and goes back to `returnTo` with `reauth=done` (or the
+/// outcome of a refusal). Only for an account without a second factor: one that has a factor
+/// confirms with it (`409` `second_factor.has_factor`).
+async fn confirm_provider(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
+    JsonBody(req): JsonBody<ProviderConfirmRequest>,
+) -> ApiResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+    let hash = session_hash(&headers, &info)?;
+    if sf::methods(&state.db, &user.id).await?.any() {
+        return Err(
+            conflict("the account has a second factor; confirm with it instead").because("second_factor.has_factor")
+        );
+    }
+    let (url, cookie) = super::sso::start_reauth(&state, &info, &user.id, &hash, req.return_to.as_deref()).await?;
+    let mut response = Json(ProviderConfirmStart { url }).into_response();
+    response.headers_mut().append(axum::http::header::SET_COOKIE, cookie);
+    Ok(response)
+}
+
+/// Until when the session's sign-in again at its provider (`confirm_provider`) allows setting up
+/// the first factor: within `CONFIRMATION_TTL_MS`, while the provider is enabled and the
+/// account's identity there confirmed.
+async fn provider_confirmed_until(state: &AppState, user_id: &str, hash: &str, now: i64) -> ApiResult<Option<i64>> {
+    let row: Option<(Option<i64>,)> = sqlx::query_as(
+        "SELECT s.provider_confirmed_at FROM sessions s JOIN sso_providers p ON p.id = s.sign_in_provider_id \
+         WHERE s.token_hash = $1 AND s.user_id = $2 AND p.enabled = 1 AND EXISTS (SELECT 1 FROM sso_identities i \
+         WHERE i.user_id = s.user_id AND i.provider_id = p.id AND i.confirmed = 1)",
+    )
+    .bind(hash)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.and_then(|(at,)| at).map(|at| at + sf::CONFIRMATION_TTL_MS).filter(|until| *until > now))
 }
 
 /// Until when the session's last confirmation of the password allows setting up the first factor.
@@ -267,7 +346,9 @@ async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, no
     }
     let (password,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(user_id).fetch_one(&state.db).await?;
+    let at_provider = provider_confirmed_until(state, user_id, hash, now).await?.is_some();
     if password.is_some()
+        && !at_provider
         && password_confirmed_until(state, hash, now).await?.is_none()
         && provider_sign_in_until(state, user_id, hash, now).await?.is_none()
     {
@@ -278,13 +359,27 @@ async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, no
         )
         .because("second_factor.confirm_password"));
     }
-    if password.is_none() && fresh_sign_in_until(state, hash, now).await?.is_none() {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "confirmation_required",
-            "sign in again first; the first second factor needs a sign-in from the last minutes",
-        )
-        .because("second_factor.sign_in_again"));
+    if password.is_none() && !at_provider {
+        // A session from an OpenID Connect provider signs in there again (`max_age=0`): a fresh
+        // sign-in alone could come from a browser still signed in at the provider.
+        if let Some((_, slug, name)) = super::sso::reauth_provider(state, user_id, hash).await? {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "confirmation_required",
+                "sign in again at the provider first (POST /me/security/confirm/provider)",
+            )
+            .because("second_factor.reauthenticate")
+            .param("provider", name)
+            .param("slug", slug));
+        }
+        if fresh_sign_in_until(state, hash, now).await?.is_none() {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "confirmation_required",
+                "sign in again first; the first second factor needs a sign-in from the last minutes",
+            )
+            .because("second_factor.sign_in_again"));
+        }
     }
     Ok(has)
 }

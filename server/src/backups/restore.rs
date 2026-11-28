@@ -129,22 +129,74 @@ fn restore_in(config: &Config, file: &Path, now_ms: i64, work: &Path, keyring: O
     for (i, name) in &names {
         extract_to(&mut zip, *i, &staged.join(name))?;
     }
-    if let (true, Some(db)) = (has_db, db_file) {
-        crate::updates::install::restore_database(&staged.join("kalzit.db"), &db).context("restoring the database")?;
-        restored.database = true;
+    // The folders to replace, each with where it goes. The plugin folder is checked before
+    // anything is touched, so a refused restore leaves the database and every folder as they are:
+    // it must be Kalzit's own (never a general folder `paths.plugins_dir` points at) and its parent
+    // writable, for the old one is moved aside there.
+    let folders: Vec<(&str, PathBuf)> = ["acme", "plugins"]
+        .into_iter()
+        .filter(|folder| staged.join(folder).is_dir())
+        .map(|folder| {
+            let to = if folder == "plugins" { config.plugins_dir() } else { data_dir.join(folder) };
+            (folder, to)
+        })
+        .collect();
+    for (folder, to) in &folders {
+        if *folder == "plugins" {
+            crate::data_dir::check_plugins_dir_own(to).context("restoring the plugins")?;
+            check_writable_parent(to, now_ms).context("restoring the plugins")?;
+        }
     }
-    for folder in ["acme", "plugins"] {
-        let from = staged.join(folder);
-        if !from.is_dir() {
+    // The old folders go aside first (renames, undone on a failure), then the database, then the
+    // folders from the backup: a failure before the database is restored puts everything back.
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (folder, to) in &folders {
+        if !to.exists() {
             continue;
         }
-        let to = data_dir.join(folder);
-        if to.exists() {
-            let kept = data_dir.join(format!("{folder}.before-restore-{now_ms}"));
-            std::fs::rename(&to, &kept).with_context(|| format!("moving {} aside", to.display()))?;
-            restored.kept.push(kept);
+        let kept = to.with_file_name(format!(
+            "{}.before-restore-{now_ms}",
+            to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.to_string())
+        ));
+        if let Err(e) = std::fs::rename(to, &kept) {
+            let undone = put_back(&moved);
+            bail!(
+                "moving {} aside failed: {e}. Nothing was restored{undone}; check that Kalzit may rename in {}",
+                to.display(),
+                to.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            );
         }
-        copy_dir(&from, &to)?;
+        moved.push((to.clone(), kept));
+    }
+    if let (true, Some(db)) = (has_db, db_file) {
+        if let Err(e) = crate::updates::install::restore_database(&staged.join("kalzit.db"), &db) {
+            let undone = put_back(&moved);
+            return Err(anyhow::Error::new(e)
+                .context(format!("restoring the database; the folders were left as they were{undone}")));
+        }
+        restored.database = true;
+    }
+    restored.kept = moved.iter().map(|(_, kept)| kept.clone()).collect();
+    for (folder, to) in &folders {
+        let copied = if *folder == "plugins" {
+            // Outside the data directory nothing private is inherited: the folder itself is.
+            crate::data_dir::create_private_dir(to).with_context(|| format!("creating {}", to.display()))
+        } else {
+            Ok(())
+        }
+        .and_then(|()| copy_dir(&staged.join(folder), to).with_context(|| format!("copying into {}", to.display())));
+        if let Err(e) = copied {
+            let before = moved.iter().find(|(from, _)| from == to).map(|(_, kept)| kept);
+            let hint = match before {
+                Some(kept) => format!("the previous folder is kept as {}", kept.display()),
+                None => "there was no previous folder".to_string(),
+            };
+            let database = if restored.database { "the database is already restored; " } else { "" };
+            return Err(e.context(format!(
+                "restoring {folder}/ failed: {database}{hint}. Free the space or fix the rights and run the \
+                 restore again"
+            )));
+        }
         restored.folders.push(folder.to_string());
     }
     let toml = staged.join("kalzit.toml");
@@ -154,6 +206,35 @@ fn restore_in(config: &Config, file: &Path, now_ms: i64, work: &Path, keyring: O
         restored.config_copy = Some(copy);
     }
     Ok(restored)
+}
+
+/// Fails unless Kalzit may create and rename entries in the parent of `dir` (the folder that
+/// receives `dir` and the one moved aside; its nearest existing folder when it is missing), with
+/// a probe file that is removed right away.
+fn check_writable_parent(dir: &Path, now_ms: i64) -> Result<()> {
+    let Some(mut parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        bail!("{} has no parent folder", dir.display());
+    };
+    while !parent.exists() {
+        let Some(up) = parent.parent().filter(|p| !p.as_os_str().is_empty()) else { break };
+        parent = up;
+    }
+    let probe = parent.join(format!(".kalzit-restore-probe-{now_ms}"));
+    std::fs::write(&probe, b"").with_context(|| format!("{} is not writable for Kalzit", parent.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Moves the folders set aside back to their places (undo of a restore that stopped before the
+/// database); answers a note for the error message when one could not go back.
+fn put_back(moved: &[(PathBuf, PathBuf)]) -> String {
+    let mut stuck = Vec::new();
+    for (to, kept) in moved.iter().rev() {
+        if std::fs::rename(kept, to).is_err() {
+            stuck.push(format!("{} is still at {}", to.display(), kept.display()));
+        }
+    }
+    if stuck.is_empty() { String::new() } else { format!(" ({}; rename it back by hand)", stuck.join(", ")) }
 }
 
 /// Copies a folder: new files take the data directory's private permissions, like a restore by
