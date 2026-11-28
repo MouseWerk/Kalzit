@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
-import { renderApp } from "../../test/renderApp";
+import { preloadPanels, renderApp } from "../../test/renderApp";
 import { optionLabels, pickOption, waitForOption } from "../../test/select";
 import { addNeo4jSource, PG_ID } from "../datasources/test/fakeDatasources";
 import { NEO4J_ID } from "../datasources/test/fakeGraph";
@@ -1328,6 +1328,10 @@ describe("performance budget", () => {
 });
 
 describe("Edit query in a graph panel's empty state", () => {
+  // The path panel's code is a chunk of its own: loaded before, so the wait below is for the
+  // panel's answer, not for a cold module transform.
+  beforeAll(() => preloadPanels("path"));
+
   // A path panel on a graph without paths: the state says so, with Edit query for editors.
   const paths = (): PanelModel => ({
     ...sqlPanel("p-paths", "Paths", ""),
