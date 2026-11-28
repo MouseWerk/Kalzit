@@ -81,7 +81,8 @@ async fn change_password(
         let token = session::read_cookie(&headers, info.https).ok_or_else(ApiError::unauthenticated)?;
         crate::auth::second_factor::require_fresh(&state.db, &session::hash_token(&token), now).await?;
     }
-    let stored = check_own_password(&state, &user, req.current, "current").await?;
+    let own_session = session::read_cookie(&headers, info.https).map(|t| session::hash_token(&t));
+    let stored = check_own_password(&state, &user, &info, own_session.as_deref(), req.current, "current").await?;
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await?;
 
@@ -110,12 +111,21 @@ fn wrong_password(field: &'static str) -> ApiError {
     ApiError::validation("the password is not correct").with_field(field)
 }
 
+/// Wrong passwords in one session, since its last right one, after which the attempt is audited
+/// (`user.password_wrong_repeated`) and the person told by mail, once per series. Never more
+/// than the account's password budget (`security.login_max_failures`), which would stop the
+/// series before it got here.
+pub const WRONG_PASSWORDS_NOTICE: i64 = 3;
+
 /// Checks the signed-in person's own password `given` (the request's field `field`), with the
 /// account's password budget: a stolen session must not become a way to guess the password at full speed. Answers
-/// the stored hash it matched. An account without a password never matches.
+/// the stored hash it matched. An account without a password never matches. `session` is the
+/// hash of the request's session token: wrong passwords in it are counted (`WRONG_PASSWORDS_NOTICE`).
 pub(crate) async fn check_own_password(
     state: &AppState,
     user: &SessionUser,
+    info: &RequestInfo,
+    session: Option<&str>,
     given: String,
     field: &'static str,
 ) -> ApiResult<Option<String>> {
@@ -152,10 +162,52 @@ pub(crate) async fn check_own_password(
     };
     drop(checking);
     if !matched {
+        if let Some(hash) = session {
+            count_wrong_password(state, user, info, hash).await?;
+        }
         return Err(wrong_password(field));
     }
     state.password_limiter.reset(&limit_key);
+    if let Some(hash) = session {
+        sqlx::query("UPDATE sessions SET wrong_passwords = 0 WHERE token_hash = $1 AND wrong_passwords <> 0")
+            .bind(hash)
+            .execute(&state.db)
+            .await?;
+    }
     Ok(stored)
+}
+
+/// Counts a wrong password in the session `hash`. The one that reaches the threshold
+/// (`WRONG_PASSWORDS_NOTICE`, or the account's smaller password budget) is audited as
+/// `user.password_wrong_repeated` with the session's id, and the person gets a mail
+/// (`second_factor::Notice::WrongPasswords`); further ones in the same series are not, the
+/// password budget pauses them anyway. Counted and read in one transaction, so two wrong
+/// passwords at once never both or neither reach it.
+async fn count_wrong_password(state: &AppState, user: &SessionUser, info: &RequestInfo, hash: &str) -> ApiResult<()> {
+    let threshold = WRONG_PASSWORDS_NOTICE.min(i64::from(state.config.security.login_max_failures)).max(1);
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    sqlx::query("UPDATE sessions SET wrong_passwords = wrong_passwords + 1 WHERE token_hash = $1 AND user_id = $2")
+        .bind(hash)
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT id, wrong_passwords FROM sessions WHERE token_hash = $1 AND user_id = $2")
+            .bind(hash)
+            .bind(&user.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((session_id, count)) = row.filter(|(_, count)| *count == threshold) else {
+        crate::db::commit(tx).await?;
+        return Ok(());
+    };
+    let actor = Actor { user_id: &user.id, info, at_ms: now };
+    let summary = json!({ "userId": user.id, "sessionId": session_id, "attempts": count });
+    audit(&mut tx, &actor, None, "user.password_wrong_repeated", ("user", &user.id), summary).await?;
+    crate::db::commit(tx).await?;
+    crate::auth::second_factor::notify(state, &user.id, crate::auth::second_factor::Notice::WrongPasswords);
+    Ok(())
 }
 
 #[derive(Serialize, sqlx::FromRow)]

@@ -54,6 +54,12 @@ export interface PasskeyInfo {
   lastUsedAt: number | null;
 }
 
+/** The provider a session signs in again at (`POST /me/security/confirm/provider`). */
+export interface ReauthProvider {
+  slug: string;
+  name: string;
+}
+
 /** A provider or directory the account signs in through, and its name for the person there. */
 export interface LinkedSignIn {
   provider: string;
@@ -78,6 +84,16 @@ export interface SecurityStatus {
    * (the first factor of an account that has both).
    */
   providerSignInUntil: number | null;
+  /**
+   * Until when this session's sign-in again at its OpenID Connect provider confirms the first
+   * factor (the fakes of tests may leave it out).
+   */
+  providerConfirmedUntil?: number | null | undefined;
+  /**
+   * The OpenID Connect provider this session signs in again at before the first factor of an
+   * account without a password (the fakes of tests may leave it out).
+   */
+  reauthProvider?: ReauthProvider | null | undefined;
   lockedUntil: number | null;
   hasPassword: boolean;
   /** The providers and directories the account signs in through (the fakes of tests may leave it out). */
@@ -177,6 +193,13 @@ function isStatus(value: unknown): value is SecurityStatus {
     isNullableNumber(value.passwordConfirmedUntil) &&
     isNullableNumber(value.freshSignInUntil) &&
     isNullableNumber(value.providerSignInUntil) &&
+    (value.providerConfirmedUntil === undefined ||
+      isNullableNumber(value.providerConfirmedUntil)) &&
+    (value.reauthProvider === undefined ||
+      value.reauthProvider === null ||
+      (isRecord(value.reauthProvider) &&
+        typeof value.reauthProvider.slug === "string" &&
+        typeof value.reauthProvider.name === "string")) &&
     isNullableNumber(value.lockedUntil) &&
     typeof value.hasPassword === "boolean" &&
     (value.linked === undefined || (Array.isArray(value.linked) && value.linked.every(isLinked)))
@@ -308,6 +331,16 @@ export async function confirmPassword(password: string): Promise<number> {
   const body = await request("POST", "/api/me/security/confirm/password", { password });
   const until = isRecord(body) ? body.passwordConfirmedUntil : undefined;
   return expectShape(until, isNumber, "confirmation");
+}
+
+/**
+ * Starts a sign-in again at the session's provider; answers the provider's page, which the
+ * browser goes to. The provider sends it back to `returnTo` with `reauth=<outcome>`.
+ */
+export async function startProviderConfirmation(returnTo: string): Promise<string> {
+  const body = await request("POST", "/api/me/security/confirm/provider", { returnTo });
+  const url = isRecord(body) ? body.url : undefined;
+  return expectShape(url, (v): v is string => typeof v === "string", "confirmation");
 }
 
 export async function confirmPasskeyOptions(): Promise<unknown> {

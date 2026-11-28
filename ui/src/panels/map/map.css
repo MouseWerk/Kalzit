@@ -1,0 +1,610 @@
+@layer components {
+  /* The map panel (board XYMapTrend.dc.html, frames 3 to 5, 8 and 9). */
+
+  .map-panel {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .map-panel__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .map-panel__status {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .map-panel__notes {
+    color: var(--text-muted);
+  }
+
+  .map-panel__switch {
+    display: inline-flex;
+    flex: none;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .map-panel__segment {
+    padding: var(--space-half) var(--space-3);
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .map-panel__segment:hover {
+    background: var(--bg-hover);
+  }
+
+  .map-panel__segment[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .map-panel__segment:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+  }
+
+  /* The drawing: water is the surface, land a quiet step above it. */
+  .map {
+    position: relative;
+    flex: 1;
+    min-height: var(--size-graph-min-panel);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .map__stage,
+  .map__box {
+    width: 100%;
+    height: 100%;
+  }
+
+  .map__box {
+    /* One finger scrolls the page; dragging with a mouse or pen moves the map. */
+    touch-action: pan-x pan-y;
+  }
+
+  .map__svg {
+    display: block;
+    cursor: grab;
+    user-select: none;
+  }
+
+  .map__svg:active {
+    cursor: grabbing;
+  }
+
+  /* Outline paths are in world units and scaled by the view; their lines keep one width. */
+  .map__land,
+  .map__lake,
+  .map__country,
+  .map__region,
+  .map__area {
+    vector-effect: non-scaling-stroke;
+    stroke-linejoin: round;
+  }
+
+  .map__land {
+    fill: var(--bg-hover);
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width);
+  }
+
+  .map__lake {
+    fill: var(--bg-surface);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .map__country {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width);
+  }
+
+  .map__region {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .map__borders {
+    pointer-events: none;
+  }
+
+  .map__graticule line {
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+    stroke-dasharray: 2 4;
+  }
+
+  /* An area carries its value's step of the scale or its threshold tone, never a state ring. */
+  .map__area {
+    fill: var(--series-color, var(--bg-active));
+    stroke: var(--bg);
+    stroke-width: var(--border-width);
+  }
+
+  .map__area--empty {
+    fill: var(--bg-active);
+  }
+
+  /* The area under the pointer or the keyboard: a neutral, stronger outline. */
+  .map__area--active {
+    stroke: var(--text);
+    stroke-width: var(--border-width-strong);
+  }
+
+  .map__edge {
+    stroke: var(--text-muted);
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+
+  .map__mark {
+    cursor: default;
+  }
+
+  .map__mark--bundle {
+    cursor: zoom-in;
+  }
+
+  /* A point carries the colour of its layer or value, never a state colour. */
+  .map__dot {
+    fill: var(--series-color, var(--text-muted));
+    stroke: var(--bg);
+    stroke-width: var(--border-width-strong);
+  }
+
+  /* Point under the pointer or the keyboard: a neutral ring, no accent (board frame 11). */
+  .map__ring {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: var(--border-width-strong);
+  }
+
+  .map__count {
+    fill: var(--series-on, var(--bg));
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-anchor: middle;
+    pointer-events: none;
+  }
+
+  .map__name {
+    fill: var(--text);
+    stroke: var(--bg);
+    stroke-width: var(--border-width-strong);
+    paint-order: stroke;
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+  }
+
+  .map__mark--active .map__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map__tools {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-start: var(--space-2);
+    display: flex;
+    gap: var(--space-half);
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .map__scale {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-end: var(--space-2);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+  }
+
+  .map__scale-bar {
+    width: var(--map-scale);
+    height: var(--space-1);
+    border: var(--border-width) solid var(--text-muted);
+    border-block-start: 0;
+  }
+
+  .map__corner {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-start: var(--space-2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    max-width: 70%;
+  }
+
+  .map__missing,
+  .map__attribution {
+    margin: 0;
+    padding: var(--space-half) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-xs);
+  }
+
+  .map__missing {
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .map__missing:hover {
+    background: var(--bg-hover);
+  }
+
+  .map__missing[aria-expanded="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .map__missing-list {
+    position: absolute;
+    inset-block-end: calc(var(--space-2) * 2 + var(--font-size-xs) * 2);
+    inset-inline-start: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: min(24rem, calc(100% - var(--space-4)));
+    max-height: 60%;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    font-size: var(--font-size-sm);
+  }
+
+  .map__missing-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .map__missing-title {
+    margin: 0;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map__missing-list ul {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+  }
+
+  .map__missing-reason,
+  .map__missing-more {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  /* Hints: nothing for the map, codes not found (board frames 5 and 8). */
+  .map-hint {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .map-hint p {
+    margin: 0;
+  }
+
+  .map-hint--compact {
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .map-hint__title {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map-hint__list {
+    margin: 0;
+    padding-inline-start: var(--space-4);
+  }
+
+  .map-hint__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-block-start: var(--space-2);
+  }
+
+  .map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    list-style: none;
+  }
+
+  .map-legend__item {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .map-legend__step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  .map-legend__swatch {
+    display: inline-block;
+    width: var(--space-3);
+    height: var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--series-color, var(--text-muted));
+  }
+
+  .map-legend__scale {
+    display: inline-flex;
+  }
+
+  .map-legend__scale .map-legend__swatch {
+    border-radius: 0;
+  }
+
+  .map-legend__value,
+  .map-legend__count {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .map-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .map-table__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .map-table__table th,
+  .map-table__table td {
+    padding: var(--space-1) var(--space-3);
+    border-block-end: var(--border-width) solid var(--border);
+    text-align: start;
+    font-weight: var(--font-weight-regular);
+  }
+
+  .map-table__table thead th {
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--bg-raised);
+    color: var(--text-muted);
+  }
+
+  .map-table__table .map-table__number {
+    text-align: end;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .map-table__cut {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .map-table__none {
+    color: var(--text-muted);
+  }
+
+  /* The drawing and its legend, below it or on its right. */
+  .map-panel__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 0;
+  }
+
+  .map-panel__body--right {
+    flex-direction: row;
+  }
+
+  .map-panel__body--right > .map,
+  .map-panel__body--right > .map-table {
+    min-width: 0;
+  }
+
+  .map-panel__body--right > .map-legend {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    max-width: 40%;
+    overflow: auto;
+  }
+
+  @container (inline-size < 26.25rem) {
+    .map-panel__body--right {
+      flex-direction: column;
+    }
+
+    .map-panel__body--right > .map-legend {
+      flex-direction: row;
+      flex-wrap: wrap;
+      max-width: none;
+    }
+  }
+
+  /* Narrow panels (frame 8): the corner texts give the drawing its room. */
+  .map__attribution-short {
+    display: none;
+  }
+
+  @container (inline-size < 26.25rem) {
+    .map__corner {
+      max-width: 100%;
+    }
+
+    .map__attribution-text {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .map__attribution-short {
+      display: inline;
+    }
+
+    .map__scale {
+      display: none;
+    }
+  }
+
+  /* Forced colors: points and areas get outlines (board frame 11). */
+  @media (forced-colors: active) {
+    .map__dot {
+      fill: CanvasText;
+      stroke: Canvas;
+    }
+
+    .map__area {
+      fill: Canvas;
+      stroke: CanvasText;
+    }
+
+    .map__ring,
+    .map__area--active {
+      stroke: Highlight;
+    }
+
+    .map__edge {
+      stroke: CanvasText;
+    }
+  }
+
+  /* The editor's form. */
+  .map-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .map-editor__layers {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .map-editor__layers > .field__label,
+  .map-editor__layers > .field__hint {
+    margin: 0;
+  }
+
+  .map-editor__layer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .map-editor__layer-name {
+    padding: 0 var(--space-1);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map-editor__layer-tools,
+  .map-editor__add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .map-editor__pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+  }
+
+  .map-editor__aliases {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .map-editor__aliases li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .map-editor__alias {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .map-editor__images {
+    margin: 0;
+  }
+}

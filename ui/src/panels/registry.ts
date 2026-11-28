@@ -11,6 +11,7 @@ import { gaugePanel } from "./gauge";
 import { heatmapPanel } from "./heatmap";
 import { hierarchyPanel } from "./hierarchy";
 import { histogramPanel } from "./histogram";
+import { mapPanel } from "./map";
 import { networkPanel } from "./network";
 import { pathPanel } from "./path";
 import { pieChartPanel } from "./piechart";
@@ -51,6 +52,7 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   networkPanel,
   hierarchyPanel,
   pathPanel,
+  mapPanel,
   tracePanel,
   textPanel,
 ];

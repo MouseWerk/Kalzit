@@ -249,6 +249,62 @@ describe("server settings rows", () => {
     expect(zone.classList.contains("settings-select")).toBe(true);
   });
 
+  it("sets the days of the data source trash, and shows the plugin folder from the configuration", async () => {
+    const { user, admin, server } = await openAdmin("/settings/storage", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        const base = {
+          scope: "server" as const,
+          version: 0,
+          description: "",
+          updatedAt: null,
+          updatedBy: null,
+        };
+        admin.serverSettings.push(
+          {
+            ...base,
+            key: "datasources.trash_retention_days",
+            value: 30,
+            default: 30,
+            source: "default",
+            editable: true,
+          },
+          {
+            ...base,
+            key: "paths.plugins_dir",
+            value: "/srv/kalzit/plugins",
+            default: "",
+            source: "file",
+            editable: false,
+          },
+        );
+      },
+    });
+    await screen.findByRole("heading", { level: 2, name: "Storage and retention" });
+    const trash = within(await row("datasources.trash_retention_days"));
+    expect(trash.getByText("Data source trash (days)")).toBeTruthy();
+    const days = trash.getByRole("spinbutton") as HTMLInputElement;
+    expect(days.value).toBe("30");
+    await user.clear(days);
+    await user.type(days, "14{Enter}");
+    await waitFor(() =>
+      expect(
+        admin.serverSettings.find((s) => s.key === "datasources.trash_retention_days")?.value,
+      ).toBe(14),
+    );
+    expect(sent(server, "PATCH")).toEqual(["/api/admin/settings/datasources.trash_retention_days"]);
+
+    const folder = within(await row("paths.plugins_dir"));
+    expect(folder.getByText("Plugin folder")).toBeTruthy();
+    expect(folder.getByText("locked")).toBeTruthy();
+    const path = folder.getByRole("textbox") as HTMLInputElement;
+    expect(path.value).toBe("/srv/kalzit/plugins");
+    expect(path.matches(":disabled")).toBe(true);
+    expect(
+      folder.getByText("Set in kalzit.toml. Change it there; it cannot be changed here."),
+    ).toBeTruthy();
+  });
+
   it("keeps the update settings on the Updates page and links there", async () => {
     await openAdmin("/settings/updates", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Updates" });

@@ -617,7 +617,8 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
      einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
      Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
-   - Anmeldeseiten, zum Abschluss von M8 (Entscheidung des Inhabers vom 23.11.2026): die Schritte 2
+   - Anmeldeseiten, in 0.8.2 (Entscheidung des Inhabers vom 27.11.2026; zuvor zum Abschluss von
+     M8 geplant, Entscheidung vom 23.11.2026): die Schritte 2
      und 3 aus dem Board `Auth.dc.html` (Schritt 1 ist mit #378 umgesetzt). Schritt 2: das Bild im
      Panel als „Doppelbrechung“ (Tabelle, Dokument und Graph doppelt im Kristall, still; ein Licht
      über die Kanten nach gelungener Anmeldung), Bewegung, erzwungene Farben, Fehlerseite im
@@ -1219,15 +1220,37 @@ Feste Regeln für alle Stufen:
   Tabellen-Panel. Icons aus einem mitgelieferten freien Satz mit AGPL-verträglicher Lizenz, bis
   Kalzits eigener Icon-Satz (M10) ihn ersetzt.
 - Layouts: radial (um gewählte Knoten), kreisförmig, Raster, Koordinaten (zwei
-  Zahl-Eigenschaften oder `point`), Karte, Zeitachse (Knoten nach Zeit-Eigenschaft); geschichtet
-  bis 10.000 Knoten im Worker; gespeicherte Positionen pro Panel.
-- Karte: das Karten-Panel wird dafür aus „Danach in M8“ in 0.8.1 vorgezogen. Die Kachelquelle
-  ist eine Server-Einstellung und standardmäßig aus; ohne Kacheln zeigt die Karte Koordinaten mit
-  GeoJSON-Umrissen. Kacheln laufen über den Kalzit-Server (Proxy-Einstellung, Cache), damit die
-  CSP gilt und Betrachter keine fremden Server direkt abrufen.
+  Zahl-Eigenschaften oder `point`), Zeitachse (Knoten nach Zeit-Eigenschaft); geschichtet
+  bis 10.000 Knoten im Worker; gespeicherte Positionen pro Panel. Das Layout „Karte“ folgt in
+  0.8.2.
+- Karten-Panel: aus „Danach in M8“ (Welle 3 des Parity-Programms, Abschnitt 12) in 0.8.1
+  vorgezogen, ohne Kacheln: Punkte und Flächen auf mitgelieferten Umrissen von Ländern und
+  Regionen, ohne Netz und ohne fremden Kartendienst. Kacheln über den Kalzit-Server und das
+  Graph-Layout „Karte“ wandern nach 0.8.2 (Entscheidung des Inhabers vom 27.11.2026).
 - Export als SVG und PDF zusätzlich zu PNG, GraphML und JSON; CSV für Knoten und Kanten.
+- Vorgezogen aus 0.8.2: die Algorithmus- und Pfad-Schritte auf dem Server (in GDS, MAGE oder auf
+  dem Kalzit-Server, mit Grenzen in den Einstellungen); ihre Oberfläche folgt in 0.8.2.
+- Daneben enthält 0.8.1 die bis dahin gemergten Teile des Parity-Programms (Abschnitt 12, M8),
+  die Nachzügler aus M6, Schritt 1 der Anmeldeseiten (#378), eigene Icons und vier weitere Themen.
 
-### 0.8.2 Algorithmen und Pfade
+### 0.8.2 Algorithmen und Pfade, Kartenkacheln, Anmeldung
+
+Aus 0.8.1 verschoben und neu dazugenommen (Entscheidung des Inhabers vom 27.11.2026):
+
+- Oberfläche für Algorithmen und Pfade: Schritt-Katalog in Explore und im Panel-Editor und die
+  Aktionen auf der Zeichenfläche (unten), nach dem Board `Graph082.dc.html`; die Berechnung auf
+  dem Server kam mit 0.8.1.
+- Kartenkacheln über den Kalzit-Server: die Kachelquelle ist eine Server-Einstellung und
+  standardmäßig aus; ohne Kacheln zeigt die Karte die mitgelieferten Umrisse. Kacheln laufen über
+  den Kalzit-Server (Proxy-Einstellung, Cache), damit die CSP gilt und Betrachter keine fremden
+  Server direkt abrufen.
+- Graph-Layout „Karte“: Knoten nach Koordinaten auf der Karte.
+- Neue Anmeldung: die Schritte 2 und 3 aus dem Board `Auth.dc.html` (Abschnitt 12, M8,
+  „Anmeldeseiten“) und aus dem Ultrawide-Abgleich UW-A1 (der Hintergrund der Anmeldeseiten liegt
+  nicht mehr über dem Text der Hilfeseiten) und UW-A2 (Hintergrund über die volle Breite,
+  Formularspalte unverändert), siehe `docs/quality/ultrawide/auth.md`.
+
+Algorithmen und Pfade im Einzelnen:
 
 - Schritte: Zentralität (Grad, PageRank, Betweenness, Closeness, Eigenvektor, Harmonic),
   Communities (Louvain, Leiden, Label Propagation, verbundene Komponenten, stark verbundene
@@ -1263,8 +1286,21 @@ Feste Regeln für alle Stufen:
   Vervollständigung filtert danach); Memgraph über eine feste Schema-Abfrage von Kalzit, wenn der
   Server mit Schema-Info läuft, sonst Stichprobe wie bisher.
 - TigerGraph: Explorer (Nachbarn mit Typ und Richtung über erzeugtes GSQL), Ausführung von
-  Schritten in der Datenbank, Algorithmen über vom Admin installierte, nur lesende Varianten der
-  Bibliotheksabfragen (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server;
+  Schritten in der Datenbank, Algorithmen über nur lesende GSQL-Abfragen, die Kalzit selbst
+  mitbringt (ohne Attribut- oder Dateiausgabe), sonst auf dem Kalzit-Server. Diese Abfragen
+  installiert Kalzit über einen eigenen Installations-Zugang je Quelle (Entscheidung des
+  Inhabers vom 27.11.2026, Board Graph083, D16): standardmäßig aus, nur von denen gesetzt, die
+  die Datenquelle bearbeiten dürfen, im verschlüsselten Secret Store; ein Zugang mit
+  Schreibrechten auf Daten oder Schema wird abgelehnt. Kalzit legt nur eigene `kalzit_…`-Abfragen
+  an, bricht ab, wenn der Name schon von anderer Hand existiert, und entfernt nur, was es selbst
+  installiert hat. Nie ohne Bestätigung: jede Installation, Aktualisierung und Entfernung zeigt
+  den exakten GSQL-Text und fragt vorher, auch nach einem Kalzit-Update; nichts geschieht
+  automatisch. Vor jeder Ausführung vergleicht Kalzit die Prüfsumme des installierten Texts, den
+  der Installations-Zugang liest (nur lesend), mit der gespeicherten; weicht sie ab, läuft der
+  Schritt auf dem Kalzit-Server. Installation, Aktualisierung, Entfernung, das Speichern des
+  Zugangs und das Einschalten stehen im Audit-Log; der Abfrage-Zugang bleibt nur lesend und
+  führt die Abfragen aus, die Prüfung auf `graphUpdate` gilt weiter. Ohne Installations-Zugang
+  erkennt Kalzit vom Datenbank-Admin installierte Abfragen;
   GSQL-Vervollständigung (Vertex- und Kantentypen, Attribute, Richtungen, Akkumulator-Typen);
   nächtliche CI auch gegen 3.10, sofern ein frei nutzbares Image verfügbar ist, sonst
   Fake-Tests.
@@ -1315,4 +1351,5 @@ Feste Regeln für alle Stufen:
 
 Die übrigen Punkte von M8 (Explore und Variablen, Dashboard-Tabs, XY-Panel, Prognose und
 Ausreißer, MCP-Server, allgemeine Performance, Nachzügler aus M6, Einstellungslücken) ab 0.8.7;
-was davon den Graph-Stufen hilft, wird vorgezogen (das Karten-Panel in 0.8.1).
+was davon den Graph-Stufen hilft, wird vorgezogen (das Karten-Panel in 0.8.1). Über das
+Parity-Programm kamen schon mit 0.8.1 das XY-Panel und Teile der tieferen Variablen.

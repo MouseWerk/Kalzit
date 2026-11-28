@@ -118,6 +118,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Memory the query cache may take; the least recently used answers go first.",
     },
     SettingDef {
+        key: "datasources.trash_retention_days",
+        scope: Scope::Server,
+        default: || json!(30),
+        ui_editable: true,
+        description: "Days a deleted data source stays in the trash with its stored secrets before it is deleted for good.",
+    },
+    SettingDef {
         key: "datasources.algorithm_timeout_secs",
         scope: Scope::Server,
         default: || json!(30),
@@ -699,6 +706,14 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: true,
         description: "Public links and public snapshots in this organization, while the server allows them. Off, \
                       they answer as not available; they are kept.",
+    },
+    SettingDef {
+        key: "paths.plugins_dir",
+        scope: Scope::Server,
+        // The folder in use is shown, so the default is `plugins` in the default data directory.
+        default: || json!(crate::config::Config::default().plugins_dir().display().to_string()),
+        ui_editable: false,
+        description: "Folder of the installed plugins; by default `plugins` in the data directory. Set in kalzit.toml or the environment.",
     },
     SettingDef {
         key: "audit.retention_days",
@@ -1508,6 +1523,8 @@ fn rule(key: &str) -> Option<Rule> {
         "datasources.max_inflight_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
         "datasources.cache_enabled" => Rule::Bool,
         "datasources.cache_max_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
+        // At least a day, so a slip of the keyboard cannot empty the trash at the next run.
+        "datasources.trash_retention_days" => Rule::Int { min: 1, max: 3_650 },
         "datasources.algorithm_timeout_secs" => Rule::Int { min: 1, max: 3600 },
         "datasources.algorithm_max_nodes" => Rule::Int { min: 1, max: 10_000_000 },
         "datasources.algorithm_max_memory_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
@@ -1784,6 +1801,7 @@ fn config_backed(key: &str) -> Option<ConfigBacked> {
         "security.login_window_secs" => |c| json!(c.security.login_window_secs),
         "security.setup_max_failures" => |c| json!(c.security.setup_max_failures),
         "security.setup_window_secs" => |c| json!(c.security.setup_window_secs),
+        "paths.plugins_dir" => |c| json!(c.plugins_dir().display().to_string()),
         "log.level" => |c| json!(c.log.level),
         "log.format" => |c| json!(c.log.format),
         "log.event_log" => |c| json!(c.log.event_log),

@@ -78,6 +78,16 @@
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
 
     /*
+     * Scrollbars: thin, the thumb in the text color at low alpha on a transparent track, so they
+     * sit quietly on every surface of every theme and scheme. Over the box that scrolls, the thumb
+     * turns stronger; it never disappears.
+     */
+    --scrollbar-width: thin;
+    --scrollbar-thumb: color-mix(in oklch, var(--text) 32%, transparent);
+    --scrollbar-thumb-hover: color-mix(in oklch, var(--text) 52%, transparent);
+    --scrollbar-track: transparent;
+
+    /*
      * Typography: the website's faces, bundled with the app (see the @font-face rules at the end of
      * this file), so nothing is fetched from another host; system fonts stand in while they load.
      */
@@ -315,6 +325,10 @@
 
     --focus-ring: light-dark(oklch(0% 0 0), oklch(100% 0 0));
     --focus-ring-width: 3px;
+
+    /* Scrollbars as clear as the input borders (3:1), full text color under the pointer. */
+    --scrollbar-thumb: var(--border-strong);
+    --scrollbar-thumb-hover: var(--text);
   }
 
   @media (prefers-reduced-motion: reduce) {

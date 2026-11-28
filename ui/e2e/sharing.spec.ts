@@ -33,9 +33,25 @@ test.afterAll(async () => {
   await owner.dispose();
 });
 
+/** Revenue per region placed by coordinates the query adds, for the map panel. */
+const PLACES = `SELECT region,
+  CASE region WHEN 'Nord' THEN 53.55 WHEN 'Ost' THEN 52.52 WHEN 'Süd' THEN 48.14 ELSE 50.94 END AS lat,
+  CASE region WHEN 'Nord' THEN 9.99 WHEN 'Ost' THEN 13.40 WHEN 'Süd' THEN 11.58 ELSE 6.96 END AS lon,
+  ROUND(SUM(amount), 1) AS umsatz FROM sales WHERE $__timeFilter(ts) GROUP BY region`;
+
 async function dashboard(title: string): Promise<string> {
   const source = await owner.createSqliteSource(unique("Verkauf"), join(fixturesDir(), "sales.db"));
-  return owner.createDashboard(regionDashboard(title, source));
+  const model = regionDashboard(title, source);
+  // A map next to the time series: public pages draw it over the bundled outlines too.
+  (model.panels as Record<string, unknown>[]).push({
+    id: "map",
+    type: "map",
+    title: "Places",
+    grid: { x: 12, y: 0, w: 12, h: 8 },
+    targets: [{ refId: "A", datasourceId: source, query: { sql: PLACES } }],
+    options: { layers: [{ kind: "points", valueField: "umsatz" }] },
+  });
+  return owner.createDashboard(model);
 }
 
 test("an admin shares a dashboard in public, a visitor opens it, and revoking ends it", {
@@ -74,6 +90,10 @@ test("an admin shares a dashboard in public, a visitor opens it, and revoking en
   await expect(publicPage.getByRole("article", { name: "Sales" })).toBeVisible();
   await expect(publicPage.getByRole("article", { name: "Sales" }).locator("canvas")).toBeVisible();
   await expect(publicPage.getByRole("navigation")).toHaveCount(0);
+  // The map draws its places over the outlines that ship with Kalzit.
+  const map = publicPage.getByRole("article", { name: "Places" });
+  await expect(map.getByTestId("map-outlines")).toBeVisible();
+  await expect(map.locator(".map__dot")).toHaveCount(4);
   const fixed = publicPage.getByRole("list", { name: t("sharing.viewer.fixedValues") });
   await expect(fixed).toContainText("Region");
   await expect(fixed).toContainText("Nord");
@@ -130,6 +150,7 @@ test("a snapshot freezes the panels and is listed for the admin and its creator"
   await expect(page).toHaveURL(new RegExp(`/dashboards/${dashboardId}/snapshots/`));
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   await expect(page.getByRole("article", { name: "Sales" }).locator("canvas")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Places" }).locator(".map__dot")).toHaveCount(4);
   await expect(
     page.getByRole("link", { name: t("sharing.snapshot.toLive") }).first(),
   ).toBeVisible();

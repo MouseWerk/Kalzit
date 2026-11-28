@@ -8,6 +8,7 @@ import deApps from "./de/apps.json";
 import deGraphCanvas from "./de/graphCanvas.json";
 import deGraphStyle from "./de/graphStyle.json";
 import deHandbook from "./de/handbook.json";
+import deMap from "./de/map.json";
 import deProvisioning from "./de/provisioning.json";
 import deReports from "./de/reports.json";
 import deServerAdmin from "./de/serverAdmin.json";
@@ -18,6 +19,7 @@ import enApps from "./en/apps.json";
 import enGraphCanvas from "./en/graphCanvas.json";
 import enGraphStyle from "./en/graphStyle.json";
 import enHandbook from "./en/handbook.json";
+import enMap from "./en/map.json";
 import enProvisioning from "./en/provisioning.json";
 import enReports from "./en/reports.json";
 import enServerAdmin from "./en/serverAdmin.json";
@@ -35,6 +37,7 @@ export const de = {
   ...deGraphStyle,
   ...deGraphCanvas,
   ...deHandbook,
+  ...deMap,
 };
 export const en = {
   ...enStart,
@@ -47,4 +50,5 @@ export const en = {
   ...enGraphStyle,
   ...enGraphCanvas,
   ...enHandbook,
+  ...enMap,
 };

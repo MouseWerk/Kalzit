@@ -51,6 +51,8 @@ describe("registry", () => {
       ["heatmap", true],
       ["state-timeline", true],
       ["status-history", true],
+      // The map reads rows with coordinates, as it reads documents and graphs.
+      ["map", true],
       ["text", true],
       // The document and graph panels follow, offered but not as fitting.
       ["documents", false],
@@ -68,7 +70,7 @@ describe("registry", () => {
       panelsForShapes(["documents"])
         .filter((e) => e.accepts)
         .map((e) => e.panel.type),
-    ).toEqual(["documents", "schema", "distribution", "document", "text"]);
+    ).toEqual(["documents", "schema", "distribution", "document", "map", "text"]);
     expect(
       suggestPanel([
         { shape: "documents", documents: { documents: [{ a: 1 }], schema: [], notices: [] } },

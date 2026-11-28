@@ -239,6 +239,10 @@ struct SignInRow {
     draft_secret_key_id: Option<String>,
     draft_secret_nonce: Option<String>,
     draft_secret: Option<String>,
+    /// A re-authentication: the person and the session it is for.
+    created_by: Option<String>,
+    session_hash: Option<String>,
+    created_at: i64,
 }
 
 /// The form a test sign-in tests, as kept with it.
@@ -268,7 +272,11 @@ pub async fn callback(
         Ok(response) => response,
         Err(e) => {
             let r = record_failure(&state, &info, None, None, "sso.internal", &e.message).await;
-            see_other(&sign_in_page("unavailable", &slug, Some(&r)), vec![clear_binding(info.https)])
+            let page = match reauth_return(&state, &info, &headers, &query).await {
+                Some(return_to) => reauth_page(&return_to, "unavailable"),
+                None => sign_in_page("unavailable", &slug, Some(&r)),
+            };
+            see_other(&page, vec![clear_binding(info.https)])
         }
     }
 }
@@ -303,7 +311,8 @@ async fn callback_inner(
     let row: Option<SignInRow> = if taken == 1 && !binding.is_empty() {
         sqlx::query_as(
             "SELECT id, provider_id, purpose, nonce, verifier, redirect_uri, return_to, draft, \
-             draft_secret_key_id, draft_secret_nonce, draft_secret FROM sso_sign_ins WHERE state_hash = $1",
+             draft_secret_key_id, draft_secret_nonce, draft_secret, created_by, session_hash, created_at \
+             FROM sso_sign_ins WHERE state_hash = $1",
         )
         .bind(hash(state_param))
         .fetch_optional(&state.db)
@@ -314,9 +323,14 @@ async fn callback_inner(
     let Some(row) = row else {
         let r = record_failure(state, info, None, None, "sso.state_unknown", "the sign-in is unknown, used or expired")
             .await;
+        // A signed-in person whose re-authentication ran out goes back to where it started.
+        if let Some(return_to) = reauth_return(state, info, headers, query).await {
+            return Ok(see_other(&reauth_page(&return_to, "expired"), clear()));
+        }
         return Ok(expired(r));
     };
     let test = row.purpose == "test";
+    let reauth = row.purpose == REAUTH;
     let target = match load_target(state, &row, slug).await? {
         Some(t) => t,
         None => {
@@ -324,7 +338,12 @@ async fn callback_inner(
                 record_failure(state, info, None, None, "sso.provider_unavailable", "the provider is paused or gone")
                     .await;
             finish_row(state, &row, test, Err(("unavailable", "sso.outcome_unavailable"))).await?;
-            return Ok(see_other(&sign_in_page("unavailable", slug, Some(&r)), clear()));
+            let page = if reauth {
+                reauth_page(&row.return_to, "unavailable")
+            } else {
+                sign_in_page("unavailable", slug, Some(&r))
+            };
+            return Ok(see_other(&page, clear()));
         }
     };
     let ids = (target.provider.id.as_str(), target.provider.slug.as_str());
@@ -332,7 +351,13 @@ async fn callback_inner(
     let fail = move |outcome: &'static str, reason: &'static str, detail: String, user: Option<String>| async move {
         let r = record_failure(state, info, Some(ids), user.as_deref(), reason, &detail).await;
         finish_row(state, row_ref, test, Err((outcome, outcome_reason(outcome)))).await?;
-        let page = if test { "/anmelden/sso-test".to_string() } else { sign_in_page(outcome, slug, Some(&r)) };
+        let page = if test {
+            "/anmelden/sso-test".to_string()
+        } else if reauth {
+            reauth_page(&row_ref.return_to, outcome)
+        } else {
+            sign_in_page(outcome, slug, Some(&r))
+        };
         Ok::<Response, ApiError>(see_other(&page, clear()))
     };
     // RFC 9207: a provider that names itself in the answer must be the one asked (no mix-up).
@@ -353,6 +378,13 @@ async fn callback_inner(
         Ok(p) => p,
         Err(e) => return fail(e.outcome(), e.reason(), e.to_string(), None).await,
     };
+    if reauth {
+        let user = row.created_by.clone();
+        return match confirm_reauth(state, info, headers, &target, &row, &person, now).await? {
+            Ok(()) => Ok(see_other(&reauth_page(&row.return_to, "done"), clear())),
+            Err((outcome, reason, detail)) => fail(outcome, reason, detail.to_string(), user).await,
+        };
+    }
     if test {
         let outcome = test_outcome(state, &target, &person).await?;
         let result = json!({
@@ -365,6 +397,217 @@ async fn callback_inner(
     sqlx::query("DELETE FROM sso_sign_ins WHERE id = $1").bind(&row.id).execute(&state.db).await?;
     let issuer = target.config.issuer.clone();
     complete_sign_in(state, info, headers, &target.provider, &issuer, &person, slug, &row.return_to).await
+}
+
+/// The purpose of a sign-in again at the provider before the first second factor.
+const REAUTH: &str = "reauth";
+
+/// The page a re-authentication named by the callback's `state` started on, when the browser still
+/// holds the session that started it: a failed or expired one goes back there, not to the
+/// sign-in page. `None` for every other sign-in, and when anything is unclear.
+async fn reauth_return(
+    state: &AppState,
+    info: &RequestInfo,
+    headers: &HeaderMap,
+    query: &HashMap<String, String>,
+) -> Option<String> {
+    let state_param = query.get("state").filter(|s| s.len() <= 512)?;
+    let current = session::read_cookie(headers, info.https).map(|t| session::hash_token(&t))?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT return_to FROM sso_sign_ins WHERE state_hash = $1 AND purpose = $2 AND session_hash = $3",
+    )
+    .bind(hash(state_param))
+    .bind(REAUTH)
+    .bind(&current)
+    .fetch_optional(&state.db)
+    .await
+    .ok()?;
+    row.map(|(return_to,)| crate::sso::safe_return_to(Some(&return_to)))
+}
+
+/// Where a re-authentication ends: the page it started on, with its outcome (`reauth=done`,
+/// `failed`, `cancelled`, `stale`, `unavailable`, ...).
+fn reauth_page(return_to: &str, outcome: &str) -> String {
+    let (path, fragment) = return_to.split_once('#').map_or((return_to, None), |(p, f)| (p, Some(f)));
+    let joiner = if path.contains('?') { '&' } else { '?' };
+    let mut url = format!("{path}{joiner}reauth={outcome}");
+    if let Some(f) = fragment {
+        url.push('#');
+        url.push_str(f);
+    }
+    url
+}
+
+/// The OpenID Connect provider the session `hash` of `user_id` signed in through, when it is
+/// enabled and the account's identity there is confirmed: the one a re-authentication goes to.
+/// Answers its id, slug and name.
+pub(crate) async fn reauth_provider(
+    state: &AppState,
+    user_id: &str,
+    hash: &str,
+) -> ApiResult<Option<(String, String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT p.id, p.slug, p.name FROM sessions s JOIN sso_providers p ON p.id = s.sign_in_provider_id \
+         WHERE s.token_hash = $1 AND s.user_id = $2 AND s.sign_in_method = 'provider' AND p.kind = 'oidc' \
+         AND p.enabled = 1 AND EXISTS (SELECT 1 FROM sso_identities i WHERE i.user_id = s.user_id \
+         AND i.provider_id = p.id AND i.confirmed = 1)",
+    )
+    .bind(hash)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// Starts a sign-in again at the provider of the session `session_hash` (`reauth_provider`) with
+/// `max_age=0` and `prompt=login`, for the first second factor (docs/api/access.md, "Second
+/// factor"). Answers the provider's address and the binding cookie; the callback takes the
+/// result only in this browser and this session (`confirm_reauth`).
+pub(crate) async fn start_reauth(
+    state: &AppState,
+    info: &RequestInfo,
+    user_id: &str,
+    session_hash: &str,
+    return_to: Option<&str>,
+) -> ApiResult<(String, HeaderValue)> {
+    use crate::auth::ratelimit::{address_key, network_key};
+    let mono = state.clock.monotonic_ms();
+    if let Err(wait) = state.sso.start_limiter.try_acquire(
+        &address_key("sso-start", info.client_ip),
+        &network_key(info.client_ip),
+        mono,
+    ) {
+        return Err(ApiError::rate_limited("too many sign-ins started, wait a moment", wait));
+    }
+    let Some((provider_id, slug, _)) = reauth_provider(state, user_id, session_hash).await? else {
+        return Err(conflict(
+            "this session did not sign in through an OpenID Connect provider the account is linked to",
+        )
+        .because("second_factor.no_reauth_provider"));
+    };
+    let provider = store::by_id(&state.db, &provider_id).await?.ok_or_else(ApiError::not_found)?;
+    let config = provider.oidc()?;
+    let unavailable = |reason: &str, detail: &str| {
+        tracing::info!(provider = %slug, reason, "a re-authentication could not start: {detail}");
+        conflict("the provider cannot be reached right now").because("second_factor.reauth_unavailable")
+    };
+    let http = state.sso.client(state);
+    let cached = state
+        .sso
+        .provider(&http, &config, false, state.clock.monotonic_ms())
+        .await
+        .map_err(|e| unavailable(e.reason(), &e.to_string()))?;
+    let mut request = oidc::Request::new(config.pkce);
+    request.reauthenticate = true;
+    let redirect_uri = crate::sso::redirect_uri(&crate::sso::public_base(state, info), &provider.slug);
+    let url = oidc::authorization_url(&cached.discovery, &config, &redirect_uri, &request)
+        .map_err(|e| unavailable(e.reason(), &e.to_string()))?;
+    let return_to = crate::sso::safe_return_to(return_to);
+    let binding = oidc::random_token();
+    let now = state.clock.now_ms();
+    sqlx::query(
+        "INSERT INTO sso_sign_ins (id, state_hash, binding_hash, provider_id, purpose, nonce, verifier, redirect_uri, \
+         return_to, created_by, session_hash, status, created_at, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13)",
+    )
+    .bind(super::new_id())
+    .bind(hash(&request.state))
+    .bind(hash(&binding))
+    .bind(&provider.id)
+    .bind(REAUTH)
+    .bind(&request.nonce)
+    .bind(request.verifier.as_deref())
+    .bind(&redirect_uri)
+    .bind(&return_to)
+    .bind(user_id)
+    .bind(session_hash)
+    .bind(now)
+    .bind(now + crate::sso::SIGN_IN_TTL_MS)
+    .execute(&state.db)
+    .await?;
+    Ok((url.to_string(), set_binding(&binding, info.https)))
+}
+
+/// How far the provider's `auth_time` may lie before the start of the re-authentication: the
+/// skew between the clocks of two machines, no more. A provider that ignores `max_age=0` answers
+/// the time of its earlier sign-in, which this must not let pass.
+const AUTH_TIME_LEEWAY_SECS: i64 = 5;
+
+/// A refusal of a re-authentication: outcome, reason and detail for the audit log.
+type ReauthRefusal = (&'static str, &'static str, &'static str);
+
+/// Takes the result of a re-authentication: the provider checked the person after the start
+/// (`auth_time`, which it must send for `max_age`), the person is the account's confirmed
+/// identity there, and the browser still holds the session that started it. Then the session
+/// counts as confirmed at the provider for `CONFIRMATION_TTL_MS` (`provider_confirmed_at`), with
+/// the audit entry `user.provider_reauthenticated`.
+async fn confirm_reauth(
+    state: &AppState,
+    info: &RequestInfo,
+    headers: &HeaderMap,
+    target: &Target,
+    row: &SignInRow,
+    person: &Person,
+    now: i64,
+) -> ApiResult<Result<(), ReauthRefusal>> {
+    sqlx::query("DELETE FROM sso_sign_ins WHERE id = $1").bind(&row.id).execute(&state.db).await?;
+    let (Some(user_id), Some(started_by)) = (row.created_by.as_deref(), row.session_hash.as_deref()) else {
+        return Ok(Err(("failed", "sso.reauth_invalid", "the re-authentication names no session")));
+    };
+    let current = session::read_cookie(headers, info.https).map(|t| session::hash_token(&t));
+    if current.as_deref() != Some(started_by) {
+        return Ok(Err((
+            "failed",
+            "sso.reauth_other_session",
+            "the browser no longer holds the session that started it",
+        )));
+    }
+    // The check must also lie after the session's own sign-in: within the leeway of a start right
+    // after it, a provider that ignored `max_age` would otherwise pass with that sign-in's time.
+    let signed_in: Option<(i64,)> = sqlx::query_as("SELECT created_at FROM sessions WHERE token_hash = $1")
+        .bind(started_by)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some((signed_in_at,)) = signed_in else {
+        return Ok(Err(("failed", "sso.reauth_other_session", "the session that started it has ended")));
+    };
+    let fresh =
+        person.auth_time.is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS && t > signed_in_at / 1000);
+    if !fresh {
+        return Ok(Err(("stale", "sso.reauth_stale", "the provider did not check the person again (auth_time)")));
+    }
+    let mut tx = crate::db::begin(&state.db).await?;
+    let linked: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM sso_identities WHERE provider_id = $1 AND issuer = $2 AND subject = $3 AND user_id = $4 \
+         AND confirmed = 1",
+    )
+    .bind(&target.provider.id)
+    .bind(&target.config.issuer)
+    .bind(&person.subject)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if linked.is_none() {
+        return Ok(Err(("failed", "sso.reauth_other_person", "another person signed in at the provider")));
+    }
+    let marked = sqlx::query(
+        "UPDATE sessions SET provider_confirmed_at = $1 WHERE token_hash = $2 AND user_id = $3 \
+         AND sign_in_provider_id = $4",
+    )
+    .bind(now)
+    .bind(started_by)
+    .bind(user_id)
+    .bind(&target.provider.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if marked != 1 {
+        return Ok(Err(("failed", "sso.reauth_other_session", "the session that started it has ended")));
+    }
+    let actor = Actor { user_id, info, at_ms: now };
+    let summary = json!({ "userId": user_id, "provider": target.provider.slug });
+    audit(&mut tx, &actor, None, "user.provider_reauthenticated", ("user", user_id), summary).await?;
+    crate::db::commit(tx).await?;
+    Ok(Ok(()))
 }
 
 /// The end of a sign-in through a provider of any kind, once the person is known: the account,
