@@ -968,17 +968,17 @@
 
     .dash-pane {
       z-index: var(--z-sticky-column);
-      margin-inline-start: calc((var(--size-column) + var(--space-2)) * -1);
+      margin-inline-start: var(--space-pane-pull-column);
       box-shadow: var(--shadow-menu);
     }
 
     .dash-pane--add {
-      margin-inline-start: calc((var(--size-add-pane) + var(--space-2)) * -1);
+      margin-inline-start: var(--space-pane-pull-add);
     }
 
     .dash-pane:has(.inspector),
     .dash-rail--editing .dash-pane {
-      margin-inline-start: calc((var(--size-drawer) + var(--space-2)) * -1);
+      margin-inline-start: var(--space-pane-pull-drawer);
     }
   }
 
