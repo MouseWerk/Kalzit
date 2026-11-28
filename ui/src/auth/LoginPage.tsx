@@ -43,6 +43,7 @@ import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
 import { type PasskeyFailure, usePasskeySignIn } from "./passkeySignIn";
 import { getRegistration, registrationKey } from "./registrationApi";
+import { playSignInLight } from "./signInLight";
 import { SSO_OUTCOMES, type SsoOutcome } from "./ssoOutcome";
 import "./auth.css";
 import {
@@ -188,10 +189,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const [finished, setFinished] = useState<"password" | "passkey" | null>(null);
 
   async function signedIn(me: Me, to?: string, via: "password" | "passkey" = "password") {
-    // The check in the button draws itself (board Auth.dc.html, "Bewegung"), then the app opens;
-    // with reduced motion the token is 0 ms and the app opens at once.
+    // The check in the button draws itself and the light runs once over the crystal's edges, side
+    // by side (board Auth.dc.html, frame 14, "Bewegung"), then the app opens; with reduced motion
+    // the check's token is 0 ms, the light does not run and the app opens at once.
     setFinished(via);
-    await pause(drawMs());
+    await Promise.all([pause(drawMs()), playSignInLight()]);
     // Whatever the previous session left (its preferences above all) is not this account's.
     forgetAccountData(queryClient);
     queryClient.setQueryData(meQuery.queryKey, me);

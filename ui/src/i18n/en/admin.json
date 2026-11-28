@@ -631,6 +631,8 @@
   "admin.settings.signin.server_name.description": "Shown next to the organization, such as the server’s address; empty for none.",
   "admin.settings.signin.product_line.label": "Product line before sign-in",
   "admin.settings.signin.product_line.description": "Shown next to the form while no notice is set; never with your own name or logo.",
+  "admin.settings.signin.backdrop.label": "Picture next to the sign-in form",
+  "admin.settings.signin.backdrop.description": "The calcite crystal with a table, a document and a graph, on wide screens. Off, the panel stays plain; with your own name or logo the picture is quieter.",
   "admin.settings.appearance.handbook.label": "Show the handbook",
   "admin.settings.appearance.handbook.description": "The guide inside the app under Help > Handbook, with links to it from the screens. Applies to every organization; on a server with its own product name the handbook still says Kalzit.",
   "admin.settings.signin.notice.label": "Sign-in notice",

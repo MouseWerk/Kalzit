@@ -1,6 +1,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
+import { writePreference } from "../lib/storage";
 import { setDefaultTimeSettings, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
 import { applyDefaultTheme } from "../theme/theme";
 import { DEFAULT_PRODUCT_NAME, logoUrlFor, setBrand } from "./brand";
@@ -36,6 +37,8 @@ export interface SignInTexts {
   serverName: string;
   /** Whether the pages before sign-in say one line about the product while no notice is set. */
   productLine: boolean;
+  /** Whether the panel next to the form shows its picture (`signin.backdrop`); on for older servers. */
+  backdrop: boolean;
   /** Failed sign-ins before a lockout, and the minutes it lasts; null from older servers. */
   maxFailures: number | null;
   lockMinutes: number | null;
@@ -81,6 +84,7 @@ export async function fetchBranding(): Promise<Branding> {
       organization: text(signIn.organization).trim(),
       serverName: text(signIn.serverName).trim(),
       productLine: signIn.productLine === true,
+      backdrop: signIn.backdrop !== false,
       maxFailures: count(signIn.maxFailures),
       lockMinutes: count(signIn.lockMinutes),
     },
@@ -116,6 +120,12 @@ export async function fetchOrgAppearance(
   };
 }
 
+/**
+ * The browser's note of whether the server shows the picture next to the sign-in form, for the
+ * first paint of the next visit: a copy of the last answer, never a preference.
+ */
+export const SIGN_IN_PICTURE_KEY = "kalzit.signInPicture";
+
 export const brandingQuery = queryOptions({
   queryKey: ["branding"],
   queryFn: fetchBranding,
@@ -146,6 +156,7 @@ export function useBrandingSync(): Branding | undefined {
     if (branding.data !== undefined) {
       applyBranding(branding.data);
       setLook(lookFrom(branding.data));
+      writePreference(SIGN_IN_PICTURE_KEY, branding.data.signIn.backdrop ? "on" : "off");
       // Before sign-in there are no account preferences: the server's default theme and its
       // variants stand in for a visitor who chose none in this browser. The language stays the
       // browser's own, which says more about an unknown visitor; after sign-in the server's

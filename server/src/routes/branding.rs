@@ -74,6 +74,8 @@ pub struct SignInTexts {
     /// Whether the pages before sign-in say one line about the product: `signin.product_line`,
     /// and never on a server with its own product name or logo.
     product_line: bool,
+    /// Whether the panel next to the form shows its picture: `signin.backdrop`.
+    backdrop: bool,
     /// Failed sign-ins before a budget refuses (`security.login_max_failures`) and the minutes it
     /// counts them in, for the texts about the lockout; the same for every account and address.
     max_failures: u32,
@@ -123,6 +125,7 @@ async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>
             organization: get("signin.organization").await?,
             server_name: get("signin.server_name").await?,
             product_line,
+            backdrop: get("signin.backdrop").await? != Value::Bool(false),
             max_failures: state.config.security.login_max_failures,
             lock_minutes: state.config.security.login_window_secs.div_ceil(60),
         },
