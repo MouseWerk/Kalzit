@@ -140,7 +140,12 @@ const WAREHOUSES =
 
 test("Verwaltung > Karte is off, tests and saves one source, and switches off with undo", async ({
   page,
+  consoleGuard,
 }) => {
+  // The address without {y} is refused at its field: the browser logs the answer.
+  consoleGuard.allow(
+    /^error: Failed to load resource: the server responded with a status of 422 .*\/api\/admin\/map\/test/,
+  );
   await signIn(page);
   await page.goto(`${origin}/settings/map`);
   const toggle = page.getByRole("switch", { name: t("map.admin.images") });
