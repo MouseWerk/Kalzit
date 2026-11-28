@@ -32,6 +32,26 @@ const GUIDES: LayoutGuide[] = [
 ];
 
 describe("guide layer", () => {
+  it("lays the map under the layout Karte, with the outlines' attribution", async () => {
+    const map: LayoutGuide = { kind: "map", x: 0, y: 100, side: 100 };
+    const strip: LayoutGuide = {
+      kind: "strip",
+      x: 120,
+      y: 90,
+      width: 30,
+      height: 60,
+      count: 2,
+      reason: "noPlace",
+    };
+    const { container, findByTestId, findByText } = await drawn([map, strip], true);
+    expect(await findByTestId("graph-map")).toBeTruthy();
+    expect(await findByText("Outlines: Natural Earth, public domain")).toBeTruthy();
+    const text = [...container.querySelectorAll("text")].map((node) => node.textContent);
+    expect(text).toContain("2 without a place");
+    // Beside the map the strip is a plain surface.
+    expect(container.querySelector(".graph-guides__strip--on-map")).toBeTruthy();
+  });
+
   it("draws rings, axes with their ends, lanes and the strip with count and reason", async () => {
     const { container } = await drawn(GUIDES, true);
     const svg = container.querySelector("svg");

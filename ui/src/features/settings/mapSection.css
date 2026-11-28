@@ -1,0 +1,31 @@
+@layer components {
+  /* Verwaltung > Karte (board Graph081.dc.html, frame 17). */
+
+  .map-admin__note {
+    margin: var(--space-3) var(--space-card);
+  }
+
+  .map-admin__state {
+    margin: 0;
+    padding: var(--space-2) var(--space-card) var(--space-3);
+  }
+
+  /* The way of a map image: its stations in a row, each a quiet chip. */
+  .map-admin__way {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-3) var(--space-card) 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .map-admin__step {
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+  }
+}

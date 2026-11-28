@@ -1,4 +1,6 @@
 import { isRecord } from "../../../api/client";
+import { isCoordinate } from "../../map/projection";
+import { findLatLonKeys } from "../../map/suggest";
 import { readNumber, readTime } from "../adapter";
 import type { LayoutMode, LayoutRequest } from "../layoutProtocol";
 import type { GraphModel, ModelNode } from "../model";
@@ -20,7 +22,10 @@ export interface LayoutSettings {
   mode: LayoutMode;
   order: LayoutOrder;
   descending: boolean;
-  /** Coordinates: two number properties, or a `point` property, which wins when set. */
+  /**
+   * Coordinates: two number properties, or a `point` property, which wins when set. The map reads
+   * the same: `x` is the longitude and `y` the latitude.
+   */
   x: string;
   y: string;
   point: string;
@@ -177,6 +182,50 @@ export function coordinateChoice(
   return point === undefined ? null : { kind: "point", point: point.key };
 }
 
+/** Where the map layout reads a node's place: a `point`, or latitude and longitude. */
+export type MapChoice =
+  | { kind: "point"; point: string }
+  | { kind: "latLon"; lat: string; lon: string };
+
+/** Whether every node with both values has them in the range of latitude and longitude. */
+function onEarth(model: GraphModel, lat: string, lon: string): boolean {
+  let any = false;
+  for (const node of model.nodes) {
+    const la = readNumber(node.properties[lat]);
+    const lo = readNumber(node.properties[lon]);
+    if (la === null || lo === null) continue;
+    if (!isCoordinate(la, lo)) return false;
+    any = true;
+  }
+  return any;
+}
+
+/**
+ * Which properties the map layout reads: the panel's `point` property, else its two number
+ * properties when they are latitude and longitude (y and x), else the two number properties with
+ * the usual names (lat and lon, Breite and Länge, ...), else the most widely used `point`. Null
+ * when the result has nothing of the kind.
+ */
+export function mapChoice(
+  model: GraphModel,
+  properties: LayoutProperties,
+  settings: Pick<LayoutSettings, "x" | "y" | "point">,
+): MapChoice | null {
+  const has = (list: PropertyUse[], key: string) => key !== "" && list.some((p) => p.key === key);
+  if (has(properties.points, settings.point)) return { kind: "point", point: settings.point };
+  if (
+    has(properties.numbers, settings.x) &&
+    has(properties.numbers, settings.y) &&
+    onEarth(model, settings.y, settings.x)
+  ) {
+    return { kind: "latLon", lat: settings.y, lon: settings.x };
+  }
+  const pair = findLatLonKeys(properties.numbers.map((p) => p.key));
+  if (pair !== null && onEarth(model, pair.lat, pair.lon)) return { kind: "latLon", ...pair };
+  const point = properties.points[0];
+  return point === undefined ? null : { kind: "point", point: point.key };
+}
+
 /** The time property of each label (by label index): the panel's, else the label's most used. */
 export function timeChoice(
   model: GraphModel,
@@ -202,7 +251,7 @@ export type LayoutInput = Pick<
 >;
 
 /** Why a layout cannot apply to a result (the menu says it, and the panel when it is chosen). */
-export type LayoutReason = "noCoordinates" | "noTime" | "tooLarge";
+export type LayoutReason = "noCoordinates" | "noPlace" | "noTime" | "tooLarge";
 
 export interface LayoutPlan {
   /** Null: the layout applies. */
@@ -307,6 +356,32 @@ export function planLayout(
         placed,
         total,
       };
+    }
+    case "map": {
+      const choice = mapChoice(model, properties, settings);
+      // Longitude, then latitude: x and y of the map.
+      const values = new Float64Array(total * 2).fill(Number.NaN);
+      let placed = 0;
+      if (choice !== null) {
+        for (let i = 0; i < total; i++) {
+          const data = modelNode(model, view, i);
+          if (data === undefined) continue;
+          const at =
+            choice.kind === "point"
+              ? readPoint(data.properties[choice.point])
+              : ([
+                  readNumber(data.properties[choice.lon]),
+                  readNumber(data.properties[choice.lat]),
+                ] as const);
+          if (at === null || at[0] === null || at[1] === null || !isCoordinate(at[1], at[0])) {
+            continue;
+          }
+          values[2 * i] = at[0];
+          values[2 * i + 1] = at[1];
+          placed++;
+        }
+      }
+      return { reason: placed === 0 ? "noPlace" : null, input: { values }, placed, total };
     }
     case "timeline": {
       const choice = timeChoice(model, properties, settings);

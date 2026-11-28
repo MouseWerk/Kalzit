@@ -34,7 +34,10 @@ export interface LayoutRequest {
   centers?: Uint32Array;
   /** Circular and grid: the nodes in the order they are placed in. Absent: by index. */
   order?: Uint32Array;
-  /** Coordinates: `x0, y0, x1, y1, ...` from the nodes' properties; NaN where a node has none. */
+  /**
+   * Coordinates: `x0, y0, x1, y1, ...` from the nodes' properties; NaN where a node has none.
+   * Map: longitude and latitude in degrees, in that order.
+   */
   values?: Float64Array;
   /** Coordinates: both axes share one scale (a `point`), instead of each filling its side. */
   uniform?: boolean;
@@ -45,12 +48,13 @@ export interface LayoutRequest {
 }
 
 /** Why nodes of a layout stand in the strip beside it instead of at a place of their own. */
-export type StripReason = "noValue" | "noTime";
+export type StripReason = "noValue" | "noTime" | "noPlace";
 
 /**
  * Quiet lines behind the graph that say how a layout placed its nodes (Graph081 board, frame 13):
  * the rings of the radial layout, the axes of the coordinates, the lanes of the timeline and the
- * strip of nodes a layout had no place for. In graph units, like the positions.
+ * strip of nodes a layout had no place for; and the map under the layout "Karte" (frame 15). In
+ * graph units, like the positions.
  */
 export type LayoutGuide =
   | { kind: "ring"; x: number; y: number; radius: number }
@@ -66,6 +70,11 @@ export type LayoutGuide =
       max: number;
     }
   | { kind: "lane"; x1: number; x2: number; y: number; lane: number }
+  /**
+   * The world of the map (Web Mercator, a square): its north-west corner is at (`x`, `y`) and it
+   * is `side` graph units wide. North is up, so the south edge is at `y - side`.
+   */
+  | { kind: "map"; x: number; y: number; side: number }
   | {
       kind: "strip";
       x: number;

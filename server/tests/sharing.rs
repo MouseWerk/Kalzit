@@ -369,6 +369,9 @@ on_both_databases! {
     a_shared_all_reads_the_values_when_it_runs,
     a_shared_all_needs_query_rights_on_the_options_source,
     shares_hold_on_to_the_sources_their_values_pick,
+    map_images_come_through_kalzit_only,
+    map_sources_are_checked_and_failures_stay_contained,
+    map_images_go_through_the_proxy_and_are_limited_per_viewer,
 }
 
 /// A link or snapshot whose values pick another source of a data source variable than its default
@@ -1677,4 +1680,358 @@ async fn a_shared_all_needs_query_rights_on_the_options_source(t: TestApp) {
     assert_eq!((status.as_str(), reason), ("suspended", json!("creatorRights")));
     let closed = t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await;
     assert_eq!((closed.status, closed.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"), "{}", closed.body);
+}
+
+/// The smallest PNG a map service could answer: the signature and an empty header chunk.
+const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+
+/// A map service on this machine. Images at `/{z}/{x}/{y}.png` (counted in `hits`); every
+/// request is logged as `host uri` (a proxy sees the whole address). Below `/denied` it answers
+/// 403, `/redirect` 302 to an image, `/html` a web page, `/big` an image of 3 MiB; below `/sparse`
+/// it has no image of column 1 (404), below `/flaky` it fails for column 2 (500).
+struct Tiles {
+    port: u16,
+    hits: Arc<std::sync::atomic::AtomicUsize>,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+async fn start_tiles() -> Tiles {
+    use axum::response::IntoResponse;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (counted, logged) = (hits.clone(), log.clone());
+    let app = Router::new().fallback(move |req: Request<Body>| {
+        let (counted, logged) = (counted.clone(), logged.clone());
+        async move {
+            let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_string();
+            let path = req.uri().path().to_string();
+            logged.lock().unwrap().push(format!("{host} {}", req.uri()));
+            let column = path.split('/').rev().nth(1).unwrap_or_default().to_string();
+            if path.starts_with("/denied") {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            if path.starts_with("/redirect") {
+                return (StatusCode::FOUND, [(header::LOCATION, "/0/0/0.png")]).into_response();
+            }
+            if path.starts_with("/html") {
+                return ([(header::CONTENT_TYPE, "image/png")], "<html><body>Anmelden</body></html>").into_response();
+            }
+            if path.starts_with("/big") {
+                let mut big = PNG.to_vec();
+                big.resize(3 * 1024 * 1024, 0);
+                return ([(header::CONTENT_TYPE, "image/png")], big).into_response();
+            }
+            if path.starts_with("/sparse") && column == "1" {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            if path.starts_with("/flaky") && column == "2" {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ([(header::CONTENT_TYPE, "image/png")], PNG).into_response()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    Tiles { port, hits, log, task }
+}
+
+fn map_fields(url: &str) -> Value {
+    json!({ "urlTemplate": url, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5,
+            "cacheMaxMb": 16, "cacheTtlDays": 1 })
+}
+
+/// A dashboard with one panel of `kind` and `options` over a SQL source, for public links.
+async fn map_dashboard(t: &TestApp, sql: &str, kind: &str, options: Value) -> String {
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Standorte", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "m1", "type": kind, "title": "Lager", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "options": options,
+              "targets": [ { "refId": "A", "datasourceId": sql,
+                             "query": { "sql": "SELECT 'Nord' AS name, 53.5 AS lat, 10.0 AS lon" } } ] }
+        ]
+    });
+    t.dashboard(model).await
+}
+
+async fn map_images_come_through_kalzit_only(t: TestApp) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let Tiles { port, hits, task, .. } = start_tiles().await;
+    let (_, viewer) = t.member("Vera", "viewer").await;
+    // Off after installation: no source, no images, and the panel knows it.
+    let view = t.get("/admin/map", &t.owner).await;
+    assert_eq!((&view.ok()["source"], &view.body["hasKey"]), (&Value::Null, &json!(false)));
+    assert_eq!(t.get("/map", &viewer).await.ok(), &json!({ "tiles": false }));
+    assert_eq!(t.get("/map/tiles/0/0/0", &viewer).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(hits.load(SeqCst), 0, "nothing is asked while the map images are off");
+    // The setting is for server administrators only; the images need a session.
+    assert_eq!(t.get("/admin/map", &viewer).await.status, StatusCode::FORBIDDEN);
+    let r = t.post("/admin/map/test", json!({ "source": map_fields("https://a.example/{z}/{x}/{y}") }), &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = t.put("/admin/map/enabled", json!({ "enabled": true, "version": 0 }), &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let anonymous = t.send(Method::GET, "/api/map/tiles/0/0/0", None, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(t.send(Method::GET, "/api/map", None, None).await.status, StatusCode::UNAUTHORIZED);
+    // Nothing to switch on before a source was saved.
+    let r = t.put("/admin/map/enabled", json!({ "enabled": true, "version": 0 }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "map.not_configured"), "{}", r.body);
+
+    let good = format!("http://127.0.0.1:{port}/{{z}}/{{x}}/{{y}}.png");
+    // Each problem names its field; nothing is stored without an image loaded.
+    let two = format!("http://127.0.0.1:{port}/{{z}}/{{x}}.png");
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(&two) }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "map.url_placeholders"), "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "urlTemplate");
+    let plain = "http://karten.example.org/{z}/{x}/{y}.png";
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(plain) }), &t.owner).await;
+    assert_eq!(r.reason(), "map.url_not_https", "{}", r.body);
+    let mut no_attribution = map_fields(&good);
+    no_attribution["attribution"] = json!("");
+    let r = t.post("/admin/map/test", json!({ "source": no_attribution }), &t.owner).await;
+    assert_eq!((r.reason(), &r.body["error"]["field"]), ("map.attribution_required", &json!("attribution")));
+    let denied = format!("http://127.0.0.1:{port}/denied/{{z}}/{{x}}/{{y}}.png");
+    let r = t.put("/admin/map", json!({ "source": map_fields(&denied), "version": 0 }), &t.owner).await;
+    assert_eq!(r.reason(), "map.source_denied", "{}", r.body);
+    assert_eq!(t.get("/admin/map", &t.owner).await.ok()["source"], Value::Null);
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(&good) }), &t.owner).await;
+    assert_eq!(
+        (&r.ok()["contentType"], &r.body["z"], &r.body["viaProxy"]),
+        (&json!("image/png"), &json!(5), &json!(false))
+    );
+    let saved = t.put("/admin/map", json!({ "source": map_fields(&good), "version": 0 }), &t.owner).await;
+    assert_eq!(saved.ok()["source"]["enabled"], true);
+    let version = saved.body["version"].as_i64().unwrap();
+    // An older version is a conflict, not an overwrite.
+    let r = t.put("/admin/map", json!({ "source": map_fields(&good), "version": 0 }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+
+    assert_eq!(
+        t.get("/map", &viewer).await.ok(),
+        &json!({ "tiles": true, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5, "available": true })
+    );
+    let before = hits.load(SeqCst);
+    for _ in 0..2 {
+        let r = t.get("/map/tiles/3/4/2", &viewer).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+        assert_eq!(r.headers[header::CACHE_CONTROL], "private, max-age=3600");
+    }
+    // The second came from the cache in the data directory.
+    assert_eq!(hits.load(SeqCst), before + 1);
+    let cache = t.get("/admin/map", &t.owner).await;
+    assert_eq!(cache.ok()["cache"]["tiles"], 1, "{}", cache.body);
+    // Outside the source's images: above the highest zoom, beyond the grid, not a plain number.
+    for path in [
+        "/map/tiles/6/0/0",
+        "/map/tiles/3/8/0",
+        "/map/tiles/3/0/8",
+        "/map/tiles/3/-1/0",
+        "/map/tiles/3/1/1.png",
+        "/map/tiles/+3/1/1",
+        "/map/tiles/99999999999/0/0",
+    ] {
+        assert_eq!(t.get(path, &viewer).await.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    assert_eq!(hits.load(SeqCst), before + 1, "nothing outside the grid reaches the source");
+
+    // A public link reaches the images only when it shows a map: a map panel, or a graph panel
+    // laid out as "Karte".
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (without_map, sql, _) = t.shared_dashboard().await;
+    let token = t.link(&without_map, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"), "{}", r.body);
+    assert_eq!(t.visit(&format!("/dashboards/{token}/map"), None).await.status, StatusCode::NOT_FOUND);
+    let grid = map_dashboard(&t, &sql, "network", json!({ "layout": "grid" })).await;
+    let token = t.link(&grid, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "a graph on another layout shows no map: {}", r.body);
+    for (kind, options) in [("map", json!({})), ("network", json!({ "layout": "map" }))] {
+        let with_map = map_dashboard(&t, &sql, kind, options).await;
+        let token = t.link(&with_map, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+        let info = t.visit(&format!("/dashboards/{token}/map"), None).await;
+        assert_eq!((&info.ok()["tiles"], &info.body["available"]), (&json!(true), &json!(true)), "{kind}");
+        assert_eq!(info.headers[header::CACHE_CONTROL], "no-store");
+        let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{kind}: {}", r.body);
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+        assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
+        let r = t.visit(&format!("/dashboards/{token}/map/tiles/9/0/0"), None).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"), "{kind}");
+    }
+    // A token that does not work answers like every other.
+    let r = t.visit("/dashboards/kein-token/map/tiles/3/4/2", None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"));
+
+    // Off applies at once and leaves nothing of the map service on the server; on again is its
+    // undo and needs no new test.
+    let off = t.put("/admin/map/enabled", json!({ "enabled": false, "version": version }), &t.owner).await;
+    assert_eq!((&off.ok()["source"]["enabled"], &off.body["cache"]["tiles"]), (&json!(false), &json!(0)));
+    assert!(!t.state.config.paths.data_dir.join("map-tiles").exists(), "the cache is emptied");
+    assert_eq!(t.get("/map", &viewer).await.ok(), &json!({ "tiles": false }));
+    assert_eq!(t.get("/map/tiles/3/4/2", &viewer).await.status, StatusCode::NOT_FOUND);
+    let version = off.body["version"].as_i64().unwrap();
+    let before = hits.load(SeqCst);
+    let on = t.put("/admin/map/enabled", json!({ "enabled": true, "version": version }), &t.owner).await;
+    assert_eq!(on.ok()["source"]["enabled"], true);
+    assert_eq!(hits.load(SeqCst), before, "switching on again loads no test image");
+    let audited: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'map.tiles_changed'")
+        .fetch_all(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(audited.len(), 3, "{audited:?}");
+    assert!(audited.iter().all(|(s,)| s.contains("127.0.0.1") && !s.contains("{z}")), "{audited:?}");
+    task.abort();
+}
+
+/// Saves the map image source `template` (with `key`, if any) from whatever version is stored.
+async fn save_map_source(t: &TestApp, template: &str, key: Option<&str>) -> Reply {
+    let version = t.get("/admin/map", &t.owner).await.ok()["version"].as_i64().unwrap();
+    let mut body = json!({ "source": map_fields(template), "version": version });
+    if let Some(key) = key {
+        body["key"] = json!(key);
+    }
+    t.put("/admin/map", body, &t.owner).await
+}
+
+async fn map_sources_are_checked_and_failures_stay_contained(t: TestApp) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let tiles = start_tiles().await;
+    let port = tiles.port;
+    let (_, viewer) = t.member("Vera", "viewer").await;
+    let app = &t;
+    let test = |template: String| {
+        let body = json!({ "source": map_fields(&template) });
+        async move { app.post("/admin/map/test", body, &app.owner).await }
+    };
+
+    // Metadata addresses and Kalzit itself are refused as targets, at the address field.
+    for address in ["https://169.254.169.254/{z}/{x}/{y}.png", "https://[fd00:ec2::254]/{z}/{x}/{y}.png"] {
+        let r = test(address.to_string()).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{address}: {}", r.body);
+        assert!(r.reason().starts_with("target."), "{address}: {}", r.body);
+        assert_eq!(r.body["error"]["field"], "urlTemplate", "{address}");
+    }
+    let own = t.state.config.http_addr().unwrap().port();
+    let r = test(format!("http://127.0.0.1:{own}/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!((r.reason(), &r.body["error"]["field"]), ("map.url_kalzit", &json!("urlTemplate")), "{}", r.body);
+    // Placeholders stay out of the host.
+    let r = test(format!("http://127.0.0.{{z}}:{port}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.url_placeholders", "{}", r.body);
+
+    // A redirect is not followed; only an image of a bounded size is taken.
+    let r = test(format!("http://127.0.0.1:{port}/redirect/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.source_status", "{}", r.body);
+    assert!(r.body["error"]["params"]["status"].to_string().contains("302"), "{}", r.body);
+    assert!(!tiles.log.lock().unwrap().iter().any(|l| l.ends_with(" /0/0/0.png")), "the redirect was followed");
+    let r = test(format!("http://127.0.0.1:{port}/html/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.not_an_image", "{}", r.body);
+    let r = test(format!("http://127.0.0.1:{port}/big/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.tile_too_large", "{}", r.body);
+
+    // A stored key goes only to the origin it was saved for, and never back to a browser.
+    let keyed = format!("http://127.0.0.1:{port}/{{z}}/{{x}}/{{y}}.png?key={{key}}");
+    let saved = save_map_source(&t, &keyed, Some("geheim-1")).await;
+    assert!(!saved.ok().to_string().contains("geheim-1"), "{}", saved.body);
+    assert_eq!(saved.body["hasKey"], true);
+    assert!(tiles.log.lock().unwrap().iter().any(|l| l.contains("key=geheim-1")));
+    assert!(!t.get("/map", &viewer).await.ok().to_string().contains("geheim"));
+    let before = tiles.log.lock().unwrap().len();
+    let moved = format!("http://localhost:{port}/{{z}}/{{x}}/{{y}}.png?key={{key}}");
+    let r = test(moved).await;
+    assert_eq!((r.reason(), &r.body["error"]["field"]), ("map.key_required", &json!("key")), "{}", r.body);
+    assert_eq!(tiles.log.lock().unwrap().len(), before, "nothing was asked with the stored key");
+    let audited: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'map.tiles_changed'")
+        .fetch_all(&t.state.db)
+        .await
+        .unwrap();
+    assert!(audited.iter().all(|(s,)| !s.contains("geheim") && !s.contains("key=")), "{audited:?}");
+
+    // An image the source does not have is an empty place: 404, no failure, no pause.
+    save_map_source(&t, &format!("http://127.0.0.1:{port}/sparse/{{z}}/{{x}}/{{y}}.png"), Some("")).await.ok();
+    for _ in 0..6 {
+        assert_eq!(t.get("/map/tiles/3/1/0", &viewer).await.status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(t.get("/admin/map", &t.owner).await.ok()["lastError"], Value::Null);
+    assert_eq!(t.get("/map", &viewer).await.ok()["available"], true);
+    assert_eq!(t.get("/map/tiles/3/0/0", &viewer).await.status, StatusCode::OK);
+
+    // A failing source pauses only the one who asked, and tells every map to draw outlines.
+    save_map_source(&t, &format!("http://127.0.0.1:{port}/flaky/{{z}}/{{x}}/{{y}}.png"), None).await.ok();
+    for _ in 0..kalzit::map::FAILURES_BEFORE_PAUSE {
+        assert_eq!(t.get("/map/tiles/3/2/0", &viewer).await.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let failed = t.get("/admin/map", &t.owner).await;
+    assert_eq!(failed.ok()["lastError"]["reason"], "map.source_status");
+    assert_eq!(t.get("/map", &viewer).await.ok()["available"], false);
+    assert_eq!(t.get("/map", &t.owner).await.ok()["available"], false);
+    let hits = tiles.hits.load(SeqCst);
+    assert_eq!(t.get("/map/tiles/3/3/0", &viewer).await.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(tiles.hits.load(SeqCst), hits, "a paused viewer does not reach the source");
+    // Anyone else still gets images, and one that loads makes the source available again.
+    assert_eq!(t.get("/map/tiles/3/3/0", &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.get("/map", &t.owner).await.ok()["available"], true);
+    tiles.task.abort();
+}
+
+async fn map_images_go_through_the_proxy_and_are_limited_per_viewer(t: TestApp) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let source = start_tiles().await;
+    let (_, viewer) = t.member("Vera", "viewer").await;
+    let good = format!("http://127.0.0.1:{}/{{z}}/{{x}}/{{y}}.png", source.port);
+    save_map_source(&t, &good, None).await.ok();
+
+    // With an outbound proxy set, the server fetches through it; the browser still only asks
+    // Kalzit, and the test says so.
+    let proxy = start_tiles().await;
+    t.setting("server", "network.proxy_url", json!(format!("http://127.0.0.1:{}", proxy.port))).await;
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(&good) }), &t.owner).await;
+    assert_eq!(r.ok()["viaProxy"], true, "{}", r.body);
+    let shown = t.get("/admin/map", &t.owner).await;
+    assert_eq!(shown.ok()["proxy"], json!(format!("127.0.0.1:{}", proxy.port)));
+    let direct = source.hits.load(SeqCst);
+    assert_eq!(t.get("/map/tiles/4/7/5", &viewer).await.status, StatusCode::OK);
+    assert_eq!(source.hits.load(SeqCst), direct, "nothing went to the source directly");
+    let wanted = format!("http://127.0.0.1:{}/4/7/5.png", source.port);
+    assert!(proxy.log.lock().unwrap().iter().any(|l| l.ends_with(&wanted)), "{:?}", proxy.log.lock().unwrap());
+    // A proxy that cannot be reached is a failure of the fetch: the server never goes around it.
+    proxy.task.abort();
+    t.setting("server", "network.proxy_url", json!("http://127.0.0.1:9")).await;
+    assert_eq!(t.get("/map/tiles/4/7/6", &viewer).await.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(source.hits.load(SeqCst), direct);
+    t.setting("server", "network.proxy_url", json!("")).await;
+
+    // One person makes Kalzit fetch at most so many images a minute; images from the cache are
+    // free, and everyone else keeps their own share.
+    let (_, viewer) = t.member("Lena", "viewer").await;
+    let limit = kalzit::map::MAX_FETCHES_PER_VIEWER as usize;
+    let z = 5u32;
+    let mut fetched = 0;
+    'grid: for x in 0..(1u32 << z) {
+        for y in 0..(1u32 << z) {
+            if fetched == limit {
+                break 'grid;
+            }
+            let r = t.get(&format!("/map/tiles/{z}/{x}/{y}"), &viewer).await;
+            assert_eq!(r.status, StatusCode::OK, "{z}/{x}/{y}: {}", r.body);
+            fetched += 1;
+        }
+    }
+    let r = t.get("/map/tiles/5/31/31", &viewer).await;
+    assert_eq!(
+        (r.status, &r.body["error"]["code"]),
+        (StatusCode::TOO_MANY_REQUESTS, &json!("rate_limited")),
+        "{}",
+        r.body
+    );
+    assert!(r.headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(t.get("/map/tiles/5/0/0", &viewer).await.status, StatusCode::OK, "a cached image is free");
+    assert_eq!(t.get("/map/tiles/5/31/31", &t.owner).await.status, StatusCode::OK, "others keep their share");
+    source.task.abort();
 }

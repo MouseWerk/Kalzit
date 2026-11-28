@@ -158,6 +158,11 @@
     stroke-dasharray: 4 4;
   }
 
+  /* Beside the map the strip is a plain surface, so its nodes do not stand on land or water. */
+  .graph-guides__strip--on-map {
+    fill: var(--bg-surface);
+  }
+
   .graph-guides__text {
     fill: var(--text-muted);
     font-size: var(--font-size-xs);

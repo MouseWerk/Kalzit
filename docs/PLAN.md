@@ -1243,8 +1243,8 @@ Aus 0.8.1 verschoben und neu dazugenommen (Entscheidung des Inhabers vom 27.11.2
 - Kartenkacheln über den Kalzit-Server: die Kachelquelle ist eine Server-Einstellung und
   standardmäßig aus; ohne Kacheln zeigt die Karte die mitgelieferten Umrisse. Kacheln laufen über
   den Kalzit-Server (Proxy-Einstellung, Cache), damit die CSP gilt und Betrachter keine fremden
-  Server direkt abrufen.
-- Graph-Layout „Karte“: Knoten nach Koordinaten auf der Karte.
+  Server direkt abrufen (umgesetzt mit #456).
+- Graph-Layout „Karte“: Knoten nach Koordinaten auf der Karte (umgesetzt mit #456).
 - Neue Anmeldung: die Schritte 2 und 3 aus dem Board `Auth.dc.html` (Abschnitt 12, M8,
   „Anmeldeseiten“) und aus dem Ultrawide-Abgleich UW-A1 (der Hintergrund der Anmeldeseiten liegt
   nicht mehr über dem Text der Hilfeseiten) und UW-A2 (Hintergrund über die volle Breite,

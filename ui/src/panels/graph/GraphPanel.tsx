@@ -2487,7 +2487,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                     fixed={fixed}
                     keepOut={keepOut}
                     tool={tool.name}
-                    draggable
+                    // On the map a node's place comes from its data: dragging moves the map.
+                    draggable={drawnLayout !== "map"}
                     drawStyle={style}
                     styled={panelStyle.styled}
                     onPick={(index, additive) => {

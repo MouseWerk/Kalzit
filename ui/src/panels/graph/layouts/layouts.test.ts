@@ -4,6 +4,7 @@ import type { LayoutGuide, LayoutMode, LayoutRequest } from "../layoutProtocol";
 import { circularLayout, MIN_CIRCLE_RADIUS } from "./circular";
 import { coordinateLayout } from "./coordinates";
 import { gridLayout } from "./grid";
+import { MAP_SIDE, mapLayout, SINGLE_MAP_SPAN } from "./map";
 import { placeLayout } from "./place";
 import { bestConnected, RING_GAP, radialLayout } from "./radial";
 import { seededRandom } from "./random";
@@ -398,6 +399,86 @@ describe("coordinate layout", () => {
     expect(result.guides.map((guide) => guide.kind)).toEqual(["strip"]);
     expect(finite(result.positions)).toBe(true);
     expect(leastRoom(result.positions, new Float32Array(30).fill(6))).toBeGreaterThan(0);
+  });
+});
+
+describe("map layout", () => {
+  const NONE = Number.NaN;
+  // Longitude, latitude: Hamburg, Munich, Berlin.
+  const CITIES = Float64Array.of(9.99, 53.55, 11.58, 48.14, 13.4, 52.52);
+
+  it("puts each node where its place is on the map, north up, on one scale", () => {
+    const result = mapLayout(request("map", 3, [], { values: CITIES }));
+    expect(result.placed).toBe(3);
+    const [hamburg, munich, berlin] = [0, 1, 2].map((node) => at(result.positions, node));
+    // Munich is south of Hamburg and Berlin; Berlin is east of both.
+    expect(munich?.[1]).toBeLessThan(hamburg?.[1] as number);
+    expect(berlin?.[0]).toBeGreaterThan(hamburg?.[0] as number);
+    // The places fill the square along their wider stretch.
+    const xs = [hamburg, munich, berlin].map((p) => p?.[0] as number);
+    const ys = [hamburg, munich, berlin].map((p) => p?.[1] as number);
+    const wide = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    expect(wide).toBeCloseTo(MAP_SIDE, 2);
+    // The map guide comes first and says where the whole world lies.
+    const [map] = result.guides;
+    expect(map?.kind).toBe("map");
+  });
+
+  it("lays the world of the guide under the nodes: a place lands on its map position", () => {
+    const result = mapLayout(request("map", 3, [], { values: CITIES }));
+    const map = result.guides[0];
+    if (map?.kind !== "map") throw new Error("no map guide");
+    // Hamburg in Web Mercator, as the map panel projects it.
+    const lon = 9.99;
+    const lat = 53.55;
+    const sin = Math.sin((lat * Math.PI) / 180);
+    const world = {
+      x: (lon + 180) / 360,
+      y: 0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI),
+    };
+    const [x, y] = at(result.positions, 0);
+    expect(map.x + world.x * map.side).toBeCloseTo(x, 1);
+    expect(map.y - world.y * map.side).toBeCloseTo(y, 1);
+  });
+
+  it("puts nodes without a place, or with one off the earth, into a strip beside the map", () => {
+    const values = Float64Array.of(9.99, 53.55, NONE, NONE, 13.4, 95, 200, 10, 11.58, 48.14);
+    const result = mapLayout(request("map", 5, [], { values }));
+    expect(result.placed).toBe(2);
+    expect(result.unplaced).toBe(3);
+    const strip = result.guides.find((guide) => guide.kind === "strip");
+    expect(strip).toMatchObject({ count: 3, reason: "noPlace" });
+    for (const node of [1, 2, 3]) {
+      expect(at(result.positions, node)[0]).toBeGreaterThanOrEqual(MAP_SIDE + STRIP_GAP);
+    }
+  });
+
+  it("shows a region around one place instead of zooming into nothing", () => {
+    const one = mapLayout(request("map", 1, [], { values: Float64Array.of(9.99, 53.55) }));
+    const map = one.guides[0];
+    if (map?.kind !== "map") throw new Error("no map guide");
+    expect(map.side).toBeCloseTo(MAP_SIDE / SINGLE_MAP_SPAN, 3);
+    expect(at(one.positions, 0)).toEqual([MAP_SIDE / 2, MAP_SIDE / 2]);
+  });
+
+  it("gives every node a finite place and the same places for the same request", () => {
+    const first = placeLayout(request("map", 4, [], { values: CITIES }));
+    const second = placeLayout(request("map", 4, [], { values: CITIES }));
+    expect(finite(first.positions)).toBe(true);
+    expect([...second.positions]).toEqual([...first.positions]);
+    expect(second.guides).toEqual(first.guides);
+    const none = placeLayout(request("map", 3));
+    expect(finite(none.positions)).toBe(true);
+  });
+
+  it("puts a pinned node with a place at its place, and one without a place where it was", () => {
+    const fixed = Uint8Array.of(1, 1);
+    const start = Float32Array.of(500, 500, 700, -40);
+    const values = Float64Array.of(9.99, 53.55, NONE, NONE);
+    const result = mapLayout(request("map", 2, [], { fixed, start, values }));
+    expect(at(result.positions, 0)).toEqual([MAP_SIDE / 2, MAP_SIDE / 2]);
+    expect(at(result.positions, 1)).toEqual([700, -40]);
+    expect(result.unplaced).toBe(0);
   });
 });
 

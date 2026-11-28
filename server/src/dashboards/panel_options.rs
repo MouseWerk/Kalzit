@@ -430,6 +430,7 @@ choice!(GraphLayout {
     Grid = "grid",
     Coordinates = "coordinates",
     Timeline = "timeline",
+    Map = "map",
 });
 choice!(LayoutOrder { Label = "label", Name = "name", Degree = "degree" });
 choice!(LayoutOrderDirection { Asc = "asc", Desc = "desc" });
@@ -1647,6 +1648,7 @@ mod tests {
             ),
             ("network", json!({ "layout": "", "layoutTime": {} })),
             ("hierarchy", json!({ "layout": "timeline", "layoutOrder": "name", "layoutLanes": "label" })),
+            ("network", json!({ "layout": "map", "layoutX": "laenge", "layoutY": "breite" })),
             ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
             ("path", json!({})),
         ] {
@@ -1870,7 +1872,7 @@ mod tests {
             ("network", json!({ "expandLimit": 0 }), "options.expandLimit"),
             ("hierarchy", json!({ "expandLimit": MAX_EXPAND_LIMIT + 1 }), "options.expandLimit"),
             ("network", json!({ "colorBy": "degree" }), "options"),
-            ("network", json!({ "layout": "map" }), "options"),
+            ("network", json!({ "layout": "spiral" }), "options"),
             ("network", json!({ "layoutOrder": "size" }), "options"),
             ("network", json!({ "layoutLanes": "none" }), "options"),
             ("network", json!({ "layoutX": long }), "options.layoutX"),

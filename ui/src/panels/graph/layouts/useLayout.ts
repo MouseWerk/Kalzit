@@ -13,6 +13,8 @@ import {
   layoutOptions,
   layoutProperties,
   layoutSettings,
+  type MapChoice,
+  mapChoice,
   planLayout,
   timeChoice,
 } from "./inputs";
@@ -91,8 +93,12 @@ export type LayoutAvailability = Record<
 
 export interface LayoutPlans {
   properties: LayoutProperties;
-  /** The properties the coordinates and the timeline read: the chosen ones, or the best found. */
-  resolved: { coordinates: CoordinateChoice | null; times: ReadonlyMap<number, string> };
+  /** The properties the coordinates, the map and the timeline read: chosen, or the best found. */
+  resolved: {
+    coordinates: CoordinateChoice | null;
+    map: MapChoice | null;
+    times: ReadonlyMap<number, string>;
+  };
   availability: LayoutAvailability;
   /** The plan of the chosen layout, applicable or not. */
   chosen: LayoutPlan;
@@ -125,9 +131,9 @@ export function useLayoutPlans(
   const availability = useMemo(() => {
     const out = {} as LayoutAvailability;
     for (const mode of LAYOUT_MODES) {
-      // Only these three can fail to apply; the others always place every node.
+      // Only these four can fail to apply; the others always place every node.
       const plan =
-        mode === "coordinates" || mode === "timeline" || mode === "hierarchy"
+        mode === "coordinates" || mode === "map" || mode === "timeline" || mode === "hierarchy"
           ? planLayout(model, view, properties, { ...settings, mode }, [], language)
           : null;
       out[mode] = {
@@ -141,6 +147,7 @@ export function useLayoutPlans(
   const resolved = useMemo(
     () => ({
       coordinates: coordinateChoice(model, properties, settings),
+      map: mapChoice(model, properties, settings),
       times: timeChoice(model, properties, settings),
     }),
     [model, properties, settings],

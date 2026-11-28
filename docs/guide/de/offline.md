@@ -41,7 +41,7 @@ Jedes davon ist aus oder wird erst nach Einrichtung durch eine Administration ge
 | Automatische Zertifikate (ACME, Let's Encrypt) | Die Zertifizierungsstelle, die du einträgst | Aus; nutze eigene Zertifikatsdateien |
 | Plugin-Katalog | Die Katalogadresse, die du einträgst | Aus, keine Adresse voreingestellt; Installation aus einer Datei geht immer |
 | Update-Prüfung und Download | `api.github.com` und GitHubs Dateiserver | Prüfung nur auf Anforderung; „Automatisch prüfen“ ist aus |
-| Kartenbilder | Kein Panel lädt Kartenbilder aus dem Internet. Das Karten-Panel zeichnet seine Orte auf Umrissen, die Kalzit mitbringt | Entfällt |
+| Kartenbilder | Die Kartenbild-Quelle, die du unter Verwaltung > Karte einträgst; der Kalzit-Server holt die Bilder, nie der Browser | Aus; Karten zeichnen ihre Orte auf Umrissen, die Kalzit mitbringt |
 
 Einen Proxy für diese ausgehenden Anfragen stellst du unter Verwaltung, Einstellungen, Netzwerk,
 HTTPS und Proxy ein ([Verwaltung](administration.md#ausgehender-proxy)). Hosts in deinem eigenen

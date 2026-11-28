@@ -40,7 +40,7 @@ Each of these is off, or only used after an administrator configured it:
 | Automatic certificates (ACME, Let's Encrypt) | The certificate authority you enter | Off; use your own certificate files |
 | Plugin catalog | The catalog address you enter | Off, no address by default; installing from a file always works |
 | Update check and download | `api.github.com` and GitHub's file hosts | Check only on request; "Check automatically" is off |
-| Map images | No panel loads map images from the internet. The map panel draws its places on outlines that ship with Kalzit | Not applicable |
+| Map images | The map image source you enter under Administration > Map; the Kalzit server fetches the pictures, browsers never do | Off; maps draw their places on outlines that ship with Kalzit |
 
 A proxy for these outgoing requests is set under Administration, Settings, Network, HTTPS and
 proxy ([Administration](administration.md#outbound-proxy)). Hosts in your own network can be listed

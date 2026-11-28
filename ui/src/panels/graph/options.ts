@@ -77,8 +77,8 @@ export const ELK_LAYER_SPACING = { min: 10, max: 400, default: 80 } as const;
 
 /**
  * The layouts of a graph panel (Graph081 board, frames 12 and 13). "force" and "hierarchy" are
- * also the two panel types; the others are chosen in the layout menu. The map layout belongs to
- * the map panel and joins this list with it.
+ * also the two panel types; the others are chosen in the layout menu. "map" ("Karte") puts the
+ * nodes on the same map as the map panel, by their coordinates.
  */
 export const LAYOUT_MODES = [
   "force",
@@ -87,6 +87,7 @@ export const LAYOUT_MODES = [
   "circular",
   "grid",
   "coordinates",
+  "map",
   "timeline",
 ] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];

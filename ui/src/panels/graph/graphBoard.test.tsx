@@ -42,7 +42,7 @@ function layoutMenu(): LayoutMenuProps {
     settings: layoutSettings(parseGraphOptions({}), "force"),
     availability: Object.fromEntries(LAYOUT_MODES.map((mode) => [mode, available])) as never,
     properties: { numbers: [], points: [], times: [], timesByLabel: new Map() },
-    resolved: { coordinates: null, times: new Map() },
+    resolved: { coordinates: null, map: null, times: new Map() },
     labels: [],
     selection: [],
     centers: [],

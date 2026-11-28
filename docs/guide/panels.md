@@ -222,8 +222,8 @@ error, failed, failure and critical as critical.
 
 ## Map
 
-Places on a map, drawn over country and region outlines that ship with Kalzit: the map needs no
-network and asks no map service. It reads rows, documents and graphs as they are.
+Places on a map, drawn over country and region outlines that ship with Kalzit: by default the map
+needs no network and asks no map service. It reads rows, documents and graphs as they are.
 
 - **Layers**: up to four, the top one in front. **Points** draw places, sized and coloured by a
   number field (**Size by**, **Point size from / to**, **Colour by**: single colour, a light to dark
@@ -244,8 +244,11 @@ network and asks no map service. It reads rows, documents and graphs as they are
 - Dragging moves the map, the wheel and the buttons zoom, **Fit to data** returns to the fitted
   view. With the focus on the map the arrow keys read the places from west to east, plus and
   minus zoom, 0 fits. **Map / Table** shows the same places as a table.
-- Map images (tiles from a map service) are not part of this version; the map always draws the
-  outlines and a graticule.
+- **Map images** (tiles from a map service) are off until a server administrator sets a source
+  under **Administration > Map** (see [Administration](administration.md#map)). Then the pictures
+  lie pale under the layers and the source's attribution stands in the corner. Your browser asks
+  only Kalzit for them, never the map service. When they do not load, the map draws the outlines
+  and says so; your data is complete either way.
 
 ## Text
 
@@ -411,17 +414,20 @@ with a node's next neighbours. **Open as a query in Explore** turns what is show
 Cypher query in Explore's editor. Loading neighbours needs query access to the data source; the
 explorer is not available for TigerGraph sources.
 
-The **Layout** menu of a network offers forces, hierarchy and five more layouts, each with a short
+The **Layout** menu of a network offers forces, hierarchy and six more layouts, each with a short
 sentence on what it does or why it cannot apply to this result: **Radial** (rings around the
 selected nodes, or around the best connected node when nothing is selected), **Circular**, **Grid**,
-**Coordinates** (two number properties or a `point` property) and **Timeline** (nodes by a time
-property, one lane per label or one for all). Circular and grid order the nodes by label, name or
+**Coordinates** (two number properties or a `point` property), **Map** (nodes at their place on
+the same map as the map panel, by a `point` or by **Latitude** and **Longitude**, found by names
+such as `lat` and `lon` when none are chosen; dragging moves the map, not a node, and the style
+rules apply as everywhere) and **Timeline** (nodes by a time property, one lane per label or one
+for all). Circular and grid order the nodes by label, name or
 number of edges. All layouts run in a web worker, show progress with **Cancel**, and are
 deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently:
 forces start from another position, and radial arranges around the nodes selected now; the other
 layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and
-nodes a layout has no place for (no value, no time) stand in a strip with their number and the
-reason. The guide lines are a view aid: they are not part of an exported image. Times are read as
+nodes a layout has no place for (no value, no time, no place) stand in a strip with their number
+and the reason. The guide lines are a view aid: they are not part of an exported image. Times are read as
 Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time
 but no zone as time in your browser's zone. A result too large for the hierarchy offers
 **Close groups**. Pinned nodes stay in place, and changing the layout releases them. In the panel

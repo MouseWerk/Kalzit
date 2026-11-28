@@ -7,6 +7,7 @@ import {
   HIERARCHY_NODE_LIMIT,
   type LayoutSettings,
   layoutProperties,
+  mapChoice,
   nodeOrder,
   planLayout,
   readPoint,
@@ -204,6 +205,42 @@ describe("planLayout", () => {
     expect(Number.isNaN(some.input.values?.[2])).toBe(true);
     const none = resultOf([{ name: "a", label: "L" }]);
     expect(plan(none, { mode: "coordinates" }).reason).toBe("noCoordinates");
+  });
+
+  it("reads places for the map by their usual names, longitude first, and says when none is there", () => {
+    const data = resultOf([
+      { name: "a", label: "Lager", properties: { breite: 53.55, laenge: 9.99, umsatz: 5 } },
+      { name: "b", label: "Lager", properties: { breite: 48.14, laenge: 11.58 } },
+      { name: "c", label: "Lager", properties: { umsatz: 3 } },
+    ]);
+    const some = plan(data, { mode: "map" });
+    expect(some).toMatchObject({ reason: null, placed: 2, total: 3 });
+    expect([...(some.input.values ?? [])].slice(0, 4)).toEqual([9.99, 53.55, 11.58, 48.14]);
+    expect(mapChoice(data.model, data.properties, SETTINGS)).toEqual({
+      kind: "latLon",
+      lat: "breite",
+      lon: "laenge",
+    });
+    const none = resultOf([{ name: "a", label: "L", properties: { umsatz: 1, kosten: 2 } }]);
+    expect(plan(none, { mode: "map" }).reason).toBe("noPlace");
+  });
+
+  it("takes the panel's point or its two numbers for the map, but not numbers off the earth", () => {
+    const data = resultOf([
+      { name: "a", label: "L", properties: { ort: point(9.99, 53.55), lat: 1, lon: 2, n: 500 } },
+      { name: "b", label: "L", properties: { lat: 3, lon: 4, n: 7 } },
+    ]);
+    expect(mapChoice(data.model, data.properties, { ...SETTINGS, point: "ort" })).toEqual({
+      kind: "point",
+      point: "ort",
+    });
+    // The coordinates' x and y read as longitude and latitude when they fit.
+    expect(mapChoice(data.model, data.properties, { ...SETTINGS, x: "lon", y: "n" })).toEqual({
+      kind: "latLon",
+      lat: "lat",
+      lon: "lon",
+    });
+    expect(plan(data, { mode: "map", point: "ort" })).toMatchObject({ placed: 1, total: 2 });
   });
 
   it("reads times per label and says why none can be placed; bare numbers are no time", () => {

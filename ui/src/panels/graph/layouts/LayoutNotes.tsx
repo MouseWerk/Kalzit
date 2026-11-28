@@ -78,8 +78,9 @@ export function LayoutWork({
 }
 
 /**
- * The line above the graph for a layout that could not place every node (Graph081 board, frame
- * 13): "11 of 15 arranged by coordinates, 4 without a value". Null when all nodes have a place.
+ * The line above the graph for a layout that could not place every node (Graph081 board, frames
+ * 13 and 15): "11 of 15 arranged by coordinates, 4 without a value", "7 of 8 on the map, 1
+ * without a place". Null when all nodes have a place.
  */
 export function placedText(
   t: Translate,
@@ -88,7 +89,7 @@ export function placedText(
   plan: Pick<LayoutPlan, "placed" | "total" | "reason">,
 ): string | null {
   if (plan.reason !== null || plan.placed >= plan.total) return null;
-  if (mode !== "coordinates" && mode !== "timeline") return null;
+  if (mode !== "coordinates" && mode !== "map" && mode !== "timeline") return null;
   return t(`graph.layout.placed.${mode}`, {
     placed: number.format(plan.placed),
     count: number.format(plan.total),

@@ -29,6 +29,7 @@ import {
   HIERARCHY_NODE_LIMIT,
   type LayoutProperties,
   type LayoutSettings,
+  type MapChoice,
 } from "./inputs";
 import { LayoutGlyph } from "./LayoutGlyph";
 import type { LayoutAvailability } from "./useLayout";
@@ -40,8 +41,12 @@ export interface LayoutMenuProps {
   settings: LayoutSettings;
   availability: LayoutAvailability;
   properties: LayoutProperties;
-  /** The properties the coordinates and the timeline read now, the panel's or the best found. */
-  resolved: { coordinates: CoordinateChoice | null; times: ReadonlyMap<number, string> };
+  /** The properties the coordinates, the map and the timeline read now: chosen, or the best found. */
+  resolved: {
+    coordinates: CoordinateChoice | null;
+    map: MapChoice | null;
+    times: ReadonlyMap<number, string>;
+  };
   /** The result's labels by index, for the timeline's property per label. */
   labels: readonly string[];
   /** Names of the selected nodes: a radial layout chosen now stands around them. */
@@ -88,6 +93,11 @@ export function layoutAbout(
       return t("graph.layout.about.grid", { order });
     case "coordinates":
       return t("graph.layout.about.coordinates");
+    case "map":
+      return t("graph.layout.about.map", {
+        placed: number.format(placed),
+        count: number.format(total),
+      });
     case "timeline":
       return t("graph.layout.about.timeline", {
         placed: number.format(placed),
@@ -112,8 +122,6 @@ function focusable(root: HTMLElement): HTMLElement[] {
  * and releasing pinned nodes; under the menu the options of the chosen layout. The chosen row is
  * a quiet tint with a check. Choosing a layout keeps the menu open, so its options are at hand;
  * Escape, Tab past its end or a click elsewhere closes it.
- *
- * The map layout joins the rows with the map panel (between coordinates and timeline).
  */
 export function LayoutMenu(props: LayoutMenuProps) {
   const { settings, availability, pinned, onChange, onRearrange, onRelease } = props;
@@ -239,8 +247,6 @@ export function LayoutMenu(props: LayoutMenuProps) {
               onKeyDown={onPopupKey}
             >
               <div ref={menuRef} role="menu" aria-label={t("graph.layout.label")}>
-                {/* "Karte" slot (map panel, Graph081 frame 12): the map layout's row goes between
-                    coordinates and timeline once LAYOUT_MODES lists it. */}
                 {LAYOUT_MODES.map((mode) => {
                   const unavailable = availability[mode].reason !== null;
                   const checked = mode === settings.mode;
@@ -464,6 +470,64 @@ function LayoutOptions(props: LayoutMenuProps) {
         </>
       );
       hint = t("graph.layout.hint.coordinates");
+      break;
+    }
+    case "map": {
+      const choice = resolved.map;
+      const pick = (which: "lat" | "lon") => (
+        <Field label={t(`graph.layout.option.${which}`)}>
+          {(id) => (
+            <Select
+              id={id}
+              value={choice?.kind === "latLon" ? choice[which] : ""}
+              disabled={properties.numbers.length === 0}
+              // Latitude is the map's y, longitude its x; a pair chosen by hand wins over a point.
+              onChange={(key) => {
+                const lat = choice?.kind === "latLon" ? choice.lat : "";
+                const lon = choice?.kind === "latLon" ? choice.lon : "";
+                onChange({
+                  y: which === "lat" ? key : lat,
+                  x: which === "lon" ? key : lon,
+                  point: "",
+                });
+              }}
+            >
+              <option value="" hidden>
+                {t("graph.layout.option.none")}
+              </option>
+              {properties.numbers.map((property) => (
+                <option key={property.key} value={property.key}>
+                  {property.key}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      );
+      fields = (
+        <>
+          {pick("lat")}
+          {pick("lon")}
+          <Field label={t("graph.layout.option.point")}>
+            {(id) => (
+              <Select
+                id={id}
+                value={choice?.kind === "point" ? choice.point : ""}
+                disabled={properties.points.length === 0}
+                onChange={(point) => onChange({ point })}
+              >
+                <option value="">{t("graph.layout.option.none")}</option>
+                {properties.points.map((property) => (
+                  <option key={property.key} value={property.key}>
+                    {t("graph.layout.option.pointName", { name: property.key })}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </>
+      );
+      hint = t("graph.layout.hint.map");
       break;
     }
     case "timeline":

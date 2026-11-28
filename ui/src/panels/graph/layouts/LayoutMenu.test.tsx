@@ -15,7 +15,7 @@ function props(patch: Partial<LayoutMenuProps> = {}): LayoutMenuProps {
     settings: layoutSettings(parseGraphOptions({}), "force"),
     availability,
     properties: { numbers: [], points: [], times: [], timesByLabel: new Map() },
-    resolved: { coordinates: null, times: new Map() },
+    resolved: { coordinates: null, map: null, times: new Map() },
     labels: [],
     selection: [],
     centers: [],

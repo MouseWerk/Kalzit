@@ -2,7 +2,8 @@
 // the Memgraph container with cypher-shell and mgconsole (.github/scripts/e2e-services.sh). A shop
 // as a graph: customers place orders, orders contain products, products sit in a category tree.
 // Along PLACED and CONTAINS alone, Ana reaches the monitor arm only through Ben: one shortest
-// path of 6 steps.
+// path of 6 steps. Customers carry the latitude and longitude of their city, for the graph
+// layout "Karte" (ui/e2e/map-images.spec.ts).
 // The names and counts are those of GRAPH_FIXTURE in ui/e2e/support/services.ts. Plain Cypher that
 // both databases read; it starts by deleting everything, so a retry seeds the same graph.
 MATCH (n) DETACH DELETE n;
@@ -24,11 +25,11 @@ CREATE
   (chair)-[:IN_CATEGORY]->(seating),
   (arm)-[:IN_CATEGORY]->(desks),
   (desk)-[:IN_CATEGORY]->(desks),
-  (ana:Customer {name: 'Ana', city: 'Hamburg'}),
-  (ben:Customer {name: 'Ben', city: 'München'}),
-  (clara:Customer {name: 'Clara', city: 'Köln'}),
-  (david:Customer {name: 'David', city: 'Leipzig'}),
-  (emma:Customer {name: 'Emma', city: 'Bremen'}),
+  (ana:Customer {name: 'Ana', city: 'Hamburg', lat: 53.55, lon: 9.99}),
+  (ben:Customer {name: 'Ben', city: 'München', lat: 48.14, lon: 11.58}),
+  (clara:Customer {name: 'Clara', city: 'Köln', lat: 50.94, lon: 6.96}),
+  (david:Customer {name: 'David', city: 'Leipzig', lat: 51.34, lon: 12.37}),
+  (emma:Customer {name: 'Emma', city: 'Bremen', lat: 53.08, lon: 8.80}),
   (o1:Order {name: 'A-1001', total: 249}),
   (o2:Order {name: 'A-1002', total: 79.8}),
   (o3:Order {name: 'A-1003', total: 39.9}),
