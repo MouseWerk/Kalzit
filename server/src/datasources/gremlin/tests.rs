@@ -201,6 +201,7 @@ fn req(gremlin: &str, variables: Value, max_rows: usize) -> SourceQuery {
             timeout: Duration::from_secs(5),
             max_rows,
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
+            pattern: Default::default(),
         },
         cursor: None,
         filters: Vec::new(),

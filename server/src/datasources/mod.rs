@@ -26,6 +26,7 @@ pub mod elasticsearch;
 pub mod file;
 pub mod frame;
 pub mod graph;
+pub mod graph_schema;
 pub mod graphite;
 pub mod gremlin;
 pub mod gsql;
@@ -43,6 +44,8 @@ pub mod mssql;
 pub mod mysql;
 pub mod neo4j;
 pub mod oracle;
+pub mod pattern;
+pub mod plan;
 pub mod pool;
 pub mod postgres;
 pub mod prometheus;
@@ -103,6 +106,22 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+    /// The schema as a graph (`graph_schema`): labels and edge types with counts and properties,
+    /// and which label connects to which. Graph kinds only; the others answer
+    /// `graph.schema_unsupported`.
+    async fn graph_schema(&self, _conn: &Connection) -> Result<graph_schema::GraphSourceSchema, SourceError> {
+        Err(SourceError::rejected("graph.schema_unsupported", "this data source has no graph schema"))
+    }
+    /// `EXPLAIN` or `PROFILE` of `req` as a plan tree (`plan`). `PROFILE` runs the query, with the
+    /// same read-only check, transaction, timeout and limits as running it.
+    async fn plan(
+        &self,
+        _conn: &Connection,
+        _req: SourceQuery,
+        mode: plan::PlanMode,
+    ) -> Result<plan::QueryPlan, SourceError> {
+        Ok(plan::unavailable(self.kind(), mode))
+    }
     /// The optional parts of this contract the kind implements. A plugin process declares the
     /// same in its `Describe` answer; the host calls nothing a kind does not declare.
     fn capabilities(&self) -> &'static [Capability] {
@@ -526,6 +545,8 @@ pub struct Limits {
     pub timeout: Duration,
     pub max_rows: usize,
     pub budget: ResponseBudget,
+    /// What graph patterns may ask for (the server's settings and `max_rows`).
+    pub pattern: pattern::PatternLimits,
 }
 
 /// Kalzit's own database, so a PostgreSQL source pointing at it can be refused after connecting
@@ -579,6 +600,8 @@ pub struct Connection {
     shared: OnceCell<Arc<dyn Any + Send + Sync>>,
     /// Graph steps this source could not run itself (`with_pushdown`).
     pushdown: PushdownMemo,
+    /// The graph schema last read, and when (`Connection::graph_schema`).
+    graph_schema: tokio::sync::Mutex<Option<(Instant, Arc<graph_schema::GraphSourceSchema>)>>,
     /// Where the close of its SQLite pool runs when it is dropped (`DataSources::close` waits for
     /// it); `None` for a connection `DataSources` did not build.
     closes: Option<Arc<PoolCloses>>,
@@ -646,8 +669,33 @@ impl Connection {
             own,
             shared: OnceCell::new(),
             pushdown: PushdownMemo::default(),
+            graph_schema: tokio::sync::Mutex::new(None),
             closes: None,
         }
+    }
+
+    /// The graph schema kept with this connection for `graph_schema::TTL`, read with `read` when
+    /// there is none yet, it is older, or `refresh` asks for a new one. One read at a time; others
+    /// wait for it and take its answer. Failures are not kept.
+    pub async fn graph_schema<F, Fut>(
+        &self,
+        refresh: bool,
+        read: F,
+    ) -> Result<Arc<graph_schema::GraphSourceSchema>, SourceError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<graph_schema::GraphSourceSchema, SourceError>>,
+    {
+        let mut slot = self.graph_schema.lock().await;
+        if !refresh
+            && let Some((at, schema)) = slot.as_ref()
+            && at.elapsed() < graph_schema::TTL
+        {
+            return Ok(schema.clone());
+        }
+        let schema = Arc::new(read().await?);
+        *slot = Some((Instant::now(), schema.clone()));
+        Ok(schema)
     }
 
     /// Runs the close of this connection's pool, when it is dropped, in `closes`.
@@ -1509,7 +1557,13 @@ impl DataSources {
         let own = |key: &str| ds.settings.get(key).and_then(Value::as_u64);
         let timeout = own("queryTimeoutSecs").map_or(server_timeout, |t| t.clamp(1, server_timeout));
         let rows = own("maxRows").map_or(server_rows, |r| r.clamp(1, server_rows));
-        Ok(Limits { timeout: Duration::from_secs(timeout), max_rows: rows as usize, budget })
+        let pattern = pattern::PatternLimits {
+            max_values: self.setting_u64(state, pattern::SETTING_MAX_VALUES).await? as usize,
+            max_hops: u32::try_from(self.setting_u64(state, pattern::SETTING_MAX_HOPS).await?).unwrap_or(u32::MAX),
+            max_limit: u32::try_from(rows).unwrap_or(u32::MAX),
+            gsql_tuples: true,
+        };
+        Ok(Limits { timeout: Duration::from_secs(timeout), max_rows: rows as usize, budget, pattern })
     }
 
     async fn response_budget(&self, state: &AppState) -> ApiResult<ResponseBudget> {
@@ -2926,6 +2980,111 @@ pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> Ap
         Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
         Ok(Ok((_, Ok(schema)))) => Ok(schema),
     }
+}
+
+/// The graph schema of a graph source (`DataSourcePlugin::graph_schema`), kept with its
+/// connection (`Connection::graph_schema`); `refresh` reads it again. **The caller has already
+/// authorized it** (`datasources:query`, as the schema).
+pub async fn read_graph_schema(
+    state: &AppState,
+    user_id: &str,
+    ds: &Datasource,
+    refresh: bool,
+) -> ApiResult<Arc<graph_schema::GraphSourceSchema>> {
+    let registry = &state.datasources;
+    let kind = registry.kind_in_org(&ds.org_id, &ds.kind).ok_or_else(|| kind_unavailable_error(&ds.kind))?;
+    let budget = registry.response_budget(state).await?;
+    let timeout = registry.limits(state, ds, budget).await?.timeout;
+    let run = async {
+        let _slots = registry.slots(state, user_id).await?;
+        let conn = registry.connection(state, ds).await?;
+        let schema = conn.graph_schema(refresh, || kind.plugin.graph_schema(&conn)).await;
+        Ok::<_, SourceError>((conn, schema))
+    };
+    match tokio::time::timeout(timeout, run).await {
+        Err(_) => Err(api_error(SourceError::Timeout(timeout.as_secs()), None)),
+        Ok(Err(e)) => Err(api_error(e, None)),
+        Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
+        Ok(Ok((_, Ok(schema)))) => Ok(schema),
+    }
+}
+
+/// What graph patterns may ask for on `ds`: the server's settings and the source's row limit.
+pub async fn pattern_limits(state: &AppState, ds: &Datasource) -> ApiResult<pattern::PatternLimits> {
+    let registry = &state.datasources;
+    let budget = registry.response_budget(state).await?;
+    Ok(registry.limits(state, ds, budget).await?.pattern)
+}
+
+/// The largest list a pattern takes on this server (`datasources.pattern_max_values`).
+pub async fn pattern_max_values(state: &AppState) -> ApiResult<usize> {
+    Ok(state.datasources.setting_u64(state, pattern::SETTING_MAX_VALUES).await? as usize)
+}
+
+/// `EXPLAIN` or `PROFILE` of one query (`DataSourcePlugin::plan`), with the source's limits and
+/// timeout and a query slot, as running it. **The caller has already authorized it**
+/// (`datasources:query`: a plan is a free query, and `PROFILE` runs it).
+pub async fn run_plan(
+    state: &AppState,
+    user_id: &str,
+    ds: &Datasource,
+    query: Value,
+    mode: plan::PlanMode,
+    range: TimeRange,
+    variables: BTreeMap<String, Value>,
+) -> ApiResult<plan::QueryPlan> {
+    let registry = &state.datasources;
+    let kind = registry.kind_in_org(&ds.org_id, &ds.kind).ok_or_else(|| kind_unavailable_error(&ds.kind))?;
+    let budget = registry.response_budget(state).await?;
+    let limits = registry.limits(state, ds, budget).await?;
+    let timeout = limits.timeout;
+    let run = async {
+        let _slots = registry.slots(state, user_id).await?;
+        let conn = registry.connection(state, ds).await?;
+        let req = SourceQuery {
+            ref_id: "plan".into(),
+            query,
+            range,
+            interval_ms: 60_000,
+            max_data_points: None,
+            variables,
+            identifier_variables: None,
+            limits,
+            cursor: None,
+            filters: Vec::new(),
+        };
+        let plan = kind.plugin.plan(&conn, req, mode).await;
+        Ok::<_, SourceError>((conn, plan))
+    };
+    let started = Instant::now();
+    let answer = match tokio::time::timeout(timeout, run).await {
+        Err(_) => Err(api_error(SourceError::Timeout(timeout.as_secs()), None)),
+        Ok(Err(e)) => Err(api_error(e, None)),
+        Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
+        Ok(Ok((_, Ok(plan)))) => Ok(plan),
+    };
+    // A plan is a query of the source in its usage, as a free query is; one refused before it
+    // ran is not (`usage::ran`).
+    let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let counted = match &answer {
+        Ok(plan) => Some(crate::usage::SourceQuery {
+            duration_ms,
+            rows: plan.root.as_ref().and_then(|r| r.rows).map_or(0, |r| i64::try_from(r).unwrap_or(i64::MAX)),
+            error: None,
+            cache: crate::usage::Cache::NotUsed,
+        }),
+        Err(e) if crate::usage::ran(e.code) => Some(crate::usage::SourceQuery {
+            duration_ms,
+            rows: 0,
+            error: Some(crate::usage::ErrorClass::of(e.code)),
+            cache: crate::usage::Cache::NotUsed,
+        }),
+        Err(_) => None,
+    };
+    if let Some(query) = counted {
+        crate::usage::record_query(state, &ds.org_id, &ds.id, query).await;
+    }
+    answer
 }
 
 // ---- helpers shared by the built-in kinds ----

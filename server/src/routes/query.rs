@@ -193,6 +193,53 @@ const OPTIONS_REF_ID: &str = "options";
 
 /// Bounds the variables of a request: count, names and total size.
 pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
+    check_variables_with(variables, &BTreeSet::new(), MAX_LIST_VALUES)
+}
+
+/// A pasted list longer than other variables may be (`check_variables_with`) reaches only the graph
+/// patterns that declare it: a query of another kind in the same request that names it (`$name`)
+/// is refused as if the list were its own, so its 1,000 values and 64 KiB still hold.
+pub(crate) fn big_lists_only_in_patterns<'a>(
+    queries: impl Iterator<Item = &'a Value>,
+    variables: &BTreeMap<String, Value>,
+    lists: &BTreeSet<String>,
+) -> ApiResult<()> {
+    let big: BTreeSet<&String> = lists
+        .iter()
+        .filter(|name| {
+            variables.get(*name).is_some_and(|v| {
+                v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES)
+                    || serde_json::to_string(v).map_or(true, |t| t.len() > MAX_VARIABLES_BYTES)
+            })
+        })
+        .collect();
+    if big.is_empty() {
+        return Ok(());
+    }
+    for query in queries.filter(|q| q.get("pattern").is_none()) {
+        // TigerGraph fills a query's declared or installed parameters from the variables by name,
+        // without `$`: such a query may name any of them.
+        let tigergraph = query.get("gsql").is_some() || query.get("installed").is_some();
+        let named = mentioned_names(query);
+        if let Some(name) = big.iter().find(|n| tigergraph || named.contains(**n)) {
+            return Err(list_too_long(name).with_field("variables"));
+        }
+    }
+    Ok(())
+}
+
+/// The bytes the list parameters of graph patterns (pasted ids) may take together, apart from the
+/// other variables' `MAX_VARIABLES_BYTES`.
+const MAX_PATTERN_LIST_BYTES: usize = 4 * 1024 * 1024;
+
+/// `check_variables`, where the variables in `lists` are list parameters of graph patterns: lists
+/// of up to `max_list` values, or pasted text, counted apart from the others' size
+/// (`MAX_PATTERN_LIST_BYTES`). The pattern checks their values again with its types.
+pub(crate) fn check_variables_with(
+    variables: &BTreeMap<String, Value>,
+    lists: &BTreeSet<String>,
+    max_list: usize,
+) -> ApiResult<()> {
     let refuse = |e: ApiError| Err(e.with_field("variables"));
     if variables.len() > MAX_VARIABLES {
         return refuse(
@@ -213,12 +260,32 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
                 .param("name", bad),
         );
     }
-    if let Some((name, _)) =
-        variables.iter().find(|(_, v)| v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
+    if let Some((name, _)) = variables
+        .iter()
+        .find(|(name, v)| !lists.contains(*name) && v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
     {
         return refuse(list_too_long(name));
     }
-    if serde_json::to_string(variables).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
+    if let Some((name, _)) =
+        variables.iter().find(|(name, v)| lists.contains(*name) && v.as_array().is_some_and(|i| i.len() > max_list))
+    {
+        return refuse(
+            ApiError::validation(format!("{name} holds more than {max_list} values"))
+                .because("pattern.too_many_values")
+                .param("name", name)
+                .param("max", max_list),
+        );
+    }
+    let (pasted, others): (BTreeMap<&String, &Value>, BTreeMap<&String, &Value>) =
+        variables.iter().partition(|(name, _)| lists.contains(*name));
+    if serde_json::to_string(&pasted).map_or(usize::MAX, |s| s.len()) > MAX_PATTERN_LIST_BYTES {
+        return refuse(
+            ApiError::validation(format!("pasted lists exceed {MAX_PATTERN_LIST_BYTES} bytes"))
+                .because("variables.too_large")
+                .param("bytes", MAX_PATTERN_LIST_BYTES),
+        );
+    }
+    if serde_json::to_string(&others).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
         return refuse(
             ApiError::validation(format!("variable values exceed {MAX_VARIABLES_BYTES} bytes"))
                 .because("variables.too_large")
@@ -238,7 +305,13 @@ async fn query(
     crate::datasources::check_item_steps(&req.queries)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    check_variables(&req.variables)?;
+    // List parameters of graph patterns take pasted lists, longer than other variables.
+    let lists: BTreeSet<String> =
+        req.queries.iter().flat_map(|i| crate::datasources::pattern::list_parameters(&i.query)).collect();
+    let max_list =
+        if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(&state).await? };
+    check_variables_with(&req.variables, &lists, max_list)?;
+    big_lists_only_in_patterns(req.queries.iter().map(|i| &i.query), &req.variables, &lists)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run. The caller's
     // rights on data sources are read once per request, however many sources the items query.
@@ -921,7 +994,12 @@ pub(crate) async fn stored_items(
     limit: Option<u32>,
     cursors: &BTreeMap<String, String>,
 ) -> ApiResult<PanelRun> {
-    check_variables(variables)?;
+    let lists: BTreeSet<String> =
+        panel.targets.iter().flat_map(|t| crate::datasources::pattern::list_parameters(&t.query)).collect();
+    let max_list =
+        if lists.is_empty() { MAX_LIST_VALUES } else { crate::datasources::pattern_max_values(state).await? };
+    check_variables_with(variables, &lists, max_list)?;
+    big_lists_only_in_patterns(panel.targets.iter().map(|t| &t.query), variables, &lists)?;
     let (resolved, identifiers) = resolve_variables(model, variables)?;
     let filters = adhoc_filters(model, variables)?;
     let read = frames_read(&panel.transformations);
@@ -1575,6 +1653,36 @@ mod tests {
         assert!(check_variables(&list(MAX_LIST_VALUES)).is_ok());
         let e = check_variables(&list(MAX_LIST_VALUES + 1)).unwrap_err();
         assert_eq!(e.reason.as_ref().unwrap().code, "variables.list_too_long");
+    }
+
+    #[test]
+    fn pasted_lists_are_longer_only_for_the_patterns_that_declare_them() {
+        let ids: Vec<String> = (0..5_000).map(|i| format!("4:x:{i}")).collect();
+        let vars = BTreeMap::from([("ids".to_string(), json!(ids)), ("land".to_string(), json!("AT"))]);
+        let lists = BTreeSet::from(["ids".to_string()]);
+        // Past the 1,000 values and 64 KiB of other variables, within the setting.
+        assert!(check_variables(&vars).is_err());
+        assert!(check_variables_with(&vars, &lists, 10_000).is_ok());
+        let e = check_variables_with(&vars, &lists, 4_000).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "pattern.too_many_values");
+        // A pattern may take it; a SQL query in the same request that names it may not.
+        let pattern = json!({ "pattern": { "nodes": [{ "id": "a", "ids": { "param": "ids" } }],
+                                          "parameters": [{ "name": "ids", "type": "idList" }] } });
+        let sql = json!({ "sql": "SELECT * FROM t WHERE id IN ($ids)" });
+        let other = json!({ "sql": "SELECT * FROM t WHERE land = $land" });
+        assert!(big_lists_only_in_patterns([&pattern, &other].into_iter(), &vars, &lists).is_ok());
+        let e = big_lists_only_in_patterns([&pattern, &sql].into_iter(), &vars, &lists).unwrap_err();
+        assert_eq!((e.reason.as_ref().unwrap().code.as_str(), e.field), ("variables.list_too_long", Some("variables")));
+        // TigerGraph takes parameters by name, without `$`: its queries may name any list.
+        let installed = json!({ "installed": "nachbarn" });
+        let gsql = json!({ "gsql": "INTERPRET QUERY (SET<STRING> ids) FOR GRAPH g { PRINT ids; }" });
+        for tg in [installed, gsql] {
+            assert!(big_lists_only_in_patterns([&pattern, &tg].into_iter(), &vars, &lists).is_err(), "{tg}");
+        }
+        // A short list is no matter.
+        let short = BTreeMap::from([("ids".to_string(), json!(["a"]))]);
+        let installed = json!({ "installed": "nachbarn" });
+        assert!(big_lists_only_in_patterns([&pattern, &installed].into_iter(), &short, &lists).is_ok());
     }
 
     fn all_model() -> DashboardModel {

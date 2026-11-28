@@ -1292,6 +1292,14 @@ parallel steps are per Kalzit server):
 | `algorithm_max_top_k` | 100 | similar nodes per node (`topK` of similarity), at most 100 |
 | `algorithm_max_suggestions` | 50 | suggested edges per link prediction step, also its default; at most 500 |
 
+Next to them, server settings of graph patterns (docs/api/datasources.md, "Graph patterns"), not
+lowered by organizations:
+
+| Setting | Default | |
+| --- | --- | --- |
+| `datasources.pattern_max_values` | 10,000 | values in one list of a pattern, pasted ones included; at most 100,000 (`pattern.too_many_values`) |
+| `datasources.pattern_max_hops` | 6 | longest path one edge of a pattern may stand for; at most 20 (`pattern.hops_invalid`) |
+
 Every step on the server looks at its deadline and at the request: a request that goes away stops
 it. In Neo4j a step that runs too long is stopped with its transaction.
 

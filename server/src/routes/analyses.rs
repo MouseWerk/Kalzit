@@ -70,6 +70,9 @@ pub fn routes() -> Vec<RouteDef> {
         // `analyses:read` on the analysis decides, checked in the handler.
         route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/query", OrgMember, run),
         route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/distribution", OrgMember, distribution),
+        // A template parameter's choices: a fixed query of the template, for whoever may read it.
+        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/parameters/{name}/choices", OrgMember, choices)
+            .long_running(),
     ]
 }
 
@@ -1322,8 +1325,9 @@ async fn restore_version(
 }
 
 /// Runs the analysis's stored queries for whoever may read it, as a dashboard panel's stored
-/// queries run for its readers. The request adds the time range and limits; an analysis has no
-/// variables, so sending any is refused. The steps run in the browser, as for a panel.
+/// queries run for its readers. The request adds the time range and limits, and values for a
+/// search template's parameters only (any other variable is refused), in their declared types.
+/// The steps run in the browser, as for a panel.
 async fn run(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -1336,7 +1340,10 @@ async fn run(
     if row.deleted_at.is_some() {
         return Err(ApiError::not_found());
     }
-    let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
+    let analysis = saved_analyses::stored(&row.body)?;
+    // A search template's values in their declared types (`saved_analyses::AnalysisModel`).
+    analysis.typed_values(&mut req.variables, crate::datasources::pattern_max_values(&state).await?)?;
+    let model = analysis.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
     Ok(super::query::answer(
@@ -1351,13 +1358,15 @@ async fn distribution(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, id)): Path<(String, String)>,
-    JsonBody(req): JsonBody<PanelDistributionRequest>,
+    JsonBody(mut req): JsonBody<PanelDistributionRequest>,
 ) -> ApiResult<Json<FieldDistribution>> {
     let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
     if row.deleted_at.is_some() {
         return Err(ApiError::not_found());
     }
-    let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
+    let analysis = saved_analyses::stored(&row.body)?;
+    analysis.typed_values(&mut req.variables, crate::datasources::pattern_max_values(&state).await?)?;
+    let model = analysis.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     crate::datasources::check_range(req.time_range)?;
     crate::datasources::check_interval(req.interval_ms)?;
@@ -1367,4 +1376,106 @@ async fn distribution(
     let d = super::query::stored_distribution(&state, &ctx, run, &req.ref_id, req.time_range, req.interval_ms, &spec)
         .await?;
     Ok(Json(d))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChoicesRequest {
+    /// Only values that contain this text, without regard to case.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub search: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ChoicesAnswer {
+    /// At most `pattern::MAX_CHOICES`, in order.
+    #[cfg_attr(test, ts(type = "unknown[]"))]
+    pub values: Vec<Value>,
+    /// More values match than are listed; a search narrows them.
+    pub more: bool,
+}
+
+/// Whether a source refused a query because it has no function `valueType` ("Unknown function
+/// 'valueType'" in Neo4j, "Function 'valueType' doesn't exist" in Memgraph).
+fn lacks_value_type(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("valuetype")
+        && (m.contains("unknown function")
+            || m.contains("doesn't exist")
+            || m.contains("does not exist")
+            || m.contains("not defined"))
+}
+
+/// The longest search text for choices.
+const MAX_SEARCH: usize = 200;
+
+/// "Auswahl aus Werten": the values of the property a template parameter offers, read with the
+/// template's fixed query on its source. Reading the analysis authorizes it, as it authorizes the
+/// template's stored queries; readers see the values of this one property only.
+async fn choices(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id, name)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<ChoicesRequest>,
+) -> ApiResult<Json<ChoicesAnswer>> {
+    use crate::datasources::pattern;
+    let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
+    if row.deleted_at.is_some() {
+        return Err(ApiError::not_found());
+    }
+    let analysis = saved_analyses::stored(&row.body)?;
+    let param = analysis.template_parameters().into_iter().find(|p| p.name == name).ok_or_else(ApiError::not_found)?;
+    let choices = param.choices.ok_or_else(ApiError::not_found)?;
+    let search = req.search.unwrap_or_default();
+    if search.chars().count() > MAX_SEARCH {
+        return Err(ApiError::validation(format!("search is longer than {MAX_SEARCH} characters")).with_field("search"));
+    }
+    let source = analysis.choices_source(&name).ok_or_else(ApiError::not_found)?;
+    let ds = crate::datasources::find_in_org(&state.db, &ctx.org_id, source, false).await?;
+    let (dialect, graph) = super::datasources::graph::dialect(&ds)?;
+    let query = |typed: bool| {
+        pattern::choices_query(dialect, graph.as_deref(), &choices, typed)
+            .map_err(|d| ApiError::validation(d.message).with_field("choices").with_reason(d.reason, d.params))
+    };
+    let variables =
+        std::collections::BTreeMap::from([("kz_search".to_string(), pattern::choices_search(dialect, &search))]);
+    let run = |query: Value| super::datasources::graph::run_one(&state, &ctx, &ds, query, variables.clone());
+    let result = match run(query(true)?).await {
+        // A server without `valueType` (Neo4j before 5.13): once more without the list filter.
+        Err(e) if lacks_value_type(&e.message) => run(query(false)?).await?,
+        other => other?,
+    };
+    // Cypher already searched and sorted; the same here keeps every engine alike.
+    let needle = search.to_lowercase();
+    let text = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut seen = BTreeSet::new();
+    let mut values: Vec<Value> = super::datasources::graph::first_values(&result)
+        .into_iter()
+        .filter(|v| !v.is_null() && text(v).to_lowercase().contains(&needle))
+        .filter(|v| seen.insert(text(v)))
+        .collect();
+    values.sort_by_key(text);
+    let more = values.len() > pattern::MAX_CHOICES;
+    values.truncate(pattern::MAX_CHOICES);
+    Ok(Json(ChoicesAnswer { values, more }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_value_type_function_is_told_apart() {
+        assert!(lacks_value_type("Unknown function 'valueType' (line 1, column 60)"));
+        assert!(lacks_value_type("Function 'valueType' doesn't exist."));
+        assert!(!lacks_value_type("'toString' argument at position 1 must be either 'null', 'string'"));
+        assert!(!lacks_value_type("Unknown function 'toLower'"));
+    }
 }

@@ -16,8 +16,19 @@ interface AnalysisModel {
   targets: Target[];                             // 1 to 50, as a dashboard panel's targets (refId, datasourceId, query, hide?)
   steps?: Step[];                                // analysis steps (settings-dashboards.md, "Analysis steps")
   visualization: { type: string; options?: object; fieldConfig?: object };  // a panel type with its options
+  parameters?: { name: string; type: ParameterType; label?: string }[];  // a search template's parameters, at most 20
 }
 ```
+
+- `parameters` make the analysis a search template ("Kunden von $firma"): each is a value asked
+  for when it runs, of type `string`, `integer`, `float`, `boolean`, `stringList`, `integerList`,
+  `floatList` or `idList` (docs/api/datasources.md, "Graph patterns"). Names are letters, digits
+  and `_`, starting with a letter. A graph pattern target (`{"pattern": {...}}`) is checked when
+  saved, and its own parameters count as declared; one declared here too must have the same
+  type. `choices: { label, property, refId? }` offers the values of that property
+  (`POST /analyses/{analysisId}/parameters/{name}/choices`, docs/api/datasources.md, "Search
+  templates"), read from the pattern target that declares the parameter or else the target
+  `refId` names; naming neither is `422` on `model.parameters[i].choices.refId`.
 
 - The model is checked as one panel of a dashboard would be: the same rules for title, time range,
   targets and steps (a step reads the `refId` of a target of this analysis), and for the panel
@@ -104,7 +115,7 @@ interface Analysis {
 | `GET /analyses/{analysisId}/versions?limit=&cursor=` | `Page<{version, authorId, authorName, restoredFrom, createdAt}>`, newest first |
 | `GET /analyses/{analysisId}/versions/{version}` | one version with its `model` |
 | `POST /analyses/{analysisId}/versions/{version}/restore?expectedVersion=` | saves that version's model as a new version (it must pass today's rules, including the query right); `409 version_conflict` when `expectedVersion` is not the current one |
-| `POST /analyses/{analysisId}/query` | runs the stored queries: body as a panel query (`timeRange`, `intervalMs`?, `maxDataPoints`?, `limit`?, `cursors`?); an analysis has no variables, so sending any is `422`. Answers `QueryResponse` by `refId`; the steps run in the browser. A trashed analysis is `404` |
+| `POST /analyses/{analysisId}/query` | runs the stored queries: body as a panel query (`timeRange`, `intervalMs`?, `maxDataPoints`?, `limit`?, `cursors`?); `variables` only for the template's parameters (any other is `422`, `variables.unknown`), each converted to its type (`422` with `field: variables`, `pattern.parameter_type`) and bound, never written into the query; readers run a template with their own values. Answers `QueryResponse` by `refId`; the steps run in the browser. A trashed analysis is `404` |
 | `POST /analyses/{analysisId}/distribution` | the field distribution of one stored query over its whole result, computed in the database (docs/api/datasources.md, "Field distribution"): body `PanelDistributionRequest` (`refId`, `timeRange`, `intervalMs`?, `path`, `top`?, `bins`?). Same rights as the query route (`analyses:read` on the analysis; the caller needs no right on the data source) and no variables (`422`). A `refId` the query route does not run (unknown, or hidden without a step reading it) and a trashed analysis are `404`; a source that cannot count in the database is `422 query_rejected` with `distribution.unsupported`. Answers `FieldDistribution` |
 
 The history keeps every save; how many versions are kept per analysis follows the dashboards'

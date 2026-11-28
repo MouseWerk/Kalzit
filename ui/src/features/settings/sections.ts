@@ -290,6 +290,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "datasources.algorithm_max_length",
       "datasources.algorithm_max_top_k",
       "datasources.algorithm_max_suggestions",
+      "datasources.pattern_max_values",
+      "datasources.pattern_max_hops",
     ],
     visible: serverAdmin,
   },
