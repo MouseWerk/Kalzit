@@ -980,6 +980,13 @@
     --size-top-search: 18rem;
     /* The rail's Add pane: three visualization tiles abreast. */
     --size-add-pane: 15rem;
+    /*
+     * How far a dashboard pane that floats over the panels (a narrow canvas) pulls back over
+     * them: its own width plus the gap to the rail, per kind of pane.
+     */
+    --space-pane-pull-column: calc(-1 * (var(--size-column) + var(--space-2)));
+    --space-pane-pull-add: calc(-1 * (var(--size-add-pane) + var(--space-2)));
+    --space-pane-pull-drawer: calc(-1 * (var(--size-drawer) + var(--space-2)));
   }
 }
 

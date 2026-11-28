@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { App, createApp } from "../app/app";
 import { createAppRouter } from "../app/router";
 import { GUIDE_SOURCES } from "../help/HelpPage";
+import { getPanel } from "../panels/registry";
 
 /**
  * Pages that load lazily (`lazyRouteComponent`) are loaded once when this helper is imported, so
@@ -32,6 +33,23 @@ export const PRELOADED_PAGES = await preloadLazyPages();
 await Promise.all(
   Object.values(GUIDE_SOURCES).flatMap((pages) => Object.values(pages).map((load) => load())),
 );
+
+/**
+ * Loads the code of lazy panel types (src/panels/lazy.tsx) before a test draws them, for the same
+ * reason: under CI load the cold chunk of a graph panel can take longer than a test waits for
+ * what the panel shows.
+ */
+export async function preloadPanels(...types: string[]): Promise<void> {
+  await Promise.all(
+    types.map((type) => {
+      const component = getPanel(type)?.Panel as { preload?: () => Promise<unknown> } | undefined;
+      if (component?.preload === undefined) {
+        throw new Error(`panel type ${type} does not load lazily`);
+      }
+      return component.preload();
+    }),
+  );
+}
 
 /**
  * Renders the whole app (router, guards, query cache) at `path`, without retries unless a test
