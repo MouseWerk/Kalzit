@@ -42,7 +42,7 @@ pub const TABLES: &[&str] = &[
     "team_contexts", "teams", "usage_dashboard_views", "usage_panel_runs", "usage_source_queries",
     "user_passkeys", "user_preferences", "user_recovery_codes", "user_totp", "ai_chat_messages",
     "ai_chat_feedback", "ai_datasource_access", "ai_notice_acks", "ai_provider_secrets", "api_tokens",
-    "datasource_health",
+    "datasource_health", "tigergraph_installed_queries",
     "datasource_secrets", "explore_history", "folders", "invitations", "role_permissions",
     "scim_group_members", "sso_group_mappings", "sso_identity_groups", "team_members", "team_roles",
     "analyses", "dashboards", "library_panels", "analysis_sources", "analysis_uses", "analysis_versions", "analysis_opens",

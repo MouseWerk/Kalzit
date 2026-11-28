@@ -677,6 +677,7 @@ impl DataSourcePlugin for ArangoDb {
             property_keys: keys.into_iter().collect(),
             queries: Vec::new(),
             query_params: BTreeMap::new(),
+            gsql: None,
         })
     }
 

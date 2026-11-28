@@ -1015,6 +1015,16 @@ impl Planner<'_> {
         let effective = |s: &Value| datasources::with_effective_tls(kind.kind(), s.clone());
         let target_changed =
             stored_settings.is_some_and(|old| !kind.changed_targets(&effective(old), &effective(&settings)).is_empty());
+        // A TigerGraph install access may write queries: files may keep one an admin set in the
+        // interface (its password from the store), but never bring a new password along.
+        if let Some(r) = spec.secrets.get("installPassword")
+            && kind.all_settings().any(|f| f.name == "installPassword")
+            && r.store != Some(true)
+        {
+            return Err("secrets.installPassword: the install access's password is set in the interface only; \
+                        refer to it with store: true"
+                .to_string());
+        }
         let mut patch = SecretPatch::new();
         let mut names = SecretPatch::new();
         let mut digest_input = String::new();
@@ -2080,6 +2090,24 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
                     summary["secrets"] = json!(patch.keys().collect::<Vec<_>>());
                     let action = if create { "datasource.created" } else { "datasource.updated" };
                     record(&mut tx, &event(ctx, info, action, ("datasource", &s.id), summary, now)).await?;
+                    // A TigerGraph install access and its switch get entries of their own (D16).
+                    let changed: Vec<String> = if create {
+                        settings
+                            .as_object()
+                            .map(|m| {
+                                m.iter()
+                                    .filter(|(_, v)| !v.is_null() && **v != Value::Bool(false))
+                                    .map(|(k, _)| format!("settings.{k}"))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        s.fields.clone()
+                    };
+                    let password = patch.contains_key("installPassword");
+                    for (action, summary) in crate::routes::datasources::install_audit(&changed, settings, password) {
+                        record(&mut tx, &event(ctx, info, action, ("datasource", &s.id), summary, now)).await?;
+                    }
                     touched_sources.push(s.id.clone());
                     alerting_changed = true;
                 }

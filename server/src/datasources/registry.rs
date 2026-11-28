@@ -211,7 +211,8 @@ mod tests {
         assert_eq!(caps("mongodb"), [Capability::CheckOnSave, Capability::Watch, Capability::Distribution]);
         assert_eq!(caps("neo4j"), [Capability::Pushdown]);
         assert_eq!(caps("memgraph"), [Capability::Pushdown]);
-        for name in names.iter().filter(|n| !["mongodb", "neo4j", "memgraph"].contains(n)) {
+        assert_eq!(caps("tigergraph"), [Capability::Pushdown]);
+        for name in names.iter().filter(|n| !["mongodb", "neo4j", "memgraph", "tigergraph"].contains(n)) {
             assert!(caps(name).is_empty(), "{name}");
         }
         // checks_on_save follows the capability.

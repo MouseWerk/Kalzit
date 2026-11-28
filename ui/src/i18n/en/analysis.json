@@ -423,5 +423,10 @@
   "analysis.stat.variance": "Variance",
   "analysis.stat.firstRow": "First row",
   "analysis.stat.lastRow": "Last row",
-  "analysis.stat.pN": "Percentile {n}"
+  "analysis.stat.pN": "Percentile {n}",
+  "analysis.place.algorithm.not_installed": "Computed on the server: Kalzit’s algorithm query is not installed in the database.",
+  "analysis.place.algorithm.not_verified": "Computed on the server: the algorithm query in the database cannot be shown to only read.",
+  "analysis.place.algorithm.changed_in_database": "Computed on the server: the algorithm query was changed in the database.",
+  "analysis.place.algorithm.subgraph_differs": "Computed on the server: the database has other edges between these nodes than the result.",
+  "analysis.place.algorithm.busy": "Computed on the server: Kalzit is installing or removing the database’s algorithm queries right now."
 }

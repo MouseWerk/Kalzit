@@ -10,9 +10,14 @@
 //!   `cypher::check_fixed`, which allows exactly that.
 //! - MAGE: the `*_subgraph` procedures with the nodes and edges as lists, or `project()` of the
 //!   result's edges, in one read query.
-//! - TigerGraph: no library here yet. An administrator-installed, read-only variant of a library
-//!   query that takes the vertex set would answer through the same hook
-//!   (`DataSourcePlugin::algorithm_library`); until then TigerGraph steps run on the server.
+//! - TigerGraph: administrator-installed, read-only variants of library queries
+//!   (`datasources/tigergraph/algorithms.gsql`, `kalzit_pagerank` and friends) that take the
+//!   result's vertices as a set and the edge types, and compute on the edges of those types
+//!   between them. Kalzit checks before each run that the query is installed with the expected
+//!   parameters and passes the same read-only rules as any installed query
+//!   (`datasources/tigergraph.rs`), and after it that the query computed on as many edges as the
+//!   result holds; otherwise the server computes the step (`reason::NOT_INSTALLED`,
+//!   `reason::NOT_VERIFIED`, `reason::SUBGRAPH_DIFFERS`).
 //!
 //! What a library cannot do this way runs on the Kalzit server, and the step's place says why
 //! (`route`, the reasons `algorithm.*`). The answer comes back as rows with the node ids of the
@@ -35,6 +40,8 @@ pub enum Library {
     Gds,
     /// Memgraph MAGE.
     Mage,
+    /// Kalzit's read-only variants of TigerGraph's library queries, installed by an administrator.
+    TigerGraph,
 }
 
 /// A parameter of the fixed queries; node and edge ids become numbers where the source's ids are
@@ -66,6 +73,13 @@ pub struct Job {
     pub max_rows: usize,
     /// The result's nodes and edges together, the size the job computes on.
     pub size: usize,
+    /// TigerGraph: the result's edges the step reads, which the query must have computed on.
+    pub edges: usize,
+    /// TigerGraph: the vertex accumulators the query prints the answer in, one answer each.
+    pub outputs: Vec<&'static str>,
+    /// TigerGraph: every vertex's edge ends per edge type in the result (`edge_ends`), which the
+    /// query must report the same.
+    pub ends: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>,
 }
 
 impl Job {
@@ -124,6 +138,21 @@ pub mod reason {
     pub const LIBRARY_FAILED: &str = "algorithm.library_failed";
     /// The step asks to run on the server (`"place": "server"`).
     pub const PLACE_SERVER: &str = "algorithm.place_server";
+    /// TigerGraph: Kalzit's read-only variant of the algorithm is not installed on the graph, or
+    /// takes other parameters.
+    pub const NOT_INSTALLED: &str = "algorithm.not_installed";
+    /// TigerGraph: the variant cannot be shown to only read (its text is unreadable and it is not
+    /// approved, TigerGraph marks it as changing data, or the server is 3.x without query info).
+    pub const NOT_VERIFIED: &str = "algorithm.not_verified";
+    /// TigerGraph: the database holds other edges between the result's vertices than the result
+    /// (the query computed on a different number of edges), so its answer would differ.
+    pub const SUBGRAPH_DIFFERS: &str = "algorithm.subgraph_differs";
+    /// TigerGraph: the variant Kalzit installed no longer has the text whose checksum Kalzit
+    /// stored; it does not run until an administrator installs it again.
+    pub const CHANGED_IN_DATABASE: &str = "algorithm.changed_in_database";
+    /// TigerGraph: Kalzit is installing or removing the algorithm queries of the source right
+    /// now; the step runs on the server this time, and the next run asks the database again.
+    pub const BUSY: &str = "algorithm.busy";
     /// The library answered in a form Kalzit does not read; nothing is guessed, the step fails
     /// with `steps.algorithm_answer` and may be run on the server (`"place": "server"`).
     pub const ANSWER_UNREADABLE: &str = "algorithm.answer_unreadable";
@@ -261,6 +290,10 @@ pub fn route(
     if graph.nodes.is_empty() || topo.m() == 0 {
         return Ok(Err(reason::EMPTY));
     }
+    if library == Library::TigerGraph {
+        // Its own parameters: vertices by type and id, edge types, no edge ids.
+        return Ok(tigergraph(kind, graph, &topo));
+    }
     let (nodes, rels, lone, numeric) = ids(graph, &topo);
     if library == Library::Mage && !numeric {
         return Ok(Err(reason::NO_LIBRARY));
@@ -275,7 +308,18 @@ pub fn route(
     let size = n + topo.m();
     let max_rows = size + 16;
     let job = |project: Option<String>, runs: Vec<String>, params: Vec<(String, Param)>, max_rows: usize| {
-        Ok(Ok(Job { library, project, runs, params, numeric, max_rows, size }))
+        Ok(Ok(Job {
+            library,
+            project,
+            runs,
+            params,
+            numeric,
+            max_rows,
+            size,
+            edges: topo.m(),
+            outputs: Vec::new(),
+            ends: Default::default(),
+        }))
     };
     match library {
         Library::Gds => {
@@ -644,7 +688,120 @@ pub fn route(
                 _ => Ok(Err(reason::NOT_IN_LIBRARY)),
             }
         }
+        Library::TigerGraph => Ok(tigergraph(kind, graph, &topo)),
     }
+}
+
+/// The TigerGraph query of each step that has one (`datasources/tigergraph/algorithms.gsql`).
+pub mod tigergraph_queries {
+    pub const PAGE_RANK: &str = "kalzit_pagerank";
+    pub const WCC: &str = "kalzit_wcc";
+    pub const K_CORE: &str = "kalzit_kcore";
+    pub const TRIANGLES: &str = "kalzit_triangles";
+    pub const REACHABLE: &str = "kalzit_reachable";
+    pub const ALL: &[&str] = &[PAGE_RANK, WCC, K_CORE, TRIANGLES, REACHABLE];
+}
+
+/// Whether an edge of a TigerGraph result is undirected: its id is `Type:a--b` (either order,
+/// with `#n` for a second edge between the same ends; `datasources/tigergraph.rs`).
+pub fn undirected(e: &crate::shapes::Edge) -> bool {
+    let id = e.id.split('#').next().unwrap_or(&e.id);
+    let form = |a: &str, b: &str| format!("{}:{a}--{b}", e.edge_type);
+    id == form(&e.from, &e.to) || id == form(&e.to, &e.from)
+}
+
+/// Every vertex's edge ends per edge type, as Kalzit's TigerGraph queries report them: `T>` where a
+/// directed edge of type T starts, `T<` where it ends, `T` at both ends of an undirected one. Two
+/// edge sets with the same ends at every vertex almost always are the same edges; with the edge
+/// count, a database that holds other edges between the vertices than the result is found.
+pub fn edge_ends<'a>(
+    edges: impl Iterator<Item = &'a crate::shapes::Edge>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
+    for e in edges {
+        let (from, to) = if undirected(e) {
+            (e.edge_type.clone(), e.edge_type.clone())
+        } else {
+            (format!("{}>", e.edge_type), format!("{}<", e.edge_type))
+        };
+        *out.entry(e.from.clone()).or_default().entry(from).or_default() += 1;
+        *out.entry(e.to.clone()).or_default().entry(to).or_default() += 1;
+    }
+    out
+}
+
+/// The TigerGraph job of a step: the variant's name, the result's vertices (`Type:id`), the edge
+/// types the step reads, the direction and the step's options. Along or against the edges only
+/// when every edge the step reads is directed (an undirected edge has no direction to follow).
+fn tigergraph(kind: &StepKind, graph: &GraphSet, topo: &Topo) -> Result<Job, &'static str> {
+    use tigergraph_queries as q;
+    if !graph.nodes.iter().all(|n| n.id.split_once(':').is_some_and(|(t, k)| !t.is_empty() && !k.is_empty())) {
+        return Err(reason::NO_LIBRARY);
+    }
+    if weight_of(kind).is_some() {
+        return Err(reason::OPTION);
+    }
+    let direction = direction_of(kind);
+    let read: Vec<&crate::shapes::Edge> = topo.edge_at.iter().map(|at| &graph.edges[*at]).collect();
+    if direction != Direction::Both && read.iter().any(|e| undirected(e)) {
+        return Err(reason::OPTION);
+    }
+    let mut types: Vec<String> = read.iter().map(|e| e.edge_type.clone()).collect();
+    types.sort();
+    types.dedup();
+    let mut params = vec![
+        ("nodes".to_string(), Param::Ids(graph.nodes.iter().map(|n| n.id.clone()).collect())),
+        ("edge_types".to_string(), Param::Texts(types)),
+    ];
+    let along = || {
+        Param::Text(
+            match direction {
+                Direction::Out => "out",
+                Direction::In => "in",
+                Direction::Both => "both",
+            }
+            .to_string(),
+        )
+    };
+    let (name, outputs) = match kind {
+        StepKind::Centrality { measure: CentralityMeasure::PageRank, damping, max_iterations, tolerance, .. } => {
+            params.push(("direction".into(), along()));
+            params.push(("damping".into(), Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING))));
+            params.push((
+                "max_iterations".into(),
+                Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS))),
+            ));
+            params
+                .push(("tolerance".into(), Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE))));
+            (q::PAGE_RANK, vec!["kalzit_value"])
+        }
+        StepKind::Communities { algorithm: CommunityAlgorithm::WeaklyConnected, .. } => (q::WCC, vec!["kalzit_value"]),
+        StepKind::KCore { .. } => (q::K_CORE, vec!["kalzit_value"]),
+        StepKind::Triangles { .. } => (q::TRIANGLES, vec!["kalzit_value", "kalzit_clustering"]),
+        StepKind::Reachable { from, max_hops, .. } => {
+            params.push(("direction".into(), along()));
+            params.push(("starts".into(), Param::Ids(from.clone())));
+            params.push(("max_hops".into(), Param::Int(i64::from(max_hops.unwrap_or(super::DEFAULT_HOPS)))));
+            (q::REACHABLE, vec!["kalzit_value"])
+        }
+        StepKind::Paths { mode: PathMode::AllShortest, .. } | StepKind::Cycles { .. } => {
+            return Err(reason::ENUMERATING);
+        }
+        _ => return Err(reason::NOT_IN_LIBRARY),
+    };
+    let size = graph.nodes.len() + topo.m();
+    Ok(Job {
+        library: Library::TigerGraph,
+        project: None,
+        runs: vec![name.to_string()],
+        params,
+        numeric: false,
+        max_rows: size + 16,
+        size,
+        edges: topo.m(),
+        outputs,
+        ends: edge_ends(read.iter().copied()),
+    })
 }
 
 /// An id in a library's answer as Kalzit knows it.
@@ -782,7 +939,7 @@ pub fn merge(
         StepKind::ArticulationPoints { .. } => {
             let mut flags = vec![false; topo.n];
             match job.library {
-                Library::Gds => {
+                Library::Gds | Library::TigerGraph => {
                     for row in first {
                         flags[row.first().and_then(at).ok_or_else(answer)?] = true;
                     }

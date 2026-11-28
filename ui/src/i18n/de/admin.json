@@ -1291,5 +1291,11 @@
   "admin.settings.datasources.algorithm_max_top_k.label": "Höchstens ähnliche Knoten je Knoten",
   "admin.settings.datasources.algorithm_max_top_k.description": "Das Top-k der Ähnlichkeits-Schritte. Höchstens 100.",
   "admin.settings.datasources.algorithm_max_suggestions.label": "Höchstens vorgeschlagene Kanten je Schritt",
-  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500."
+  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500.",
+  "admin.auditAction.datasource.algorithms_installed": "TigerGraph-Algorithmus-Abfragen installiert",
+  "admin.auditAction.datasource.algorithms_updated": "TigerGraph-Algorithmus-Abfragen aktualisiert",
+  "admin.auditAction.datasource.algorithms_removed": "TigerGraph-Algorithmus-Abfragen entfernt",
+  "admin.auditAction.datasource.install_access_stored": "Installations-Zugang gespeichert",
+  "admin.auditAction.datasource.install_switch_on": "Installieren von Algorithmus-Abfragen eingeschaltet",
+  "admin.auditAction.datasource.install_switch_off": "Installieren von Algorithmus-Abfragen ausgeschaltet"
 }

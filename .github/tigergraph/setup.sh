@@ -86,4 +86,20 @@ for u in kalzit_leser:leser-Passwort1:queryreader kalzit_schreiber:schreiber-Pas
   call -u "$admin" -H 'Content-Type: text/plain' \
     --data-binary "GRANT ROLE $role ON GRAPH social TO $name" "$base/gsql/v1/statements"
 done
+echo "== install access: a role with only query privileges (docs/guide/data-sources.md)"
+# Not fatal: when TigerGraph takes another syntax, the install test says so and the others run.
+call -u "$admin" -H 'Content-Type: text/plain' --data-binary "CREATE ROLE kalzit_installer" \
+  "$base/gsql/v1/statements" || echo "CREATE ROLE failed" >&2
+call -u "$admin" -H 'Content-Type: text/plain' \
+  --data-binary "GRANT READ_SCHEMA, READ_QUERY, CREATE_QUERY, DROP_QUERY, INSTALL_QUERY ON GRAPH social TO kalzit_installer" \
+  "$base/gsql/v1/statements" || echo "GRANT of the query privileges failed" >&2
+user='{"name": "kalzit_einbau", "password": "einbau-Passwort1"}'
+call -u "$admin" -H 'Content-Type: application/json' -d "$user" "$base/gsql/v1/users" \
+  || call -u "$admin" -H 'Content-Type: application/json' -d "[$user]" "$base/gsql/v1/users" \
+  || echo "creating kalzit_einbau failed" >&2
+call -u "$admin" -H 'Content-Type: text/plain' \
+  --data-binary "GRANT ROLE kalzit_installer ON GRAPH social TO kalzit_einbau" "$base/gsql/v1/statements" \
+  || echo "GRANT ROLE kalzit_installer failed" >&2
+call -u "$admin" -H 'Content-Type: text/plain' --data-binary "SHOW PRIVILEGE ON ROLE kalzit_installer" \
+  "$base/gsql/v1/statements" || true
 echo "== done"
