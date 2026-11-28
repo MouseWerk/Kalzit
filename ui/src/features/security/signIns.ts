@@ -6,7 +6,14 @@
 import { expectShape, isRecord, request } from "../../api/client";
 import type { ListPage } from "../admin/api";
 
-export type SignInMethod = "password" | "break_glass" | "oidc" | "saml" | "ldap" | "provider";
+export type SignInMethod =
+  | "password"
+  | "break_glass"
+  | "passkey"
+  | "oidc"
+  | "saml"
+  | "ldap"
+  | "provider";
 
 export interface SignIn {
   id: string;
@@ -23,7 +30,7 @@ export interface SignIn {
   current: boolean;
 }
 
-const METHODS = ["password", "break_glass", "oidc", "saml", "ldap", "provider"];
+const METHODS = ["password", "break_glass", "passkey", "oidc", "saml", "ldap", "provider"];
 const FACTORS = ["passkey", "totp", "recovery", "provider"];
 
 const nullableString = (value: unknown) => value === null || typeof value === "string";

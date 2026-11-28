@@ -68,6 +68,10 @@ pub struct AppState {
     pub setup_all_limiter: Arc<RateLimiter>,
     /// Connection tests of unsaved data source settings (`routes::datasources`).
     pub probe_limiter: Arc<RateLimiter>,
+    /// Started passkey dialogs of the sign-in page per client address (`routes::passkey_sign_in`).
+    pub passkey_start_limiter: Arc<RateLimiter>,
+    /// Replacements of a browser's live passkey dialog per client address.
+    pub passkey_renew_limiter: Arc<RateLimiter>,
     pub setup: Arc<SetupGate>,
     pub secrets: Arc<Keyring>,
     pub datasources: Arc<DataSources>,
@@ -196,6 +200,16 @@ impl AppState {
             probe_limiter: Arc::new(RateLimiter::new(
                 crate::routes::datasources::PROBE_MAX,
                 crate::routes::datasources::PROBE_WINDOW_SECS,
+                Capacity::SMALL,
+            )),
+            passkey_start_limiter: Arc::new(RateLimiter::new(
+                crate::routes::passkey_sign_in::STARTS_PER_ADDRESS,
+                crate::routes::passkey_sign_in::STARTS_WINDOW_SECS,
+                Capacity::SMALL,
+            )),
+            passkey_renew_limiter: Arc::new(RateLimiter::new(
+                crate::routes::passkey_sign_in::RENEWALS_PER_ADDRESS,
+                crate::routes::passkey_sign_in::STARTS_WINDOW_SECS,
                 Capacity::SMALL,
             )),
             setup: Arc::new(setup),

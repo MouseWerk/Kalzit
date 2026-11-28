@@ -6,10 +6,10 @@ commit. Widths, themes and method are in [README.md](README.md).
 
 | Id | Severity | Status |
 |---|---|---|
-| UW-A1 | major | open |
-| UW-A2 | minor | open; owner decision 2026-11-24: background full width, form column unchanged |
+| UW-A1 | major | fixed with the new panel picture (sign-in step 2): one column has no picture any more |
+| UW-A2 | minor | fixed with the new panel picture (sign-in step 2): the panel reaches the window's right edge at every width, the form column is unchanged; owner decision 2026-11-24 |
 | UW-A3 | minor | open |
-| UW-A4 | polish | open |
+| UW-A4 | polish | fixed with the new panel picture (sign-in step 2): the drifting light is gone, the picture has no gradient |
 
 Checked without findings: the sign-in form itself (one 400 px column, readable at every width),
 setup ("already set up"), invitation, password reset (request and link), registration, e-mail
@@ -42,6 +42,10 @@ page with one sentence. No horizontal scroll at any width.
   light is off; the grid has the same stacking, so it likely lies on top there too, not checked).
 - **Fix:** `.access-bd { z-index: -1; }` (`.access` already has `isolation: isolate`, so the
   backdrop stays above the page background), or render `<Backdrop />` before `<main>`.
+- **Fixed:** sign-in step 2 (`ui/src/auth/Backdrop.tsx`, `auth.css`). The picture is shown only
+  in the panel of the split layout; one column (help at every width, sign-in below 1024 px) has
+  none, as board `Auth.dc.html` frame 12 asks. `ui/e2e/signin-picture.spec.ts` checks that it is
+  hidden there.
 - **Test:** an e2e check on `/help/getting-started` and on `/login` at 900 px that samples the
   h1's pixels in a screenshot and finds the text colour (`--text`) unchanged, with reduced motion
   so the light stands still; `elementsFromPoint` cannot see the backdrop (it has
@@ -77,6 +81,12 @@ page with one sentence. No horizontal scroll at any width.
   `--size-access-column` (25rem) and its left edge; the panel's text, the notice and the top-bar
   tools keep their place in the sheet. Update the Access board and the blueprint README ("sheet
   stops growing at 1536 px") to match.
+- **Fixed:** sign-in step 2. The sheet of form and panel keeps its 1536 px and its place in the
+  middle; the panel's grid column goes on to the window's right edge (`auth.css`,
+  `.access--split`), language, theme and help stand in the window's corner, and the drawing
+  holds more table to the left and more graph to the right for the room a wide panel has.
+  `ui/e2e/signin-picture.spec.ts` checks the panel's right edge and the form column's width at
+  1024, 1280, 1920, 3440 and 5120 px and at 1920 px with two device pixels, in light and dark.
 - **Test:** screenshot assertions at 1920, 3440 and 5120 in light and dark: the backdrop's right
   edge is the window edge, and the form column's width is unchanged from today.
 
@@ -119,4 +129,6 @@ page with one sentence. No horizontal scroll at any width.
 - **Fix:** add a tiny noise layer to the lamp (an inline SVG `feTurbulence` as `mask-image` or
   background at 2-3 % opacity), or give the gradient more stops with an ease-out curve so the
   steps fall where they are least visible. Keep it CSS-only as the motion rules require.
+- **Fixed:** sign-in step 2 removes the light and its gradient; the picture is lines and flat
+  fills only.
 - **Test:** none automatic; a reviewer checks the 1:1 crop in dark.

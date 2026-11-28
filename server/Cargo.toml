@@ -103,12 +103,13 @@ toml = "1.1.8"
 # openssl-sys), which Kalzit does not build or ship on Windows or Linux (rustls and ring only); the
 # 0.6 line does the same checks in pure Rust (RustCrypto through crypto-glue). Registration and
 # authentication states are kept in the server's database between the two steps, which the
-# feature allows.
+# feature allows; `conditional-ui` adds the sign-in with a passkey alone (discoverable credentials,
+# `auth::passkey_sign_in`).
 hmac = "0.13.0"
 sha1 = "0.11.0"
 data-encoding = "2.11.1"
 qrcode = { version = "=0.14.1", default-features = false }
-webauthn-rs = { version = "=0.6.2", default-features = false, features = ["danger-allow-state-serialisation"] }
+webauthn-rs = { version = "=0.6.2", default-features = false, features = ["danger-allow-state-serialisation", "conditional-ui"] }
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
 # The sort order of titles and names (`collation`): ICU4X's collator with its compiled CLDR data,

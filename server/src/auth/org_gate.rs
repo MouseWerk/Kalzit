@@ -9,8 +9,9 @@
 //!   still enabled and trusted for it. An account that has a factor does not let a session in that
 //!   never proved it: a stolen password session stays out;
 //! - password sign-in off (`signin.local_password` = `off`): a session signed in with a password
-//!   is refused with `org_provider_sign_in_required`; the person signs in through a provider or a
-//!   directory instead. The break-glass admin's sign-in, which always has Kalzit's second factor,
+//!   or a passkey alone (Kalzit's own sign-in, which takes the password's place) is refused with
+//!   `org_provider_sign_in_required`; the person signs in through a provider or a directory
+//!   instead. The break-glass admin's sign-in, which always has Kalzit's second factor,
 //!   passes, as it did at the sign-in before.
 //!
 //! Only the organization is refused. The person's other organizations, their account, the setup
@@ -31,11 +32,12 @@ use crate::app::AppState;
 use crate::error::{ApiError, ApiResult};
 
 /// The sign-in methods of a session that count as a password for an organization's "off"
-/// (`sessions.sign_in_method`); a session from before migration 0039 has no method and counts as
-/// one. The break-glass admin's password sign-in always carries Kalzit's second factor and is
+/// (`sessions.sign_in_method`): the password and a passkey alone, which signs in only accounts that
+/// may use a password (`routes::passkey_sign_in`). A session from before migration 0039 has no
+/// method and counts as one. The break-glass admin's password sign-in always carries Kalzit's second factor and is
 /// never stopped here, as it was never stopped at the sign-in.
 fn signed_in_with_password(method: &str) -> bool {
-    matches!(method, "password" | "")
+    matches!(method, "password" | "passkey" | "")
 }
 
 /// How a session was established and what it proved since.
@@ -152,7 +154,7 @@ async fn provider_leads_into(state: &AppState, org_id: &str) -> ApiResult<bool> 
 /// organization, or lock its members out (docs/api/access.md, "Organization sign-in rules"):
 /// - password sign-in `off` while no enabled provider or directory leads into the organization
 ///   (`409`, `sso.org_local_off_blocked`, `check` = `providerReady`), or while the saving session
-///   was signed in with a password (`check` = `selfViaProvider`);
+///   was signed in with a password or a passkey alone (`check` = `selfViaProvider`);
 /// - a second factor rule that would refuse the saving member (`409`, `second_factor.setup_first`).
 pub async fn check_change(
     state: &AppState,
@@ -177,7 +179,7 @@ pub async fn check_change(
         }
         let check = if !provider_leads_into(state, org_id).await? {
             Some("providerReady")
-        } else if matches!(session.method.as_str(), "password" | "break_glass" | "") {
+        } else if matches!(session.method.as_str(), "password" | "passkey" | "break_glass" | "") {
             Some("selfViaProvider")
         } else {
             None

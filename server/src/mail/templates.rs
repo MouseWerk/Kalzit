@@ -820,7 +820,18 @@ pub fn password_reset(lang: Lang, brand: &Brand, r: &Reset<'_>) -> Content {
         subject,
         kind: de_en(lang, "Konto", "Account"),
         heading: de_en(lang, "Lege ein neues Passwort fest", "Set a new password"),
-        paragraphs: vec![intro],
+        // A passkey signs in without the password (`routes::passkey_sign_in`), so a new password
+        // alone does not lock out one that someone else added.
+        paragraphs: vec![
+            intro,
+            de_en(
+                lang,
+                "Ein neues Passwort beendet deine anderen Sitzungen; deine Passkeys bleiben gültig. Sieh danach unter \
+                 Einstellungen > Anmeldung und Sicherheit nach, ob du jeden davon kennst.",
+                "A new password ends your other sessions; your passkeys stay valid. Afterwards, check under \
+                 Settings > Sign-in and security that you know each of them.",
+            ),
+        ],
         facts: Vec::new(),
         button: Some((de_en(lang, "Neues Passwort festlegen", "Set a new password"), r.link.to_string())),
         note: Some((works, rest)),
@@ -1656,6 +1667,9 @@ mod tests {
         let text = password_reset(Lang::De, &brand(), &reset).text;
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(text.contains("Der Link gilt bis 5. November 2026, 15:20 (60 Minuten), und genau einmal."), "{text}");
+        // Passkeys outlive a new password: the mail says where to review them.
+        assert!(text.contains("deine Passkeys bleiben gültig"), "{text}");
+        assert!(text.contains("Einstellungen > Anmeldung und Sicherheit"), "{text}");
     }
 
     #[test]

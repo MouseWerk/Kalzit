@@ -1,16 +1,19 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useBrandingSync } from "../appearance/api";
+import { brandingQuery, SIGN_IN_PICTURE_KEY, useBrandingSync } from "../appearance/api";
 import { BrandMark } from "../appearance/BrandMark";
-import { useBrand } from "../appearance/brand";
-import { Icon, LOGO_PATH } from "../components/Icon";
+import { DEFAULT_PRODUCT_NAME, useBrand } from "../appearance/brand";
+import { Icon } from "../components/Icon";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 import { LANGUAGES, setLanguage, useI18n } from "../i18n/i18n";
 import { recordChoice } from "../lib/localChoice";
+import { readPreference } from "../lib/storage";
 import { setTheme, THEMES, useTheme } from "../theme/theme";
 import "../appearance/appearance.css";
 import "./auth.css";
+import { Backdrop } from "./Backdrop";
 
 /** Every page before the app has the one column; only help reads better wider. */
 export type AccessWidth = "narrow" | "done";
@@ -39,11 +42,13 @@ export function AccessAbove({ children }: { children: ReactNode }) {
 /**
  * The frame of the pages before the app shell: sign in, setup, the pages behind mailed links,
  * errors and help (board Auth.dc.html, frame 2). A slim top bar with the mark, language, theme and
- * help; on wide screens the page in a column on the left and a panel on the right with the calm
- * backdrop and what the page has to say: the admin's notice where one is set, otherwise one line
- * about the product, unless the server turned it off or carries its own name or logo
- * (`signIn.productLine`); then the panel is the backdrop alone. Narrow screens and help keep one
- * centred column on the backdrop, the notice above the page.
+ * help; on wide screens the page in a column on the left and a panel on the right, which reaches
+ * the window's right edge at every width, with the picture (Backdrop) and what the page has to
+ * say: the admin's notice where one is set, otherwise one line about the product, unless the
+ * server turned it off or carries its own name or logo (`signIn.productLine`); then the panel is
+ * the picture alone, and a plain surface where the server turned the picture off
+ * (`signIn.backdrop`). Narrow screens and help keep one centred column without a picture, the
+ * notice above the page.
  *
  * Every page in it has one anatomy, top to bottom: the context (`above`: organization and server,
  * the account in the second step, the steps of setup) in a row of its own, so the heading starts
@@ -83,6 +88,9 @@ export function AccessLayout({
   const [aboveSlot, setAboveSlot] = useState<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
   const productLine = !noticed && branding?.signIn.productLine === true;
+  const picture = usePicture(branding?.signIn.backdrop);
+  // A server with its own name or logo keeps the picture, fainter (frame 3B).
+  const ownBrand = brand.productName !== DEFAULT_PRODUCT_NAME || brand.logoUrl !== null;
   // With nothing to say the panel is decoration, not a landmark. One element either way, so the
   // backdrop is not built anew once the server's answer says which it is.
   // The role and its name come together: a name without a role says nothing.
@@ -148,7 +156,7 @@ export function AccessLayout({
         </div>
       </main>
       <div className="access__panel" {...landmark}>
-        <Backdrop />
+        {picture ? <Backdrop quiet={ownBrand} /> : null}
         {noticed ? (
           <div className="access__panel-body">
             <div className="access__notice" role="note">
@@ -199,31 +207,19 @@ export function AccessLayout({
 }
 
 /**
- * The calm backdrop: a fine grid and the edge of a calcite crystal, faint, with a soft light that
- * drifts across in half a minute and lifts both where it falls. Only `transform` moves, in CSS;
- * the light stands still for reduced motion, and phones and the contrast theme have none.
+ * Whether the panel shows its picture. The server says so with its brand (`signIn.backdrop`);
+ * until that answer is there the browser's note of the last answer decides, so the picture
+ * neither flashes on a server that turned it off nor comes late on every visit. Without a note
+ * the panel waits for the answer, and shows the picture when the server gives none (the error
+ * page while the server is down).
  */
-function Backdrop() {
-  return (
-    <div className="access-bd" aria-hidden="true">
-      <div className="access-bd__layer access-bd__layer--base">
-        <Crystal />
-      </div>
-      <div className="access-bd__lamp">
-        <div className="access-bd__layer access-bd__layer--lit">
-          <Crystal />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Crystal() {
-  return (
-    <svg className="access-bd__crystal" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-      <path d={LOGO_PATH} vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
+function usePicture(answer: boolean | undefined): boolean {
+  const failed = useQuery(brandingQuery).isError;
+  if (answer !== undefined) {
+    return answer;
+  }
+  const noted = readPreference(SIGN_IN_PICTURE_KEY);
+  return noted === null ? failed : noted !== "off";
 }
 
 /**

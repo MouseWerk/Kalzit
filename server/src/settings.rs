@@ -1065,6 +1065,14 @@ pub const REGISTRY: &[SettingDef] = &[
                       with its own product name or logo never shows it.",
     },
     SettingDef {
+        key: "signin.backdrop",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Whether the panel next to the sign-in form shows its picture, the calcite crystal with a \
+                      table, a document and a graph. Off, the panel is a plain surface.",
+    },
+    SettingDef {
         key: "appearance.accent",
         scope: Scope::Org,
         default: || json!("inherit"),
@@ -1605,7 +1613,7 @@ fn rule(key: &str) -> Option<Rule> {
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         "signin.organization" | "signin.server_name" => Rule::Text { max_chars: 80, multiline: false, required: false },
-        "signin.product_line" => Rule::Bool,
+        "signin.product_line" | "signin.backdrop" => Rule::Bool,
         "updates.channel" => Rule::OneOf(&["stable", "preview"]),
         "updates.check_daily" => Rule::Bool,
         "updates.window" => Rule::TimeWindow,

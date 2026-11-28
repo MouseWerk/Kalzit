@@ -230,6 +230,17 @@ size, start page, time zone and week start or follow the server (**Like the serv
 The **Sign-in page** can show your own **Welcome text** (up to 280 characters) and a **Notice**
 (up to 2000), with bold, italic and links.
 
+On screens from 1024 px wide, a panel stands next to the sign-in form. It shows a picture: a
+calcite crystal with the lines of a table, a document and a graph, which are faint behind the
+crystal and clear and double inside it, the way calcite shows what lies behind it twice. The
+picture is drawn in the text color of the theme, stands still, and is part of Kalzit itself, so
+nothing is loaded from elsewhere. After a successful sign-in a light runs over the crystal's edges
+once; with reduced motion set in the operating system, nothing moves. **Picture next to the
+sign-in form** turns the picture off; the panel then stays a plain surface with your notice or
+the line about the product. The change applies at once and can be undone. On a server with its
+own product name or logo the picture is drawn fainter. Narrow screens, the high-contrast theme and
+the forced colors of the operating system never show it.
+
 ### Outbound proxy
 
 Under **Network, HTTPS and proxy**, **Outbound proxy** sends Kalzit's own requests to the internet

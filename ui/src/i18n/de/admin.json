@@ -631,6 +631,8 @@
   "admin.settings.signin.server_name.description": "Steht neben der Organisation, etwa die Adresse des Servers; leer für keinen.",
   "admin.settings.signin.product_line.label": "Zeile zum Produkt vor der Anmeldung",
   "admin.settings.signin.product_line.description": "Steht ohne Hinweis neben dem Formular; nie mit eigenem Namen oder Logo.",
+  "admin.settings.signin.backdrop.label": "Bild neben dem Anmeldeformular",
+  "admin.settings.signin.backdrop.description": "Der Kalzit-Kristall mit Tabelle, Dokument und Graph, auf breiten Bildschirmen. Aus bleibt die Fläche leer; mit eigenem Namen oder Logo steht das Bild leiser.",
   "admin.settings.appearance.handbook.label": "Handbuch anzeigen",
   "admin.settings.appearance.handbook.description": "Die Anleitung in der App unter Hilfe > Handbuch, mit Links dorthin aus den Bildschirmen. Gilt für alle Organisationen; auf einem Server mit eigenem Produktnamen sagt das Handbuch weiter Kalzit.",
   "admin.settings.signin.notice.label": "Hinweis bei der Anmeldung",

@@ -285,6 +285,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           organization: "",
           serverName: "",
           productLine: true,
+          backdrop: true,
           maxFailures: 10,
           lockMinutes: 15,
         },

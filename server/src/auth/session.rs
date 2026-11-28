@@ -17,6 +17,15 @@ pub const SECURE_COOKIE_NAME: &str = "__Host-kalzit_session";
 /// `last_seen_at` is written at most this often, so reads do not turn into writes.
 const TOUCH_INTERVAL_MS: i64 = 5 * 60 * 1000;
 const HOUR_MS: i64 = 3_600_000;
+/// The longest a session of a shared or borrowed computer lasts (the box "Geteilter oder fremder
+/// Computer" at the sign-in); its cookie also ends with the browser, since it has no expiry.
+pub const SHARED_LIFETIME_HOURS: u64 = 12;
+
+/// The lifetime of a new session: the configured one, at most `SHARED_LIFETIME_HOURS` on a shared
+/// computer.
+pub fn lifetime_hours(cfg: &SessionConfig, shared: bool) -> u64 {
+    if shared { cfg.lifetime_hours.min(SHARED_LIFETIME_HOURS) } else { cfg.lifetime_hours }
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SessionUser {
@@ -50,10 +59,25 @@ pub async fn create_with_id<'c, E>(
 where
     E: sqlx::Executor<'c, Database = sqlx::Any>,
 {
+    create_for(db, cfg, now_ms, user_id, false).await
+}
+
+/// `create_with_id` for a sign-in; `shared` for a shared or borrowed computer, whose session ends
+/// after at most `SHARED_LIFETIME_HOURS` (`lifetime_hours`).
+pub async fn create_for<'c, E>(
+    db: E,
+    cfg: &SessionConfig,
+    now_ms: i64,
+    user_id: &str,
+    shared: bool,
+) -> ApiResult<(String, String)>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     let token = hex::encode(rand::random::<[u8; 32]>());
     // The id users see when they list and end their sessions; the hash never leaves the server.
     let id = uuid::Uuid::now_v7().to_string();
-    let expires = now_ms + cfg.lifetime_hours as i64 * HOUR_MS;
+    let expires = now_ms + lifetime_hours(cfg, shared) as i64 * HOUR_MS;
     sqlx::query(
         "INSERT INTO sessions (token_hash, id, user_id, created_at, last_seen_at, expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6)",
@@ -197,8 +221,9 @@ pub fn idle_cutoff(cfg: &SessionConfig, now_ms: i64) -> i64 {
     if idle_ms > 0 { now_ms - idle_ms } else { i64::MIN }
 }
 
-/// Removes every session past its lifetime or idle limit, and every expired half-signed-in state
-/// of a second step (`second_factor`); returns how many sessions.
+/// Removes every session past its lifetime or idle limit, every expired half-signed-in state of a
+/// second step (`second_factor`) and every unanswered passkey dialog (`passkey_sign_in`); returns
+/// how many sessions.
 pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Result<u64, sqlx::Error> {
     let done = sqlx::query("DELETE FROM sessions WHERE expires_at <= $1 OR last_seen_at <= $2")
         .bind(now_ms)
@@ -206,6 +231,7 @@ pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Res
         .execute(db)
         .await?;
     sqlx::query("DELETE FROM sign_in_challenges WHERE expires_at <= $1").bind(now_ms).execute(db).await?;
+    sqlx::query("DELETE FROM passkey_sign_ins WHERE expires_at <= $1").bind(now_ms).execute(db).await?;
     Ok(done.rows_affected())
 }
 
@@ -257,6 +283,15 @@ pub fn cookie_value(headers: &HeaderMap, wanted: &str) -> Option<String> {
 }
 
 pub fn set_cookie(token: &str, cfg: &SessionConfig, secure: bool) -> HeaderValue {
+    set_cookie_for(token, cfg, secure, false)
+}
+
+/// `set_cookie` for a sign-in; on a shared computer (`shared`) the cookie has no expiry, so the
+/// browser drops it when it closes (the server ends the session after `SHARED_LIFETIME_HOURS`).
+pub fn set_cookie_for(token: &str, cfg: &SessionConfig, secure: bool, shared: bool) -> HeaderValue {
+    if shared {
+        return cookie_header(&format!("{}={token}", cookie_name(secure)), secure);
+    }
     let max_age = cfg.lifetime_hours * 3600;
     cookie_header(&format!("{}={token}; Max-Age={max_age}", cookie_name(secure)), secure)
 }
@@ -318,5 +353,19 @@ mod tests {
         let plain = plain.to_str().unwrap();
         assert!(!plain.contains("Secure") && plain.starts_with("kalzit_session=t;"));
         assert!(clear_cookie(true).to_str().unwrap().starts_with("__Host-kalzit_session=;"));
+        // A shared computer: a cookie of the browser session, no expiry.
+        let shared = set_cookie_for("t", &cfg, true, true);
+        let shared = shared.to_str().unwrap();
+        assert!(shared.starts_with("__Host-kalzit_session=t;") && shared.contains("HttpOnly"));
+        assert!(!shared.contains("Max-Age") && !shared.contains("Expires"), "{shared}");
+    }
+
+    #[test]
+    fn a_shared_computer_keeps_its_session_twelve_hours_at_most() {
+        let long = SessionConfig { lifetime_hours: 720, idle_timeout_hours: 168 };
+        assert_eq!((lifetime_hours(&long, false), lifetime_hours(&long, true)), (720, 12));
+        // A server with shorter sessions keeps them shorter.
+        let short = SessionConfig { lifetime_hours: 8, idle_timeout_hours: 8 };
+        assert_eq!(lifetime_hours(&short, true), 8);
     }
 }

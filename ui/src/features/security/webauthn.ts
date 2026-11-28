@@ -90,15 +90,50 @@ export async function createPasskey(options: unknown): Promise<unknown> {
   };
 }
 
-/** Opens the browser's dialog that confirms with one of the account's passkeys. */
-export async function getPasskey(options: unknown): Promise<unknown> {
+/**
+ * Whether the browser suggests passkeys in a field with `autocomplete="username webauthn"`
+ * (conditional mediation). Answers false where it cannot tell.
+ */
+export async function passkeySuggestionsAvailable(): Promise<boolean> {
+  if (!passkeysAvailable() || typeof navigator.credentials?.get !== "function") {
+    return false;
+  }
+  const check = (
+    window.PublicKeyCredential as unknown as {
+      isConditionalMediationAvailable?: () => Promise<boolean>;
+    }
+  ).isConditionalMediationAvailable;
+  if (typeof check !== "function") {
+    return false;
+  }
+  try {
+    return await check.call(window.PublicKeyCredential);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens the browser's dialog that confirms with one of the account's passkeys, or, without an
+ * account (empty `allowCredentials`), with any passkey the browser knows for this host.
+ * `mediation: "conditional"` offers them in the address field instead of a dialog; `signal` ends
+ * the request.
+ */
+export async function getPasskey(
+  options: unknown,
+  how: { mediation?: "conditional"; signal?: AbortSignal } = {},
+): Promise<unknown> {
   const raw = publicKeyOf(options);
   const publicKey = {
     ...raw,
     challenge: fromBase64Url(String(raw.challenge)),
     allowCredentials: descriptors(raw.allowCredentials),
   } as unknown as PublicKeyCredentialRequestOptions;
-  const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+  const credential = (await navigator.credentials.get({
+    publicKey,
+    ...(how.mediation === undefined ? {} : { mediation: how.mediation }),
+    ...(how.signal === undefined ? {} : { signal: how.signal }),
+  })) as PublicKeyCredential | null;
   if (credential === null) {
     throw new DOMException("no passkey was chosen", "NotAllowedError");
   }

@@ -143,6 +143,23 @@ export async function loginLocal(input: LoginInput): Promise<Me | { secondFactor
   return expectShape(body, isMe, "login");
 }
 
+/**
+ * Starts a sign-in with a passkey alone (docs/api/access.md, "Passkey sign-in"): the options of
+ * the browser's dialog, for any account. The server keeps the dialog for five minutes in a cookie
+ * of its own; a new start replaces it.
+ */
+export async function passkeySignInOptions(signal?: AbortSignal): Promise<unknown> {
+  return request("POST", "/api/auth/passkey/options", {}, signal === undefined ? {} : { signal });
+}
+
+/** The browser's answer to `passkeySignInOptions`: a session, as after a password and its factor. */
+export async function passkeySignIn(input: {
+  credential: unknown;
+  forgetBrowser?: boolean;
+}): Promise<Me> {
+  return expectShape(await request("POST", "/api/auth/passkey", input), isMe, "passkey sign-in");
+}
+
 /** Where the password form stands on the sign-in page while providers are set up. */
 export type PasswordForm = "expanded" | "collapsed" | "hidden";
 
@@ -159,6 +176,11 @@ export interface SignInProviders {
   passwordForm: PasswordForm;
   /** False when the server turned password sign-in off. */
   localSignIn: boolean;
+  /**
+   * Whether a passkey alone signs in here ("Mit Passkey anmelden" and the suggestion in the
+   * address field); absent from servers before 0.8.2.
+   */
+  passkeySignIn?: boolean;
 }
 
 const PASSWORD_FORMS: readonly string[] = ["expanded", "collapsed", "hidden"];
@@ -176,7 +198,8 @@ function isSignInProviders(value: unknown): value is SignInProviders {
     ) &&
     typeof value.passwordForm === "string" &&
     PASSWORD_FORMS.includes(value.passwordForm) &&
-    typeof value.localSignIn === "boolean"
+    typeof value.localSignIn === "boolean" &&
+    (value.passkeySignIn === undefined || typeof value.passkeySignIn === "boolean")
   );
 }
 

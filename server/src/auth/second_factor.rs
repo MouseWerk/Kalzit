@@ -871,6 +871,21 @@ async fn verify_passkey(
     let Some(result) = passkeys::finish_authentication(&rp, answer, &ceremony) else {
         return Err(passkey_refused());
     };
+    if !record_passkey_use(state, user_id, &result, now).await? {
+        return Err(passkey_refused());
+    }
+    Ok(())
+}
+
+/// Stores a checked use of a passkey of `user_id`: its new sign counter and the time. `false`, and
+/// nothing stored, when the account has no such passkey or the counter does not go beyond the
+/// stored one (a replay, a cloned authenticator, or a sign-in that raced this one).
+pub async fn record_passkey_use(
+    state: &AppState,
+    user_id: &str,
+    result: &webauthn_rs::prelude::AuthenticationResult,
+    now: i64,
+) -> ApiResult<bool> {
     let wanted = passkeys::credential_key(result.cred_id());
     let mut tx = crate::db::begin(&state.db).await?;
     // The passkey's row is locked before it is read, so two sign-ins with it at once run one after
@@ -886,15 +901,14 @@ async fn verify_passkey(
             .bind(&wanted)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((id, json)) = row else { return Err(passkey_refused()) };
+    let Some((id, json)) = row else { return Ok(false) };
     let mut key: SecurityKey = serde_json::from_str(&json).map_err(|e| ApiError::internal("passkey", e))?;
     // The counter as stored now, not as the dialog's start saw it: a counter that does not go
-    // beyond it (a replay, a cloned authenticator, or a sign-in that raced this one) is refused, and
-    // the stored counter never moves back.
+    // beyond it is refused, and the stored counter never moves back.
     if !counter_advances(stored_counter(&json), result.counter()) {
-        return Err(passkey_refused());
+        return Ok(false);
     }
-    key.update_credential(&result);
+    key.update_credential(result);
     let json = serde_json::to_string(&key).map_err(|e| ApiError::internal("passkey", e))?;
     sqlx::query("UPDATE user_passkeys SET credential = $1, last_used_at = $2 WHERE id = $3")
         .bind(&json)
@@ -903,7 +917,7 @@ async fn verify_passkey(
         .execute(&mut *tx)
         .await?;
     crate::db::commit(tx).await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Options for the browser's dialog that creates a passkey, for `user_id`.
@@ -923,7 +937,7 @@ pub async fn start_passkey_setup(
         Owner::Session(_) => now + CEREMONY_TTL_MS,
     };
     store_ceremony(&state.db, owner, CEREMONY_PASSKEY_SETUP, &stored, expires).await?;
-    serde_json::to_value(options).map_err(|e| ApiError::internal("passkey setup", e))
+    Ok(options)
 }
 
 /// Checks the browser's answer to a started passkey setup; the caller stores the key with

@@ -66,6 +66,32 @@ of your methods any more, ask an administrator to reset your second factor.
 
 The second step has to be finished within five minutes; until then you are not signed in.
 
+### Signing in with a passkey alone
+
+Where the server allows it, the sign-in page offers **Sign in with a passkey** above the form,
+and browsers that can also suggest your saved passkeys in the email field. Choose the passkey,
+confirm it on your device (PIN, fingerprint or face), and you are signed in: a passkey that
+checks it is you counts as both steps, so no second step follows. If you close the browser's
+window, nothing happens; try again or use your password.
+
+A passkey signs you in only where your password could: not while password sign-in is off for you
+(then use your organization's sign-in), and not when your account is disabled. Passkeys added
+before Kalzit 0.8.2 may not be offered by every browser without an email address; add the passkey
+again under **Settings > Sign-in and security** if yours is missing. Administrators turn passkeys
+off with the setting for the allowed second-factor methods; passkeys also need Kalzit to be opened
+by a host name, not an IP address.
+
+A new password (also through **Forgot password?**) ends your other sessions, but your passkeys
+stay valid, and each of them signs in on its own. After a password reset, or whenever you suspect
+someone else had access to your account, open **Settings > Sign-in and security** and remove every
+passkey you do not know.
+
+### Shared or borrowed computer
+
+Tick **Shared or borrowed computer** before you sign in on a computer that is not yours. Kalzit
+then does not remember the browser, and the session ends when the browser closes, at the latest
+after 12 hours (instead of the server's usual session lifetime).
+
 ![The second sign-in step, Confirm it's you: the six-digit code of the authenticator app and the link to use a recovery code instead](../screenshots/two-factor-sign-in-dark.png)
 
 ## Requiring a second factor (administrators)

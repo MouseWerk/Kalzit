@@ -2212,6 +2212,27 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
     assert_eq!((text.code(), text.field()), ("validation", "value"), "{}", text.body);
     let public = t.send(Method::GET, "/api/branding", None, None).await;
     assert_eq!(public.body["signIn"]["productLine"], json!(true), "{}", public.body);
+    // The picture next to the form: on by default, and only a server admin turns it off.
+    assert_eq!(public.body["signIn"]["backdrop"], json!(true), "{}", public.body);
+    let refused = t.patch("/admin/settings/signin.backdrop", json!({ "value": false, "version": 0 }), &erika).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    let anonymous = t
+        .send(
+            Method::PATCH,
+            &t.path("/admin/settings/signin.backdrop"),
+            Some(json!({ "value": false, "version": 0 })),
+            None,
+        )
+        .await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{}", anonymous.body);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["backdrop"], json!(true), "{}", public.body);
+    let text = t.patch("/admin/settings/signin.backdrop", json!({ "value": "off", "version": 0 }), &t.owner).await;
+    assert_eq!((text.code(), text.field()), ("validation", "value"), "{}", text.body);
+    let off = t.patch("/admin/settings/signin.backdrop", json!({ "value": false, "version": 0 }), &t.owner).await;
+    assert_eq!(off.status, StatusCode::OK, "{}", off.body);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["backdrop"], json!(false), "{}", public.body);
     for (key, value) in [
         ("appearance.accent", json!("#2563eb")),
         ("appearance.product_name", json!("Datenwerk")),

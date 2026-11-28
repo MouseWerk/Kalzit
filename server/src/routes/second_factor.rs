@@ -95,7 +95,9 @@ pub enum DeviceCookie<'a> {
 }
 
 /// Opens the session of a completed sign-in inside `tx` (the caller commits): replaces this
-/// browser's previous session, records the sign-in, and answers the cookies and `Me`.
+/// browser's previous session, records the sign-in, and answers the cookies and `Me`. A browser
+/// the person said is not theirs (`DeviceCookie::Forget`, "Geteilter oder fremder Computer") gets
+/// a session that ends with the browser and after at most `session::SHARED_LIFETIME_HOURS`.
 #[expect(clippy::too_many_arguments, reason = "the parts of one sign-in, passed on as they are")]
 pub async fn open_session(
     tx: &mut sqlx::AnyConnection,
@@ -112,7 +114,8 @@ pub async fn open_session(
     if let Some(old) = session::read_cookie(headers, info.https) {
         session::delete(&mut *tx, &old).await?;
     }
-    let (token, session_id) = session::create_with_id(&mut *tx, &state.config.sessions, now, &user.id).await?;
+    let shared = matches!(device, DeviceCookie::Forget);
+    let (token, session_id) = session::create_for(&mut *tx, &state.config.sessions, now, &user.id, shared).await?;
     if second_factor.is_some() {
         // Just confirmed: changes that need a fresh confirmation work right away.
         sf::mark_confirmed(&mut *tx, &session::hash_token(&token), now).await?;
@@ -122,15 +125,14 @@ pub async fn open_session(
         DeviceCookie::Issue(hash) => Some(crate::auth::device::issue(&state.secrets, &user.id, hash, now)),
         DeviceCookie::Forget | DeviceCookie::Keep => None,
     };
-    let forget = matches!(device, DeviceCookie::Forget);
     let answer = me(&mut *tx, user).await?;
     let mut out = HeaderMap::new();
-    out.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
+    out.insert(header::SET_COOKIE, session::set_cookie_for(&token, &state.config.sessions, info.https, shared));
     // This browser is now a known device of the account (renewed with every sign-in), unless the
     // user said it is not theirs: then it forgets any device it was.
     if let Some(value) = &device_value {
         out.append(header::SET_COOKIE, crate::auth::device::set_cookie(value, info.https));
-    } else if forget {
+    } else if shared {
         out.append(header::SET_COOKIE, crate::auth::device::clear_cookie(info.https));
     }
     Ok((out, answer))

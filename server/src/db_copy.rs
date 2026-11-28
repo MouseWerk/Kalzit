@@ -31,7 +31,7 @@ use crate::secrets::{Blob, Keyring};
 #[rustfmt::skip]
 pub const TABLES: &[&str] = &[
     "acme_challenges", "acme_shared", "audit_events", "branding_logo", "cluster_events", "cluster_instances",
-    "cluster_jobs", "cluster_leader", "cluster_versions", "orgs", "plugin_catalog", "plugin_handovers",
+    "cluster_jobs", "cluster_leader", "cluster_versions", "orgs", "passkey_sign_ins", "plugin_catalog", "plugin_handovers",
     "plugin_host", "plugin_keys", "plugin_packages", "plugin_tombstones", "plugins", "saml_assertions",
     "server_secrets", "server_settings", "setup_lock", "sort_key_state", "sso_providers", "sso_sign_ins",
     "users", "ai_chats", "ai_providers", "ai_usage", "datasources", "email_confirmations",

@@ -72,6 +72,33 @@ zurückzusetzen.
 Der zweite Schritt muss innerhalb von fünf Minuten abgeschlossen sein; bis dahin bist du nicht
 angemeldet.
 
+### Nur mit Passkey anmelden
+
+Wo der Server es erlaubt, bietet die Anmeldeseite über dem Formular **Mit Passkey anmelden** an,
+und Browser, die es können, schlagen deine gespeicherten Passkeys auch im Feld für die
+E-Mail-Adresse vor. Wähl den Passkey, bestätige ihn auf deinem Gerät (PIN, Fingerabdruck oder
+Gesicht), und du bist angemeldet: Ein Passkey, der prüft, dass du es bist, zählt als beide
+Schritte, ein zweiter Schritt folgt nicht. Schließt du das Fenster des Browsers, passiert nichts;
+versuch es noch einmal oder nimm dein Passwort.
+
+Ein Passkey meldet dich nur dort an, wo es auch dein Passwort könnte: nicht, solange die Anmeldung
+mit Passwort für dich aus ist (dann nimm die Anmeldung deiner Organisation), und nicht, wenn dein
+Konto deaktiviert ist. Passkeys, die du vor Kalzit 0.8.2 hinzugefügt hast, bietet nicht jeder
+Browser ohne E-Mail-Adresse an; fehlt deiner, füge ihn unter **Einstellungen > Anmeldung und
+Sicherheit** noch einmal hinzu. Admins schalten Passkeys mit der Einstellung der erlaubten
+Methoden für den zweiten Faktor aus; außerdem brauchen Passkeys einen Hostnamen, keine IP-Adresse.
+
+Ein neues Passwort (auch über **Passwort vergessen?**) beendet deine anderen Sitzungen, aber deine
+Passkeys bleiben gültig, und jeder davon meldet dich allein an. Öffne nach einem Zurücksetzen des
+Passworts, oder wenn du vermutest, dass jemand anderes Zugriff auf dein Konto hatte,
+**Einstellungen > Anmeldung und Sicherheit** und entferne jeden Passkey, den du nicht kennst.
+
+### Geteilter oder fremder Computer
+
+Hak **Geteilter oder fremder Computer** an, bevor du dich an einem Computer anmeldest, der nicht
+deiner ist. Kalzit merkt sich den Browser dann nicht, und die Sitzung endet, wenn du den Browser
+schließt, spätestens nach 12 Stunden (statt nach der üblichen Dauer des Servers).
+
 ## Einen zweiten Faktor verlangen (Admins)
 
 Server-Admins legen die Regel für den ganzen Server unter **Einstellungen > Anmeldung** fest:
