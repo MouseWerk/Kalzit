@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
@@ -65,6 +65,11 @@ interface DashboardRailProps {
 
 type Pane = "outline" | "add" | null;
 
+/** Whether the rail's panes float over the canvas, which toolbar.css decides by its width. */
+function paneFloats(rail: HTMLElement): boolean {
+  return getComputedStyle(rail).getPropertyValue("--dash-pane-floats").trim() === "1";
+}
+
 /**
  * The column at the canvas' right edge, in groups: the outline, the filter bar and the
  * annotations; share and export; kiosk, TV and full screen; the history and the info; at the bottom the
@@ -99,14 +104,32 @@ export function DashboardRail({
   // narrow and every panel move under the pointer), the person opens and closes it.
   const [pane, setPane] = useState<Pane>(editing ? "outline" : null);
   const [wasEditing, setWasEditing] = useState(editing);
+  // Whether edit mode's start just opened the outline (not the person, before editing).
+  const [openedByEditing, setOpenedByEditing] = useState(editing);
   if (editing !== wasEditing) {
     setWasEditing(editing);
     if (editing && pane === null) {
       setPane("outline");
+      setOpenedByEditing(true);
     } else if (!editing && pane === "add") {
       setPane(null);
     }
   }
+  // Where the canvas is too narrow to give a pane its room, the pane floats over the panels
+  // (toolbar.css): edit mode then does not open the outline, so it covers nothing until the
+  // person opens it. An outline the person opened before editing stays. Read before edit mode's
+  // first paint, so the pane never shows and goes again.
+  const railRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (!openedByEditing) {
+      return;
+    }
+    setOpenedByEditing(false);
+    const rail = railRef.current;
+    if (rail !== null && paneFloats(rail)) {
+      setPane((current) => (current === "outline" ? null : current));
+    }
+  }, [openedByEditing]);
   // Selecting a panel while the Add pane is open shows the outline instead, in the same room.
   const [shownFor, setShownFor] = useState<string | null>(null);
   if (selectedId !== shownFor) {
@@ -136,6 +159,7 @@ export function DashboardRail({
   return (
     // At the window's edge: the tooltips open to the left, into the canvas (TIP_SIDE_ATTRIBUTE).
     <aside
+      ref={railRef}
       className={editing ? "dash-rail dash-rail--editing" : "dash-rail"}
       aria-label={t("toolbar.rail")}
       data-tip-side="before"
