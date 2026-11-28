@@ -76,6 +76,13 @@ const ICON_SAMPLER = "u_kzIconAtlas";
 export function layerRuleIcon(): FragmentLayer {
   // language=GLSL
   const glsl = /*glsl*/ `
+#ifdef PICKING_MODE
+// The picking pass needs only the shape, so it never names the atlas: the renderer sets the
+// sampler for the visible pass only, and a sampler left at unit 0 would read the picking texture
+// the pass draws into, a feedback loop the driver refuses. A sampler handed to a function counts
+// as read, so the call itself is replaced.
+#define layer_kzIcon(icon, color, atlas) vec4(0.0)
+#else
 vec4 layer_kzIcon(vec4 v_kzIcon, vec4 v_kzIconColor, sampler2D ${ICON_SAMPLER}) {
   if (v_kzIcon.z <= 0.0) return vec4(0.0);
   // The square inside the inner circle of the shape, with a little air around it.
@@ -87,6 +94,7 @@ vec4 layer_kzIcon(vec4 v_kzIcon, vec4 v_kzIconColor, sampler2D ${ICON_SAMPLER}) 
   float coverage = texture(${ICON_SAMPLER}, v_kzIcon.xy + cell * v_kzIcon.zw).a;
   return vec4(v_kzIconColor.rgb, v_kzIconColor.a * coverage);
 }
+#endif
 `;
   return {
     name: "kzIcon",
