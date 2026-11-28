@@ -126,7 +126,7 @@ export function usePanelPages(
     try {
       let response: Awaited<ReturnType<typeof runQuery>>;
       if (input.source === "stored" && input.route?.kind === "analysis") {
-        // An analysis has no variables; its route refuses any.
+        // An analysis takes variables only for a search template's inputs; its route refuses others.
         response = await runAnalysis(
           input.orgId,
           input.route.analysisId,
@@ -135,6 +135,7 @@ export function usePanelPages(
             maxDataPoints,
             intervalMs,
             cursors: { [refId]: cursor },
+            ...(Object.keys(variables).length === 0 ? {} : { variables }),
           },
           controller.signal,
         );

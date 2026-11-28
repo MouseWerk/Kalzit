@@ -517,4 +517,27 @@
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
+
+  /* A search template (Graph083 board, frame 12): the result, and beside it what the search does. */
+  .analysis-template {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(
+        var(--size-pattern-side-min),
+        var(--size-pattern-side)
+      );
+    gap: var(--space-3);
+    align-items: start;
+  }
+
+  @media (width < 48rem) {
+    .analysis-template {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .analysis-template__title {
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+  }
 }

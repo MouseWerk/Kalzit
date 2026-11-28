@@ -172,4 +172,67 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* A graph source's two forms of query (Graph083 board, decision 1): "Muster" and the text. */
+  .graph-modes {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .graph-modes__switch {
+    display: inline-flex;
+    justify-self: start;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .graph-modes__item {
+    min-height: var(--size-target-min);
+    padding: var(--space-half) var(--space-3);
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .graph-modes__item:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph-modes__item[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph-modes__note {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .graph-modes__actions,
+  .graph-modes__back {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .graph-modes__result {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .graph-modes__stale {
+    width: 100%;
+    color: var(--text-muted);
+  }
 }

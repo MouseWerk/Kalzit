@@ -110,6 +110,23 @@ catalog.
 | Sichtbarer Ausschnitt | Visible part | Umfang „so, wie das Panel es gerade zeigt“, am Rand abgeschnitten, mit den Beschriftungen, die es zeigt. | |
 | Ganzer Graph | Whole graph | Umfang „alle sichtbaren Knoten“, auch die, die die Kamera ausgelassen hat, in die Bildgröße eingepasst. | |
 | Knoten-CSV, Kanten-CSV | Nodes CSV, edges CSV | Die beiden Listen eines Graphen als CSV-Dateien; im Export-Menü „CSV: Knoten“ und „CSV: Kanten“. | |
+| Muster | Pattern | Die gezeichnete Frage an eine Graph-Quelle: Knoten, Kanten, Bedingungen. | |
+| Muster-Baukasten, Baukasten | Pattern builder, builder | Die Zeichenfläche für ein Muster mit Seitenleiste und erzeugter Abfrage; zweite Art des Abfrage-Editors bei Graph-Quellen. | |
+| Bedingung | Condition | Property, Vergleich und Wert an einem Element eines Musters. | |
+| Pfadlänge | Path length | Wie viele Kanten eine gezeichnete Kante überbrücken darf, von–bis, mit Obergrenze. | |
+| Optional, fest | Optional, required | Ein Teil eines Musters, der fehlen darf; das Gegenteil. | |
+| Treffer | Match | Eine Belegung des ganzen Musters. Nicht „Ergebnis“ (das ist der Graph). | |
+| Erzeugte Abfrage | Generated query | Der Cypher- oder GSQL-Text, den das Muster schreibt; so läuft es. | |
+| Als Muster öffnen | Open as pattern | Der Rückweg aus dem Text in den Baukasten. | |
+| Nicht als Baukasten darstellbar | Cannot be shown in the builder | Die Abfrage läuft, lässt sich aber nicht zeichnen. | |
+| Suchvorlage | Search template | Gespeicherte Abfrage mit Eingaben, ausführbar mit Leserecht, auch von Betrachtern. | |
+| Eingabe | Input | Eine Variable einer Suchvorlage, wie die Person sie sieht. | |
+| Probewert | Sample value | Wert einer Variable für einen Lauf in Explore. | |
+| Werte einfügen | Paste values | Viele Werte auf einmal als Liste einer Variable. | |
+| Aus einer Stichprobe | From a sample | Ein Schema, das aus gelesenen Daten abgeleitet ist. | |
+| Abfrageplan, Plan | Query plan, plan | Wie die Datenbank eine Abfrage abarbeitet, als Baum. | |
+| Nur planen, Mit Messung | Plan only, With measurement | EXPLAIN und PROFILE in einfacher Sprache; „Mit Messung“ führt die Abfrage aus. | |
+| Zugriffe | Database hits | Wie oft ein Schritt des Plans in die Daten greift (Neo4j). | |
 | Durchsichtig | Transparent | Hintergrund eines Bildes ohne Farbe (PNG, SVG); in PDF-Dateien ohne Hintergrundfläche. | |
 | Radial | Radial | Graph-Layout: Ringe um die gewählten Knoten, nach Entfernung. Ohne Auswahl steht der Knoten mit den meisten Kanten in der Mitte. | Strahlenförmig, Sternförmig |
 | Kreis | Circular | Graph-Layout: alle Knoten auf einem Kreis, geordnet nach Label, Name oder Zahl der Kanten. | Zirkulär |

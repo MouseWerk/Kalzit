@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import {
+  type ComponentProps,
   type KeyboardEvent,
   useDeferredValue,
   useEffect,
@@ -19,7 +20,8 @@ import {
 } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, isTraceStep, type Step } from "../../analysis/steps";
-import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
+import { isRecord } from "../../api/client";
+import type { DocumentSet, PatternParameter, QueryResult, Shape } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
@@ -27,6 +29,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { WithTooltip } from "../../components/IconButton";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
 import { Page } from "../../components/Page";
 import { Skeleton } from "../../components/Skeleton";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
@@ -43,7 +46,7 @@ import { Tip } from "../../help/components/Tip";
 import { useHelpPanelShortcut } from "../../help/shortcut";
 import { type Hint, hintFor, problemOf } from "../../help/sources/errors";
 import { useTip } from "../../help/tips";
-import { useI18n } from "../../i18n/i18n";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
 import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
@@ -80,7 +83,12 @@ import { ConflictDialog, ConflictNotice, type NewerVersion } from "../analyses/C
 import { SaveControls, SavedAgo, SavedHeading, SaveShortcuts } from "../analyses/ExploreSaved";
 import { OpenDialog } from "../analyses/OpenDialog";
 import { placeGroups, placeLabel } from "../analyses/places";
-import { SaveAnalysisDialog, type SaveMode, type SaveValues } from "../analyses/SaveAnalysisDialog";
+import {
+  SaveAnalysisDialog,
+  type SaveMode,
+  type SaveTemplate,
+  type SaveValues,
+} from "../analyses/SaveAnalysisDialog";
 import { visualizationName } from "../analyses/visualization";
 import { foldersQuery } from "../dashboards/api";
 import type { PanelModel } from "../dashboards/model";
@@ -120,6 +128,9 @@ import {
   queryText,
 } from "../datasources/queryKinds";
 import { parseTraceSearch, traceMode, traceSearchQuery } from "../datasources/traceQuery";
+import type { GraphSchemaView } from "../graphPatterns/GraphSchemaView";
+import type { PlanView } from "../graphPatterns/PlanView";
+import { addNode, patternOf, sampleVariables, textParameters } from "../graphPatterns/pattern";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import {
   ErrorHelp,
@@ -144,6 +155,19 @@ preloadCodeEditor();
 
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
+
+// The schema and plan of a graph source load with the texts of graph patterns (board Graph083,
+// frames 15 to 22).
+const GRAPH_SCHEMA = pieceSource<ComponentProps<typeof GraphSchemaView>>(() =>
+  loadArea("graphPatterns")
+    .then(() => import("../graphPatterns/GraphSchemaView"))
+    .then((module) => ({ default: module.GraphSchemaView })),
+);
+const PLAN = pieceSource<ComponentProps<typeof PlanView>>(() =>
+  loadArea("graphPatterns")
+    .then(() => import("../graphPatterns/PlanView"))
+    .then((module) => ({ default: module.PlanView })),
+);
 /** The cache key of Explore runs: `[EXPLORE_KEY, orgId, submitted]`. */
 const EXPLORE_KEY = "explore";
 /** The cache key of the runs with graph steps (a key of their own, so a new run keeps them). */
@@ -168,7 +192,13 @@ interface SavedState {
 
 /** What "Changed" compares: everything but the name and description, which save on their own. */
 function editedPart(model: AnalysisModel): string {
-  return JSON.stringify([model.timeRange, model.targets, model.steps, model.visualization]);
+  return JSON.stringify([
+    model.timeRange,
+    model.targets,
+    model.steps,
+    model.visualization,
+    model.parameters ?? [],
+  ]);
 }
 
 function withModel(analysis: Analysis): (Analysis & { model: AnalysisModel }) | null {
@@ -183,6 +213,31 @@ interface Submitted {
   from: number;
   to: number;
   run: number;
+  /** A graph pattern's sample values (Probewert), typed; Explore has no other variables. */
+  variables: Record<string, unknown>;
+}
+
+/**
+ * The variables a run sends: a pattern's parameters with their sample values, or the `$name`s
+ * of a Cypher text with the values and types they had in the pattern it came from.
+ */
+function runVariables(
+  query: unknown,
+  samples: Readonly<Record<string, unknown>>,
+  declared: readonly PatternParameter[],
+): Record<string, unknown> {
+  const pattern = patternOf(query);
+  if (pattern !== undefined) {
+    return sampleVariables(pattern.parameters ?? [], samples);
+  }
+  if (isRecord(query) && typeof query.cypher === "string") {
+    const names = textParameters(query.cypher);
+    return sampleVariables(
+      declared.filter((p) => names.includes(p.name)),
+      samples,
+    );
+  }
+  return {};
 }
 
 export function ExplorePage() {
@@ -280,6 +335,10 @@ function Explore({
   const [queries, setQueries] = useState<Record<string, unknown>>(() =>
     handoff === null ? {} : { [handoff.datasourceId]: handoff.query },
   );
+  // Per data source: the sample values of pattern parameters, and the parameters last drawn
+  // (their types still count once the pattern became text).
+  const [samples, setSamples] = useState<Record<string, Record<string, unknown>>>({});
+  const [declared, setDeclared] = useState<Record<string, PatternParameter[]>>({});
   // Pages loaded after the first one through `nextCursor`, for the run they belong to.
   const [more, setMore] = useState<{
     of: Submitted | null;
@@ -302,7 +361,7 @@ function Explore({
   // Per data source: whether its editor holds text that does not parse yet.
   const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   const [panelType, setPanelType] = useState<string | null>(null);
-  const [tab, setTab] = useState<"result" | "inspect">("result");
+  const [tab, setTab] = useState<"result" | "inspect" | "graphSchema" | "plan">("result");
   // Logs or another view, as picked for the data source shown; without a pick, log sources open
   // on "Logs" and other document sources on "Documents" (board Logs.dc.html, frame 7).
   const [logsChoice, setLogsChoice] = useState<{ source: string; logs: boolean } | null>(null);
@@ -415,7 +474,7 @@ function Explore({
           timeRange,
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor(timeRange),
-          variables: {},
+          variables: run.variables,
           // Explore keeps what the user ran, for them alone (docs/api/explore-history.md).
           explore: true,
         },
@@ -462,7 +521,7 @@ function Explore({
           timeRange,
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor(timeRange),
-          variables: {},
+          variables: run.variables,
         },
         signal,
       );
@@ -484,7 +543,7 @@ function Explore({
             : { timeRange: { from: submitted.from, to: submitted.to } }),
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor({ from: submitted.from, to: submitted.to }),
-          variables: {},
+          variables: submitted.variables,
         };
   // Results go to the run the subscription was started for; a new run starts a new one.
   const live = useLiveSubscription(
@@ -534,6 +593,7 @@ function Explore({
       range: nextRange,
       ...resolved.range,
       run: (current?.run ?? 0) + 1,
+      variables: runVariables(nextQuery, samples[target.id] ?? {}, declared[target.id] ?? []),
     }));
   }
 
@@ -738,7 +798,7 @@ function Explore({
           timeRange,
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor(timeRange),
-          variables: {},
+          variables: run.variables,
         },
         controller.signal,
       );
@@ -917,8 +977,10 @@ function Explore({
   const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
   const kindName = kinds.data?.find((k) => k.kind === datasource.kind)?.name ?? datasource.kind;
   // Nothing written and nothing run yet: the start panel shows instead of the hint.
+  // The pattern builder has a start of its own (board Graph083, frame 3).
   const blank =
     (submitted === null || submitted.datasourceId !== datasource.id) &&
+    patternOf(query) === undefined &&
     (!hasQuery(query, datasource.kind) ||
       JSON.stringify(query) === JSON.stringify(emptyQuery(datasource.kind)));
   // A hint next to a failed run, else next to a result cut at the row limit without a time filter.
@@ -1023,19 +1085,26 @@ function Explore({
     logsChoice !== null && submitted !== null && logsChoice.source === submitted.datasourceId
       ? logsChoice.logs
       : logsOffer === "preselect";
+  // A graph source shows its schema and the query plan beside the result (board Graph083).
+  const submittedFamily = submittedKind === undefined ? undefined : familyOf(submittedKind);
+  const graphTabs = submittedFamily === "cypher" || submittedFamily === "gsql";
   const tabNames: ResultTab[] = docsResult
     ? [...(logsOffered ? (["logs"] as const) : []), "documents", "schema", "result", "inspect"]
-    : ["result", "inspect"];
+    : graphTabs
+      ? ["result", "graphSchema", "plan", "inspect"]
+      : ["result", "inspect"];
   const view: ResultTab =
     tab === "inspect"
       ? "inspect"
-      : logsOffered && logsPicked
-        ? "logs"
-        : docsResult && type === "documents"
-          ? "documents"
-          : docsResult && type === "schema"
-            ? "schema"
-            : "result";
+      : graphTabs && (tab === "graphSchema" || tab === "plan")
+        ? tab
+        : logsOffered && logsPicked
+          ? "logs"
+          : docsResult && type === "documents"
+            ? "documents"
+            : docsResult && type === "schema"
+              ? "schema"
+              : "result";
   // The documents and their schema as the query answered them, before any projection.
   const viewPanel: PanelModel =
     (view === "documents" || view === "schema") && projected
@@ -1069,7 +1138,55 @@ function Explore({
         options: sameType ? (base?.visualization.options ?? {}) : {},
         fieldConfig: sameType ? (base?.visualization.fieldConfig ?? {}) : {},
       },
+      // A template from typed text keeps its inputs while its `$name`s stay in the text.
+      ...(base?.parameters === undefined
+        ? {}
+        : {
+            parameters: base.parameters.filter((p) =>
+              textParameters(queryText(text)).includes(p.name),
+            ),
+          }),
     };
+  }
+
+  /** The inputs the save dialog asks about: a pattern's parameters, or a Cypher text's `$name`s. */
+  function templateOf(text: unknown, target: DatasourceSummary): SaveTemplate | undefined {
+    const pattern = patternOf(text);
+    const common = { orgId, datasourceId: target.id, refId: REF_ID };
+    if (pattern !== undefined) {
+      const parameters = pattern.parameters ?? [];
+      return parameters.length === 0 ? undefined : { ...common, parameters, typesEditable: false };
+    }
+    if (familyOf(target.kind) !== "cypher" || !isRecord(text) || typeof text.cypher !== "string") {
+      return undefined;
+    }
+    const names = textParameters(text.cypher);
+    if (names.length === 0) return undefined;
+    const known = [...(saved?.analysis.model.parameters ?? []), ...(declared[target.id] ?? [])];
+    return {
+      ...common,
+      typesEditable: true,
+      parameters: names.map(
+        (name) => known.find((p) => p.name === name) ?? { name, type: "string" as const },
+      ),
+    };
+  }
+
+  /** The query and model with the inputs the save dialog set. */
+  function withInputs(
+    model: AnalysisModel,
+    parameters: PatternParameter[] | undefined,
+  ): AnalysisModel {
+    if (parameters === undefined) return model;
+    const [first, ...rest] = model.targets;
+    const pattern = first === undefined ? undefined : patternOf(first.query);
+    if (first !== undefined && pattern !== undefined) {
+      return {
+        ...model,
+        targets: [{ ...first, query: { pattern: { ...pattern, parameters } } }, ...rest],
+      };
+    }
+    return { ...model, parameters };
   }
   const mine =
     saved === null
@@ -1179,11 +1296,18 @@ function Explore({
       return;
     }
     if (mode === "save" || mode === "saveAs") {
-      const model = {
-        ...currentModel(saved?.analysis.model, values.keepRange, datasource, query),
-        title: values.title,
-        description: values.description === "" ? undefined : values.description,
-      };
+      const model = withInputs(
+        {
+          ...currentModel(saved?.analysis.model, values.keepRange, datasource, query),
+          title: values.title,
+          description: values.description === "" ? undefined : values.description,
+        },
+        values.parameters,
+      );
+      // The labels and choices of a pattern's inputs belong to the pattern in the editor too.
+      if (values.parameters !== undefined && patternOf(query) !== undefined) {
+        setQueries((all) => ({ ...all, [datasource.id]: model.targets[0]?.query }));
+      }
       saving.current = true;
       persist.mutate(() => createAnalysis(orgId, { model, folderId: values.folderId }), {
         onSuccess: (analysis) => {
@@ -1498,7 +1622,23 @@ function Explore({
             orgId={orgId}
             datasource={datasource}
             query={query}
-            onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
+            onChange={(next) => {
+              setQueries((current) => ({ ...current, [datasource.id]: next }));
+              const drawn = patternOf(next)?.parameters;
+              if (drawn !== undefined) {
+                setDeclared((current) => ({ ...current, [datasource.id]: drawn }));
+              }
+            }}
+            samples={samples[datasource.id] ?? {}}
+            onSamples={(next) => setSamples((current) => ({ ...current, [datasource.id]: next }))}
+            onSaveTemplate={
+              mayCreate
+                ? () => {
+                    persist.reset();
+                    setSaveDialog(saved === null ? "save" : "saveAs");
+                  }
+                : undefined
+            }
             onRun={() => run()}
             onPendingText={(pending) =>
               setPendingText((current) =>
@@ -1569,11 +1709,11 @@ function Explore({
                       ? type === "documents" || type === "schema" || type === "table"
                         ? t("explore.tab.table")
                         : visualizationName(t, type)
-                      : t(`explore.tab.${name}`)
+                      : t(`explore.tab.${name === "graphSchema" ? "schema" : name}`)
                   }
                   onTab={(name) => {
-                    if (name === "inspect") {
-                      setTab("inspect");
+                    if (name === "inspect" || name === "graphSchema" || name === "plan") {
+                      setTab(name);
                       return;
                     }
                     setTab("result");
@@ -1634,7 +1774,47 @@ function Explore({
                     aria-labelledby={`${tabsId}-${name}-tab`}
                     hidden={view !== name}
                   >
-                    {view !== name ? null : name === "logs" && logDocuments !== undefined ? (
+                    {view !== name ? null : name === "graphSchema" ? (
+                      <LazyPiece
+                        source={GRAPH_SCHEMA}
+                        props={{
+                          orgId,
+                          datasource: { id: submitted.datasourceId, kind: submittedKind ?? "" },
+                          onUseLabel:
+                            submitted.datasourceId === datasource.id
+                              ? (label: string) => {
+                                  // The label opens in the builder as a new node.
+                                  const current = patternOf(query) ?? { nodes: [] };
+                                  setQueries((all) => ({
+                                    ...all,
+                                    [datasource.id]: { pattern: addNode(current, [label]).pattern },
+                                  }));
+                                  setLoads((n) => n + 1);
+                                }
+                              : undefined,
+                        }}
+                        pending={<p className="loading">{t("common.loading")}</p>}
+                      />
+                    ) : name === "plan" ? (
+                      <LazyPiece
+                        source={PLAN}
+                        props={{
+                          orgId,
+                          datasource: { id: submitted.datasourceId, kind: submittedKind ?? "" },
+                          query: submitted.datasourceId === datasource.id ? query : submitted.query,
+                          variables:
+                            submitted.datasourceId === datasource.id
+                              ? runVariables(
+                                  query,
+                                  samples[datasource.id] ?? {},
+                                  declared[datasource.id] ?? [],
+                                )
+                              : submitted.variables,
+                          onInspect: () => setTab("inspect"),
+                        }}
+                        pending={<p className="loading">{t("common.loading")}</p>}
+                      />
+                    ) : name === "logs" && logDocuments !== undefined ? (
                       <LogsView
                         key={submitted.datasourceId}
                         kind={submittedKind ?? ""}
@@ -1770,7 +1950,7 @@ function Explore({
                                   query: submitted.query,
                                   timeRange,
                                   intervalMs: intervalFor(timeRange),
-                                  variables: {},
+                                  variables: submitted.variables,
                                   ...ask,
                                 },
                                 signal,
@@ -1918,7 +2098,7 @@ function Explore({
                 timeRange,
                 maxDataPoints: MAX_DATA_POINTS,
                 intervalMs: intervalFor(timeRange),
-                variables: {},
+                variables: submitted.variables,
                 // As stored: without the columns that still wait for a path.
                 steps: storableTransformations(steps),
                 format: choice.format,
@@ -2000,6 +2180,11 @@ function Explore({
           busy={persist.isPending}
           error={persist.isError ? errorMessage(t, persist.error) : undefined}
           query={savingHandoff && saveDialog === "save" ? query : undefined}
+          template={
+            saveDialog === "save" || saveDialog === "saveAs"
+              ? templateOf(query, datasource)
+              : undefined
+          }
           onSubmit={(values) => submitDialog(saveDialog, values)}
           onClose={() => setSaveDialog(null)}
         />
@@ -2089,7 +2274,7 @@ function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
   return leave.dialog;
 }
 
-type ResultTab = "logs" | "documents" | "schema" | "result" | "inspect";
+type ResultTab = "logs" | "documents" | "schema" | "result" | "graphSchema" | "plan" | "inspect";
 
 /** The time field an Elasticsearch or OpenSearch query names, for the logs view. */
 function timeFieldOf(query: unknown): string | undefined {

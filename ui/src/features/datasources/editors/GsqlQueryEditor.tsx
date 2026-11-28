@@ -5,6 +5,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { datasourceQuery, schemaQuery } from "../api";
 import { parseGsqlQuery } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
+import { GraphModes } from "./GraphModes";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
@@ -42,18 +43,32 @@ export function parseParams(text: string): { params?: Record<string, unknown>; e
 }
 
 /**
+ * TigerGraph: the GSQL editor, or a pattern drawn in the builder (GraphModes), which writes an
+ * interpreted GSQL query. An installed query has no way back into a pattern.
+ */
+export function GsqlQueryEditor(props: QueryEditorProps) {
+  const value = parseGsqlQuery(props.query);
+  const installed = "installed" in value;
+  return (
+    <GraphModes
+      {...props}
+      language="GSQL"
+      text={installed ? "" : value.gsql}
+      textQuery={(gsql, params) => (params === undefined ? { gsql } : { gsql, params })}
+      textParams={value.params}
+      drawable={!installed}
+    >
+      <GsqlTextEditor {...props} />
+    </GraphModes>
+  );
+}
+
+/**
  * TigerGraph (docs/api/datasources.md, "TigerGraph"): an interpreted GSQL query, written as one
  * `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`, or an installed query picked from the
  * source's schema, each with parameters as a JSON object.
  */
-export function GsqlQueryEditor({
-  orgId,
-  datasource,
-  query,
-  onChange,
-  onRun,
-  label,
-}: QueryEditorProps) {
+function GsqlTextEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
   const { t } = useI18n();
   const hintId = useId();
   const modeName = useId();

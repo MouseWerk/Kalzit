@@ -1,12 +1,15 @@
-import { useId, useState } from "react";
+import { type ComponentProps, useId, useState } from "react";
+import type { PatternParameter } from "../../api/generated/shapes";
 import { FormAlert } from "../../components/FormAlert";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
 import { QueryPreview } from "../../components/QueryPreview";
 import { TextField } from "../../components/TextField";
-import { useI18n } from "../../i18n/i18n";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { Keys } from "../../shortcuts/Keys";
 import type { Folder } from "../dashboards/api";
 import { Dialog } from "../dashboards/ui/Dialog";
 import { KindMark } from "../datasources/kindMarks";
+import type { TemplateInputsEditor } from "../graphPatterns/TemplateInputs";
 import { MAX_DESCRIPTION_CHARS, MAX_TITLE_CHARS } from "./api";
 import { placeGroups, visibilityHint } from "./places";
 import "./analyses.css";
@@ -24,7 +27,25 @@ export interface SaveValues {
   folderId: string | null;
   /** Keep the time range in use; off follows whatever range is in use when it is opened. */
   keepRange: boolean;
+  /** A search template's inputs, as the dialog set their labels and choices. */
+  parameters?: PatternParameter[] | undefined;
 }
+
+/** The inputs of a query saved as a search template (board Graph083, frame 11). */
+export interface SaveTemplate {
+  orgId: string;
+  datasourceId: string;
+  parameters: PatternParameter[];
+  /** A template from typed text: each input's type is set here. */
+  typesEditable: boolean;
+  refId: string;
+}
+
+const TEMPLATE_EDITOR = pieceSource<ComponentProps<typeof TemplateInputsEditor>>(() =>
+  loadArea("graphPatterns")
+    .then(() => import("../graphPatterns/TemplateInputs"))
+    .then((module) => ({ default: module.TemplateInputsEditor })),
+);
 
 /** What goes into the analysis, shown under the fields. */
 export interface SaveSummary {
@@ -50,6 +71,8 @@ interface SaveAnalysisDialogProps {
   error?: string | undefined;
   /** The query being saved, shown in full and read-only (a query handed over from Fragen). */
   query?: unknown;
+  /** The query has parameters: it is saved as a search template with these inputs. */
+  template?: SaveTemplate | undefined;
   onSubmit: (values: SaveValues) => void;
   onClose: () => void;
 }
@@ -74,12 +97,15 @@ export function SaveAnalysisDialog({
   busy = false,
   error,
   query,
+  template,
   onSubmit,
   onClose,
 }: SaveAnalysisDialogProps) {
   const { t } = useI18n();
   const formId = useId();
-  const [values, setValues] = useState(initial);
+  const [values, setValues] = useState<SaveValues>(() =>
+    template === undefined ? initial : { ...initial, parameters: template.parameters },
+  );
   const [titleError, setTitleError] = useState<string | undefined>(undefined);
   const groups = placeGroups(t, folders, canTop);
   // The current place stays choosable even where the caller may not save anew (a move keeps it).
@@ -208,6 +234,19 @@ export function SaveAnalysisDialog({
         ) : null}
         {full && query !== undefined && query !== null ? (
           <QueryPreview label={t("analyses.save.query")} query={query} />
+        ) : null}
+        {full && template !== undefined ? (
+          <LazyPiece
+            source={TEMPLATE_EDITOR}
+            props={{
+              orgId: template.orgId,
+              datasourceId: template.datasourceId,
+              parameters: values.parameters ?? template.parameters,
+              typesEditable: template.typesEditable,
+              refId: template.refId,
+              onChange: (parameters) => set({ parameters }),
+            }}
+          />
         ) : null}
         {full && summary !== undefined ? (
           <div className="analysis-save__summary">

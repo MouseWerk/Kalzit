@@ -4,6 +4,7 @@
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
 import type enGraphCanvas from "./en/graphCanvas.json";
+import type enGraphPatterns from "./en/graphPatterns.json";
 import type enGraphStyle from "./en/graphStyle.json";
 import type enHandbook from "./en/handbook.json";
 import type enMap from "./en/map.json";
@@ -22,7 +23,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enGraphStyle &
   typeof enGraphCanvas &
   typeof enHandbook &
-  typeof enMap;
+  typeof enMap &
+  typeof enGraphPatterns;
 
 export const DEFERRED_AREAS = [
   "sharing",
@@ -42,6 +44,9 @@ export const DEFERRED_AREAS = [
   "handbook",
   // The map panel: its texts, options and hints load with the first map.
   "map",
+  // Graph patterns (board Graph083): the pattern builder, the schema as a graph, the query plan
+  // and the inputs of search templates load with the first of them.
+  "graphPatterns",
 ] as const;
 export type DeferredArea = (typeof DEFERRED_AREAS)[number];
 
@@ -90,5 +95,9 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   map: {
     de: () => import("./de/map.json").then(pick),
     en: () => import("./en/map.json").then(pick),
+  },
+  graphPatterns: {
+    de: () => import("./de/graphPatterns.json").then(pick),
+    en: () => import("./en/graphPatterns.json").then(pick),
   },
 };

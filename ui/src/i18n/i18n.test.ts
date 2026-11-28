@@ -296,6 +296,12 @@ describe("catalogs", () => {
       "Debug",
       // The map's term for a place given as a geohash cell (board XYMapTrend.dc.html).
       "Geohash",
+      // Graph patterns and query plans keep these words in German (board Graph083.dc.html,
+      // frames 5, 21 and 27): an optional part, the plan tab, the operator of a plan step.
+      "Optional",
+      "optional",
+      "Plan",
+      "Operator",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

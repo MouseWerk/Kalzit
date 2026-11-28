@@ -585,6 +585,17 @@
   }
 }
 
+/* The pattern builder (Graph083 board, frame 1): the fields of the chosen element beside the
+   drawing, the drawing's highest, and the short number fields (path length, limit). */
+@layer tokens {
+  :root {
+    --size-pattern-side: 22rem;
+    --size-pattern-side-min: 14rem;
+    --size-pattern-drawing: 28rem;
+    --size-pattern-number: 5rem;
+  }
+}
+
 /* The plugin pages: a column of the details, and the height of the manifest and the log. */
 @layer tokens {
   :root {
