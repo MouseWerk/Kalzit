@@ -55,12 +55,13 @@ for (const variant of [
       await expect(password).toHaveAttribute("type", "password");
     });
 
-    test("stands on the calm backdrop, with language, theme and help in the top bar", async ({
+    test("stands next to its panel, with language, theme and help in the top bar", async ({
       page,
     }) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.goto("/login");
-      await expect(page.locator(".access-bd__lamp")).toBeVisible();
+      // The panel's picture has its own checks (signin-picture.spec.ts).
+      await expect(page.locator(".access__panel")).toBeVisible();
       await expect(
         page.getByRole("button", {
           name: t(
@@ -89,8 +90,8 @@ for (const variant of [
 
     test("nothing sticks out to the right, errors shown", async ({ page }) => {
       await submitEmpty(page, variant.language);
-      // No drifting light on a phone, only the quiet grid.
-      await expect(page.locator(".access-bd__lamp")).toBeHidden();
+      // No picture on a phone: the form alone.
+      await expect(page.locator(".access-bd")).toBeHidden();
       const overflow = await findOverflow(page);
       expect(overflow.offenders).toEqual([]);
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);

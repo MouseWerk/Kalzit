@@ -42,6 +42,7 @@ import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayo
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
 import { getRegistration, registrationKey } from "./registrationApi";
+import { playSignInLight } from "./signInLight";
 import { SSO_OUTCOMES, type SsoOutcome } from "./ssoOutcome";
 import "./auth.css";
 import {
@@ -182,6 +183,8 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   }, [afterProvider]);
 
   async function signedIn(me: Me, to?: string) {
+    // The light over the crystal's edges, once, then the app opens (board frame 14, "Bewegung").
+    await playSignInLight();
     // Whatever the previous session left (its preferences above all) is not this account's.
     forgetAccountData(queryClient);
     queryClient.setQueryData(meQuery.queryKey, me);

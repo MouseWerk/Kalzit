@@ -150,6 +150,7 @@ Server settings:
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
 | `signin.server_name` | `""` | text up to 80 characters, one line: the server name next to it, such as its address |
 | `signin.product_line` | `true` | boolean: whether the pages before sign-in say one line about Kalzit while no notice is set |
+| `signin.backdrop` | `true` | boolean: whether the panel next to the sign-in form shows its picture (the calcite crystal with a table, a document and a graph); off, the panel is a plain surface |
 | `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `log.event_log`, `metrics.enabled`, `metrics.allowed_networks`, `paths.plugins_dir` | as `kalzit.toml` (`paths.plugins_dir`: the plugin folder in use, `plugins` in the data directory when not set; [plugins](../guide/plugins.md#plugin-folder); `server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
@@ -450,13 +451,14 @@ database's clock.
 ### `GET /branding`
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
-null, signIn: {welcome, notice, organization, serverName, productLine, maxFailures, lockMinutes},
+null, signIn: {welcome, notice, organization, serverName, productLine, backdrop, maxFailures, lockMinutes},
 defaultTheme, defaultThemeLight, defaultThemeDark, accent, density, fontSize, handbook}` with the
 server's values; `handbook` is `appearance.handbook`. `organization` and
 `serverName` (`signin.organization`, `signin.server_name`, empty unless an administrator sets
 them) make the line above the form; `productLine` says whether the pages before sign-in show
 one line about the product while no notice is set: `signin.product_line`, and always `false` on
-a server with its own product name or logo; `maxFailures` and `lockMinutes` are
+a server with its own product name or logo; `backdrop` says whether the panel next to the form
+shows its picture (`signin.backdrop`); `maxFailures` and `lockMinutes` are
 `security.login_max_failures` and `security.login_window_secs` in minutes, for the texts about
 the lockout. The sign-in page applies `defaultTheme`, `defaultThemeLight` and `defaultThemeDark` where the visitor
 chose none of them in this browser;
